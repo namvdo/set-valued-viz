@@ -278,12 +278,14 @@ impl HenonMap {
         let x = state.x();
         let y = state.y();
         
-        // Check for overflow before calculation
-        const MAX_VALUE: f64 = 1e10; // Reasonable bound to prevent overflow
+        // Check for overflow before calculation - Hénon attractor is bounded roughly [-2, 2] x [-1, 1]
+        const MAX_VALUE: f64 = 10.0; // Tighter bound for Hénon attractor
         if x.abs() > MAX_VALUE || y.abs() > MAX_VALUE {
             console_log!("Deterministic state values too large: x={}, y={}", x, y);
-            // Return a bounded state
-            return StateVector::new(0.1, 0.1);
+            // Clamp to attractor bounds instead of hard reset
+            let clamped_x = x.clamp(-2.0, 2.0);
+            let clamped_y = y.clamp(-1.0, 1.0);
+            return StateVector::new(clamped_x, clamped_y);
         }
         
         let x_new: f64 = 1.0 - a * x * x + y;
@@ -308,12 +310,12 @@ impl HenonMap {
     pub fn generate_trajectory(
         &self,
         initial_x: f64,
-        intial_y: f64,
+        initial_y: f64,
         n_iterations: u32,
         skip_transient: u32
     ) -> Vec<f64> {
         let mut trajectory = Vec::with_capacity((n_iterations as usize) * 2  );
-        let mut state = StateVector::new(initial_x, intial_y);
+        let mut state = StateVector::new(initial_x, initial_y);
         // Skip transient iterations
         for _ in 0..skip_transient {
             state = self.iterate(&state);
@@ -323,8 +325,8 @@ impl HenonMap {
 
         for _ in 0..n_iterations {
             state = self.iterate(&state);
-            trajectory.push(state.x);
-            trajectory.push(state.y);
+            trajectory.push(state.x());
+            trajectory.push(state.y());
         }
 
         console_log!("Generate trajectory with {} points", n_iterations);
@@ -455,12 +457,14 @@ impl SetValuedHenonMap {
         let epsilon_x = self.noise_params.epsilon_x();
         let epsilon_y = self.noise_params.epsilon_y();
 
-        // Check for overflow before calculation
-        const MAX_VALUE: f64 = 1e10; // Reasonable bound to prevent overflow
+        // Check for overflow before calculation - Hénon attractor is bounded roughly [-2, 2] x [-1, 1]
+        const MAX_VALUE: f64 = 10.0; // Tighter bound for Hénon attractor
         if x.abs() > MAX_VALUE || y.abs() > MAX_VALUE {
             console_log!("State values too large: x={}, y={}", x, y);
-            // Return a bounded state
-            return StateVector::new(0.1, 0.1);
+            // Clamp to attractor bounds instead of hard reset
+            let clamped_x = x.clamp(-2.0, 2.0);
+            let clamped_y = y.clamp(-1.0, 1.0);
+            return StateVector::new(clamped_x, clamped_y);
         }
 
         // Deterministic part

@@ -20,10 +20,10 @@ function App() {
   const [params, setParams] = useState({
     a: 1.4, 
     b: 0.3, 
-    x0: 0.0, 
-    y0: 0.0,
-    epsilonX: 0.01, 
-    epsilonY: 0.01,
+    x0: 0.1, 
+    y0: 0.1,
+    epsilonX: 0.005, 
+    epsilonY: 0.005,
     iterations: 1000,
     skipTransient: 500
   });
@@ -75,7 +75,6 @@ function App() {
         
         setWasmLoaded(true);
         console.log('✅ WebAssembly module loaded successfully!');
-        t
       } catch (error) {
         console.error('Failed to load WebAssembly module:', error);
         setLoadError(error.message);
@@ -105,8 +104,8 @@ function App() {
 
   // Generate trajectories
   const generateTrajectories = useCallback(() => {
-    if (!wasmModule || !henonMapRef.current || !setValuedMapRef.current) {
-      console.log('WASM not ready:', { wasmModule: !!wasmModule, henon: !!henonMapRef.current, setValued: !!setValuedMapRef.current });
+    if (!wasmModule) {
+      console.log('WASM not ready:', { wasmModule: !!wasmModule });
       return;
     }
 
@@ -124,6 +123,29 @@ function App() {
       if (params.iterations < 1 || params.iterations > 50000) {
         throw new Error('Invalid iteration count: must be between 1 and 50000');
       }
+      
+      // Ensure fresh WASM objects before each generation to reset any internal state
+      console.log('Creating fresh WASM objects for clean state...');
+      
+      // Free existing objects if they exist
+      try {
+        if (henonMapRef.current && typeof henonMapRef.current.free === 'function') {
+          henonMapRef.current.free();
+        }
+        if (setValuedMapRef.current && typeof setValuedMapRef.current.free === 'function') {
+          setValuedMapRef.current.free();
+        }
+      } catch (freeError) {
+        console.warn('Error freeing existing WASM objects:', freeError);
+      }
+      
+      // Create fresh WASM objects with current parameters
+      henonMapRef.current = wasmModule.HenonMap.with_parameters(params.a, params.b);
+      setValuedMapRef.current = wasmModule.SetValuedHenonMap.with_parameters(
+        params.a, params.b, params.epsilonX, params.epsilonY
+      );
+      
+      console.log('Fresh WASM objects created successfully');
       
       // Generate deterministic trajectory
       console.log('Generating deterministic trajectory...');
@@ -253,7 +275,7 @@ function App() {
 
     // Draw trajectory
     ctx.strokeStyle = color;
-    ctx.lineWidth = 0.5;jc
+    ctx.lineWidth = 0.5;
     ctx.globalAlpha = 0.7;
 
     for (let i = 0; i < trajectory.length - 2; i += 2) {
