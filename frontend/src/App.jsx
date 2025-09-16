@@ -273,22 +273,6 @@ function App() {
     minY -= rangeY * padding;
     maxY += rangeY * padding;
 
-    // Draw trajectory
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 0.5;
-    ctx.globalAlpha = 0.7;
-
-    for (let i = 0; i < trajectory.length - 2; i += 2) {
-      const x1 = ((trajectory[i] - minX) / (maxX - minX)) * width;
-      const y1 = height - ((trajectory[i + 1] - minY) / (maxY - minY)) * height;
-      const x2 = ((trajectory[i + 2] - minX) / (maxX - minX)) * width;
-      const y2 = height - ((trajectory[i + 3] - minY) / (maxY - minY)) * height;
-
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
-    }
 
     // Draw points
     ctx.fillStyle = color;
