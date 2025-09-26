@@ -33,9 +33,12 @@ function App() {
   const [currentIteration, setCurrentIteration] = useState(0);
   const [trajectoryData, setTrajectoryData] = useState({
     deterministic: [],
-    noisy: []
+    noisy: [],
+    currentIndex: 0,
   });
   const [autoGenerate, setAutoGenerate] = useState(false);
+  const [showNoiseCircles, setShowNoiseCircles] = useState(true);
+  const [animationSpeed, setAnimationSpeed] = useState(50); // in ms between
 
   // Performance metrics
   const [performanceStats, setPerformanceStats] = useState({ 
@@ -213,7 +216,7 @@ function App() {
   }, [params, wasmModule]);
 
   // Draw trajectory on canvas
-  const drawTrajectory = useCallback((canvas, trajectory, color = '#00ff00', title = '') => {
+  const drawTrajectory = useCallback((canvas, trajectory, color = '#00ff00', title = '', showNoise = false) => {
     if (!canvas || !trajectory || trajectory.length === 0) {
       console.log(`Cannot draw ${title}:`, { canvas: !!canvas, trajectory: !!trajectory, length: trajectory?.length });
       return;
@@ -231,6 +234,7 @@ function App() {
 
     // Find bounds
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    console.log('trajectory sample:', trajectory.slice(0, 10));
     for (let i = 0; i < trajectory.length; i += 2) {
       const x = trajectory[i];
       const y = trajectory[i + 1];
@@ -274,6 +278,38 @@ function App() {
     maxY += rangeY * padding;
 
 
+    // Coordinate transformation functions
+    const scaleX = (x) => ((x - minX) / (maxX - minX)) * width;
+    const scaleY = (y) => height - ((y - minY)) / (maxY - minY) * height;
+
+    if (showNoiseCircles && showNoise) {
+      const pointToShow = trajectory;
+
+      const epsilonRadiusX = (params.epsilonX / (maxX - minX)) * width;
+      const epsilonRadiusY = (params.epsilonY / (maxY - minY)) * height;
+      const epsilonRadius = Math.max(Math.min(epsilonRadiusX, epsilonRadiusY), 2); // Ensure minimum visible radius
+
+      console.log(`Drawing noise circles: epsilonX=${params.epsilonX}, epsilonY=${params.epsilonY}, radius=${epsilonRadius}, points=${pointToShow.length/2}`);
+
+      ctx.strokeStyle = '#ffaa00';
+      ctx.lineWidth = 2;
+
+      for(let i = 0; i < pointToShow.length; i+= 2){
+        const x = scaleX(pointToShow[i]);
+        const y = scaleY(pointToShow[i + 1]);
+        ctx.globalAlpha = 0.3;
+
+        // Draw the noise boundary circle
+        ctx.beginPath();
+        ctx.arc(x, y, epsilonRadius, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+
+      ctx.globalAlpha = 1.0;
+
+    }
+
+
     // Draw points
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.8;
@@ -303,10 +339,10 @@ function App() {
   // Update visualizations when trajectory data changes
   useEffect(() => {
     if (trajectoryData.deterministic.length > 0) {
-      drawTrajectory(deterministicCanvasRef.current, trajectoryData.deterministic, '#00ff00', 'Deterministic');
+      drawTrajectory(deterministicCanvasRef.current, trajectoryData.deterministic, '#00ff00', 'Deterministic', false);
     }
     if (trajectoryData.noisy.length > 0) {
-      drawTrajectory(noisyCanvasRef.current, trajectoryData.noisy, '#ff6b6b', 'With Bounded Noise');
+      drawTrajectory(noisyCanvasRef.current, trajectoryData.noisy, '#ff6b6b', 'With Bounded Noise', true);
     }
   }, [trajectoryData, drawTrajectory]);
 
@@ -541,6 +577,17 @@ function App() {
                   onChange={(e) => setAutoGenerate(e.target.checked)}
                 />
                 Auto-generate on parameter change
+              </label>
+            </div>
+            
+            <div className="form-group">
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input
+                  type="checkbox"
+                  checked={showNoiseCircles}
+                  onChange={(e) => setShowNoiseCircles(e.target.checked)}
+                />
+                Show noise circles (ε bounds)
               </label>
             </div>
           </div>
