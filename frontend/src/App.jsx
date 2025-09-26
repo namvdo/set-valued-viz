@@ -22,10 +22,10 @@ function App() {
     b: 0.3, 
     x0: 0.1, 
     y0: 0.1,
-    epsilonX: 0.005, 
-    epsilonY: 0.005,
-    iterations: 1000,
-    skipTransient: 500
+    epsilonX: 0.05, 
+    epsilonY: 0.05,
+    iterations: 100,
+    skipTransient: 0
   });
 
   // Visualization state
@@ -39,6 +39,16 @@ function App() {
   const [autoGenerate, setAutoGenerate] = useState(false);
   const [showNoiseCircles, setShowNoiseCircles] = useState(true);
   const [animationSpeed, setAnimationSpeed] = useState(50); // in ms between
+  
+  // Incremental iteration state
+  const [currentState, setCurrentState] = useState({ x: 0, y: 0 });
+  const currentStateRef = useRef({ x: 0, y: 0 });
+  const [incrementalMode, setIncrementalMode] = useState(true);
+  
+  // Animation state
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [animationIndex, setAnimationIndex] = useState(0);
+  const [showOnlyAnimation, setShowOnlyAnimation] = useState(false);
 
   // Performance metrics
   const [performanceStats, setPerformanceStats] = useState({ 
@@ -78,6 +88,10 @@ function App() {
         
         setWasmLoaded(true);
         console.log('✅ WebAssembly module loaded successfully!');
+        
+        // Initialize incremental mode
+        setCurrentState({ x: params.x0, y: params.y0 });
+        currentStateRef.current = { x: params.x0, y: params.y0 };
       } catch (error) {
         console.error('Failed to load WebAssembly module:', error);
         setLoadError(error.message);
@@ -216,7 +230,7 @@ function App() {
   }, [params, wasmModule]);
 
   // Draw trajectory on canvas
-  const drawTrajectory = useCallback((canvas, trajectory, color = '#00ff00', title = '', showNoise = false) => {
+  const drawTrajectory = useCallback((canvas, trajectory, color = '#00ff00', title = '', showNoise = false, animationMode = false, maxPoints = -1) => {
     if (!canvas || !trajectory || trajectory.length === 0) {
       console.log(`Cannot draw ${title}:`, { canvas: !!canvas, trajectory: !!trajectory, length: trajectory?.length });
       return;
@@ -234,7 +248,6 @@ function App() {
 
     // Find bounds
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    console.log('trajectory sample:', trajectory.slice(0, 10));
     for (let i = 0; i < trajectory.length; i += 2) {
       const x = trajectory[i];
       const y = trajectory[i + 1];
@@ -258,24 +271,26 @@ function App() {
       return;
     }
 
-    // Add padding
+    // Add padding and handle single point case
     const padding = 0.1;
     const rangeX = maxX - minX;
     const rangeY = maxY - minY;
     
-    // Prevent division by zero
-    if (rangeX === 0 || rangeY === 0) {
-      console.error(`Zero range for ${title}:`, { rangeX, rangeY });
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '16px Arial';
-      ctx.fillText(`Error: Zero range for ${title}`, 10, 30);
-      return;
+    // Handle single point or very small range
+    if (rangeX === 0 || rangeY === 0 || rangeX < 1e-10 || rangeY < 1e-10) {
+      console.log(`Single point or very small range for ${title}:`, { rangeX, rangeY, point: [minX, minY] });
+      // Create a reasonable viewing window around the point
+      const defaultRange = 0.5;
+      minX = minX - defaultRange;
+      maxX = maxX + defaultRange;
+      minY = minY - defaultRange;
+      maxY = maxY + defaultRange;
+    } else {
+      minX -= rangeX * padding;
+      maxX += rangeX * padding;
+      minY -= rangeY * padding;
+      maxY += rangeY * padding;
     }
-    
-    minX -= rangeX * padding;
-    maxX += rangeX * padding;
-    minY -= rangeY * padding;
-    maxY += rangeY * padding;
 
 
     // Coordinate transformation functions
@@ -284,24 +299,40 @@ function App() {
 
     if (showNoiseCircles && showNoise) {
       const pointToShow = trajectory;
+      const pointsToShow = maxPoints > 0 ? Math.min(maxPoints * 2, pointToShow.length) : pointToShow.length;
 
       const epsilonRadiusX = (params.epsilonX / (maxX - minX)) * width;
       const epsilonRadiusY = (params.epsilonY / (maxY - minY)) * height;
-      const epsilonRadius = Math.max(Math.min(epsilonRadiusX, epsilonRadiusY), 2); // Ensure minimum visible radius
+      const epsilonRadius = Math.max(Math.min(epsilonRadiusX, epsilonRadiusY), 8); // Increased minimum radius for better visibility
 
-      console.log(`Drawing noise circles: epsilonX=${params.epsilonX}, epsilonY=${params.epsilonY}, radius=${epsilonRadius}, points=${pointToShow.length/2}`);
+      console.log(`Drawing noise circles: epsilonX=${params.epsilonX}, epsilonY=${params.epsilonY}, radius=${epsilonRadius}, points=${pointsToShow/2}`);
 
       ctx.strokeStyle = '#ffaa00';
       ctx.lineWidth = 2;
 
-      for(let i = 0; i < pointToShow.length; i+= 2){
+      // Draw circles for all points shown
+      for(let i = 0; i < pointsToShow; i+= 2){
         const x = scaleX(pointToShow[i]);
         const y = scaleY(pointToShow[i + 1]);
-        ctx.globalAlpha = 0.3;
+        ctx.globalAlpha = animationMode ? 0.2 : 0.3;
 
         // Draw the noise boundary circle
         ctx.beginPath();
         ctx.arc(x, y, epsilonRadius, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+      
+      // In animation mode, highlight the current point's noise circle
+      if (animationMode && maxPoints > 0 && pointsToShow >= 2) {
+        const currentX = scaleX(pointToShow[pointsToShow - 2]);
+        const currentY = scaleY(pointToShow[pointsToShow - 1]);
+        
+        ctx.strokeStyle = '#ff8800';
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.8;
+        
+        ctx.beginPath();
+        ctx.arc(currentX, currentY, epsilonRadius, 0, 2 * Math.PI);
         ctx.stroke();
       }
 
@@ -310,15 +341,28 @@ function App() {
     }
 
 
-    // Draw points
+    // Draw points (limit to maxPoints for animation)
+    const pointsToShow = maxPoints > 0 ? Math.min(maxPoints * 2, trajectory.length) : trajectory.length;
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.8;
-    for (let i = 0; i < trajectory.length; i += 2) {
+    for (let i = 0; i < pointsToShow; i += 2) {
       const x = ((trajectory[i] - minX) / (maxX - minX)) * width;
       const y = height - ((trajectory[i + 1] - minY) / (maxY - minY)) * height;
       
       ctx.beginPath();
-      ctx.arc(x, y, 0.5, 0, 2 * Math.PI);
+      ctx.arc(x, y, animationMode ? 1.5 : 0.5, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+    
+    // In animation mode, highlight the current point with a larger circle
+    if (animationMode && maxPoints > 0 && pointsToShow >= 2) {
+      const currentX = ((trajectory[pointsToShow - 2] - minX) / (maxX - minX)) * width;
+      const currentY = height - ((trajectory[pointsToShow - 1] - minY) / (maxY - minY)) * height;
+      
+      ctx.fillStyle = '#ffffff';
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      ctx.arc(currentX, currentY, 3, 0, 2 * Math.PI);
       ctx.fill();
     }
 
@@ -336,15 +380,41 @@ function App() {
     ctx.fillText(`Iterations: ${trajectory.length / 2}`, 10, height - 10);
   }, []);
 
+  // Animation logic
+  useEffect(() => {
+    let intervalId;
+    if (isAnimating && trajectoryData.deterministic.length > 0) {
+      intervalId = setInterval(() => {
+        setAnimationIndex(prev => {
+          const maxPoints = trajectoryData.deterministic.length / 2;
+          if (prev >= maxPoints) {
+            setIsAnimating(false);
+            return maxPoints;
+          }
+          return prev + 1;
+        });
+      }, animationSpeed);
+    }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [isAnimating, animationSpeed, trajectoryData.deterministic.length]);
+
   // Update visualizations when trajectory data changes
   useEffect(() => {
     if (trajectoryData.deterministic.length > 0) {
-      drawTrajectory(deterministicCanvasRef.current, trajectoryData.deterministic, '#00ff00', 'Deterministic', false);
+      // In incremental mode, always show animation-style highlighting for the latest point
+      const animMode = incrementalMode;
+      const maxPoints = incrementalMode ? trajectoryData.deterministic.length / 2 : -1;
+      drawTrajectory(deterministicCanvasRef.current, trajectoryData.deterministic, '#00ff00', 'Deterministic', false, animMode, maxPoints);
     }
     if (trajectoryData.noisy.length > 0) {
-      drawTrajectory(noisyCanvasRef.current, trajectoryData.noisy, '#ff6b6b', 'With Bounded Noise', true);
+      // In incremental mode, always show animation-style highlighting for the latest point
+      const animMode = incrementalMode;
+      const maxPoints = incrementalMode ? trajectoryData.noisy.length / 2 : -1;
+      drawTrajectory(noisyCanvasRef.current, trajectoryData.noisy, '#ff6b6b', 'With Bounded Noise', true, animMode, maxPoints);
     }
-  }, [trajectoryData, drawTrajectory]);
+  }, [trajectoryData, drawTrajectory, incrementalMode]);
 
   // Handle parameter changes with validation
   const handleParamChange = (field, value) => {
@@ -409,6 +479,154 @@ function App() {
       setValuedMapRef.current = null;
     }
   }, [params.a, params.b, params.epsilonX, params.epsilonY, wasmModule, wasmLoaded]);
+
+  // Incremental iteration functions
+  const startIncrementalMode = useCallback(() => {
+    setIncrementalMode(true);
+    const initialState = { x: params.x0, y: params.y0 };
+    setCurrentState(initialState);
+    currentStateRef.current = initialState;
+    setTrajectoryData({
+      deterministic: [],
+      noisy: [],
+      currentIndex: 0
+    });
+    setCurrentIteration(0);
+  }, [params.x0, params.y0]);
+
+  const generateNextIteration = useCallback(() => {
+    if (!wasmModule || !henonMapRef.current || !setValuedMapRef.current) {
+      console.log('WASM not ready for incremental iteration');
+      return;
+    }
+
+    try {
+      // Use ref to get current state to avoid stale closures
+      const current = currentStateRef.current;
+      
+      // Create StateVector for current state
+      const currentStateVector = new wasmModule.StateVector(current.x, current.y);
+      
+      // Generate single iteration for both deterministic and noisy
+      const detResult = henonMapRef.current.iterate(currentStateVector);
+      const noisyResult = setValuedMapRef.current.iterate(currentStateVector);
+      
+      let detX = detResult.x;
+      let detY = detResult.y;
+      const noisyX = noisyResult.x;
+      const noisyY = noisyResult.y;
+      
+      // Check for extreme values and clamp them
+      if (!isFinite(detX) || !isFinite(detY) || Math.abs(detX) > 100 || Math.abs(detY) > 100) {
+        console.warn('Extreme values detected, resetting to chaotic region:', { detX, detY });
+        detX = 0.1 + (Math.random() - 0.5) * 0.2;
+        detY = 0.1 + (Math.random() - 0.5) * 0.2;
+      }
+      
+      console.log('Next iteration:', { 
+        current: current, 
+        deterministic: { x: detX, y: detY },
+        noisy: { x: noisyX, y: noisyY }
+      });
+      
+      // Check for convergence, fixed points, very small movements, or numerical underflow
+      const isConverged = Math.abs(detX - current.x) < 1e-10 && Math.abs(detY - current.y) < 1e-10;
+      const isAtFixedPoint = Math.abs(detX) < 1e-8 && Math.abs(detY) < 1e-8;
+      const isSmallMovement = Math.abs(detX - current.x) < 1e-6 && Math.abs(detY - current.y) < 1e-6;
+      const hasUnderflow = Math.abs(detY) < 1e-15 || Math.abs(detX) < 1e-15; // Detect numerical underflow
+      
+      if (isConverged || isAtFixedPoint || isSmallMovement || hasUnderflow) {
+        console.warn('System issue detected - applying corrective action:', { isConverged, isAtFixedPoint, isSmallMovement, hasUnderflow });
+        
+        let newDetX, newDetY;
+        
+        if (hasUnderflow) {
+          // For numerical underflow, jump to a more interesting region
+          console.warn('Numerical underflow detected - jumping to chaotic region');
+          newDetX = 0.1 + (Math.random() - 0.5) * 0.2; // Around 0.1 ± 0.1
+          newDetY = 0.1 + (Math.random() - 0.5) * 0.2; // Around 0.1 ± 0.1
+        } else {
+          // For other issues, add small perturbation
+          const perturbation = 0.01; // Increased perturbation
+          const perturbX = (Math.random() - 0.5) * perturbation;
+          const perturbY = (Math.random() - 0.5) * perturbation;
+          
+          newDetX = detX + perturbX;
+          newDetY = detY + perturbY;
+        }
+        
+        console.log('Applied perturbation:', { original: [detX, detY], perturbed: [newDetX, newDetY] });
+        
+        // Update trajectory data with perturbed values
+        setTrajectoryData(prev => ({
+          deterministic: [...prev.deterministic, newDetX, newDetY],
+          noisy: [...prev.noisy, noisyX, noisyY],
+          currentIndex: prev.currentIndex + 1
+        }));
+        
+        // Update current state to the perturbed result
+        const newState = { x: newDetX, y: newDetY };
+        setCurrentState(newState);
+        currentStateRef.current = newState;
+      } else {
+        // Normal case - update trajectory data
+        setTrajectoryData(prev => ({
+          deterministic: [...prev.deterministic, detX, detY],
+          noisy: [...prev.noisy, noisyX, noisyY],
+          currentIndex: prev.currentIndex + 1
+        }));
+        
+        // Update current state to the deterministic result for next iteration
+        const newState = { x: detX, y: detY };
+        setCurrentState(newState);
+        currentStateRef.current = newState;
+      }
+      
+      setCurrentIteration(prev => prev + 1);
+      
+      // Clean up WASM objects
+      currentStateVector.free();
+      detResult.free();
+      noisyResult.free();
+      
+    } catch (error) {
+      console.error('Error generating next iteration:', error);
+    }
+  }, [wasmModule]);
+
+  const resetIncrementalMode = useCallback(() => {
+    const initialState = { x: params.x0, y: params.y0 };
+    setCurrentState(initialState);
+    currentStateRef.current = initialState;
+    setTrajectoryData({
+      deterministic: [],
+      noisy: [],
+      currentIndex: 0
+    });
+    setCurrentIteration(0);
+  }, [params.x0, params.y0]);
+
+  // Animation control functions
+  const startAnimation = () => {
+    setAnimationIndex(0);
+    setIsAnimating(true);
+  };
+
+  const stopAnimation = () => {
+    setIsAnimating(false);
+  };
+
+  const resetAnimation = () => {
+    setIsAnimating(false);
+    setAnimationIndex(0);
+  };
+
+  const stepAnimation = () => {
+    if (trajectoryData.deterministic.length > 0) {
+      const maxPoints = trajectoryData.deterministic.length / 2;
+      setAnimationIndex(prev => Math.min(prev + 1, maxPoints));
+    }
+  };
 
   // Auto-generate when parameters change (only if enabled)
   useEffect(() => {
@@ -569,16 +787,6 @@ function App() {
               {isRunning ? 'Generating...' : 'Generate Trajectories'}
             </button>
             
-            <div className="form-group">
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <input
-                  type="checkbox"
-                  checked={autoGenerate}
-                  onChange={(e) => setAutoGenerate(e.target.checked)}
-                />
-                Auto-generate on parameter change
-              </label>
-            </div>
             
             <div className="form-group">
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -590,6 +798,53 @@ function App() {
                 Show noise circles (ε bounds)
               </label>
             </div>
+          </div>
+
+          <div className="controls-section">
+            <h3>Incremental Mode</h3>
+            
+              <>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                  <button 
+                    className="button button-primary"
+                    onClick={generateNextIteration}
+                    disabled={!wasmLoaded}
+                    style={{ flex: '1' }}
+                  >
+                    ⏭ Next Iteration
+                  </button>
+                  <button 
+                    className="button button-secondary"
+                    onClick={resetIncrementalMode}
+                    style={{ flex: '1' }}
+                  >
+                    🔄 Reset
+                  </button>
+                  <button 
+                    className="button button-secondary"
+                    onClick={() => {
+                      // Jump to chaotic region for interesting dynamics
+                      const newState = { 
+                        x: 0.1 + (Math.random() - 0.5) * 0.4, // -0.1 to 0.3
+                        y: 0.1 + (Math.random() - 0.5) * 0.4  // -0.1 to 0.3
+                      };
+                      setCurrentState(newState);
+                      currentStateRef.current = newState;
+                      console.log('Manual jump to chaotic region:', { old: currentState, new: newState });
+                    }}
+                    style={{ flex: '1' }}
+                  >
+                    ⚡ Kick
+                  </button>
+                </div>
+                
+                <div style={{ fontSize: '12px', color: '#888', background: '#f5f5f5', padding: '8px', borderRadius: '4px' }}>
+                  <div><strong>Current State:</strong></div>
+                  <div>x: {currentState.x.toFixed(6)}</div>
+                  <div>y: {currentState.y.toFixed(6)}</div>
+                  <div>Iterations: {currentIteration}</div>
+                </div>
+              </>
           </div>
         </aside>
 
