@@ -448,62 +448,63 @@ impl SetValuedHenonMap {
     /// Single iteration of set-valued Henon map
     /// 
     /// Sample uniformly from set-valued intervals 
+    /// Mathematical model:
+    /// x_{n+1} = 1 - a*x_n^2 + y + ξ
+    /// y_{n+1} = b*x_n + η 
+    /// Where (ξ, η) ∈ B_ε(0) = {(u,v) : √(u² + v²) ≤ ε}
     #[wasm_bindgen]
     pub fn iterate(&self, state: &StateVector) -> StateVector {
-        let x = state.x();
-        let y = state.y();
         let a = self.params.a();
         let b = self.params.b();
-        let epsilon_x = self.noise_params.epsilon_x();
-        let epsilon_y = self.noise_params.epsilon_y();
+        let x = state.x();
+        let y = state.y();
+        let epsilon = self.noise_params.epsilon_x();
 
-        // Check for overflow before calculation - Hénon attractor is bounded roughly [-2, 2] x [-1, 1]
-        const MAX_VALUE: f64 = 10.0; // Tighter bound for Hénon attractor
+        // Bounds checking
+        const MAX_VALUE: f64 = 10.0;
         if x.abs() > MAX_VALUE || y.abs() > MAX_VALUE {
-            console_log!("State values too large: x={}, y={}", x, y);
+            console_log!("Noisy state values too large: x={}, y={}", x, y);
             // Clamp to attractor bounds instead of hard reset
             let clamped_x = x.clamp(-2.0, 2.0);
             let clamped_y = y.clamp(-1.0, 1.0);
             return StateVector::new(clamped_x, clamped_y);
         }
 
-        // Deterministic part
+        // Deterministic part f(x, y) = (1 - a*x^2 + y, b*x)
+
         let x_det = 1.0 - (a * x * x) + y;
         let y_det = b * x;
-        
-        // Check if deterministic part produces valid values
+
         if !x_det.is_finite() || !y_det.is_finite() {
-            console_log!("Deterministic part invalid: x_det={}, y_det={}, x={}, y={}, a={}, b={}", 
+            console_log!("Noisy iteration invalid: x_det={}, y_det={}, x={}, y={}, a={}, b={}", 
                         x_det, y_det, x, y, a, b);
             // Return a safe state to avoid divergence
             return StateVector::new(0.1, 0.1);
         }
 
-        // Add bounded uniform noise: ξ ∈ [-ε, +ε]
-        // Using Math.random() provides uniform distribution over [0, 1)
-        let random_x = Math::random();
-        let random_y = Math::random();
-        
-        // Validate random values
-        if !random_x.is_finite() || !random_y.is_finite() {
-            console_log!("Invalid random values: {} {}", random_x, random_y);
-            return StateVector::new(x_det, y_det); // Return without noise if random is invalid
-        }
-        
-        let noise_x = (random_x - 0.5) * 2.0 * epsilon_x;
-        let noise_y = (random_y - 0.5) * 2.0 * epsilon_y;
+        // Circular noise sampling 
+        // Step 1: Generate uniform distribution
+        let u1: f64 = Math::random();
+        let u2: f64 = Math::random();
 
+        // Step 2: Transform to get uniform distribution on disk
+        let r = epsilon * (u1).sqrt(); // Distance from the centner
+        let theta = 2.0 * f64::consts::PI * u2; // 0 to 2π - the angle
+
+        // Step 3: Convert to Cartesian coordinates
+        let noise_x = r * theta.cos();
+        let noise_y = r * theta.sin();
+
+        // Final state with noise 
         let x_new = x_det + noise_x;
         let y_new = y_det + noise_y;
-        
-        // Validate final values
-        if !x_new.is_finite() || !y_new.is_finite() {
-            console_log!("Invalid final values: x_new={}, y_new={}, x_det={}, y_det={}, noise_x={}, noise_y={}", 
-                        x_new, y_new, x_det, y_det, noise_x, noise_y);
-            return StateVector::new(x_det, y_det); // Return deterministic value if result is invalid
-        }
 
-        StateVector::new(x_new, y_new)
+        if !x_new.is_finite() || !y_new.is_finite() {
+            console_log!("Noisy iteration invalid after noise: x_new={}, y_new={}, x_det={}, y_det={}, noise_x={}, noise_y={}, x={}, y={}, a={}, b={}", 
+                        x_new, y_new, x_det, y_det, noise_x, noise_y, x, y, a, b);
+            return StateVector::new(x_det, y_det);
+        }
+        return StateVector::new(x_new, y_new);
     }
 
     /// Get a set-valued intervals
@@ -514,8 +515,7 @@ impl SetValuedHenonMap {
         let b = self.params.b();
         let x = state.x();
         let y = state.y();
-        let epsilon_x = self.noise_params.epsilon_x();
-        let epsilon_y = self.noise_params.epsilon_y();
+        let epsilon = self.noise_params.epsilon_x();
         // Deterministic part
 
         let x_det = 1.0 - (a * x * x) + y;
@@ -523,10 +523,10 @@ impl SetValuedHenonMap {
 
         // Set-valued intervals
         vec![
-            x_det - epsilon_x, // x_min
-            x_det + epsilon_x, // x_max
-            y_det - epsilon_y, // y_min
-            y_det + epsilon_y, // y_max
+            x_det - epsilon, // x_min
+            x_det + epsilon, // x_max
+            y_det - epsilon, // y_min
+            y_det + epsilon, // y_max
         ]
     }
 
