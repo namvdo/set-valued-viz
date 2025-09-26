@@ -11,6 +11,12 @@ This application visualizes the **Hénon Map**, a discrete-time dynamical system
 x_{n+1} = 1 - ax_n² + y_n
 y_{n+1} = bx_n
 ```
+Bounded-noise Henon-map:
+```
+x_{n+1} = 1 - a*x_n^2 + y + ξ
+y_{n+1} = b*x_n + η
+Where (ξ, η) ∈ B_ε(0) = {(u,v) : √(u² + v²) ≤ ε}
+```
 
 **Key Features:**
 - **Deterministic Hénon Map**: Classic chaotic attractor visualization
@@ -249,9 +255,8 @@ y_{n+1} = bx_n
 
 **Set-Valued Extension:**
 ```
-x_{n+1} = 1 - ax_n² + y_n + ξx
-y_{n+1} = bx_n + ξy
+x_{n+1} = 1 - a*x_n^2 + y + ξ
+y_{n+1} = b*x_n + η 
 ```
-where `ξx, ξy ∈ [-ε, +ε]` represent bounded uncertainty.
-
+Where (ξ, η) ∈ B_ε(0) = {(u,v) : √(u² + v²) ≤ ε}
 **Happy visualizing! 🎉**
