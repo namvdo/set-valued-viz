@@ -1,8 +1,11 @@
 import re
+import math
 
 RE_INT = re.compile(r"-?\d+")
 RE_FLOAT = re.compile(r"-?\d*\.\d+|-?\d+\.\d*")
+RE_INT_OR_FLOAT_str = RE_FLOAT.pattern+"|"+RE_INT.pattern
 ##RE_NOTEMPTY_LINE = re.compile(r"\s*(\S.*)(?:\n|$)")
+RE_2D_POINT = re.compile(r"\s*\(?\s*("+RE_INT_OR_FLOAT_str+r")\s*\,\s*("+RE_INT_OR_FLOAT_str+r")\s*\)?\s*")
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,6 +37,201 @@ def circle_mask(r, inner=0, border=0):
     elif inner<0: mask *= dist_from_center>r+inner
     return np.pad(mask, (border, border))
 #
+
+
+
+
+
+# from engine_base
+RE_FACTORIAL = re.compile(r"((\d+)\!)")
+RE_PARENTHESIS_OPS = re.compile(r"(\(([^\(\)]+)\))")
+
+RE_NUM = r"(?:("+RE_FLOAT.pattern+")|("+RE_INT.pattern+"))"
+RE_SOLVE_EXP_LOG = re.compile(r"("+RE_NUM+r"(\*\*+|//+)"+RE_NUM+")")
+RE_SOLVE_PROD_DIV = re.compile(r"("+RE_NUM+r"(\*|/)"+RE_NUM+")")
+RE_SOLVE_ADD_SUB = re.compile(r"("+RE_NUM+r"(\++|\-+)"+RE_NUM+")")
+
+RE_INT_GET = re.compile(r"^(\("+RE_INT.pattern+r"\)|"+RE_INT.pattern+")$")
+RE_FLOAT_GET = re.compile(r"^(\("+RE_FLOAT.pattern+r"\)|"+RE_FLOAT.pattern+")$")
+def solveoperation(w): # solve a number operation
+    for x,z in RE_FACTORIAL.findall(w): w = w.replace(x, str(int(np.prod(arange(0, int(z))+1))))
+    while l:=RE_PARENTHESIS_OPS.findall(w):
+        for x,z in l: w = w.replace(x, str(solveoperation(z)))
+    
+    while l:=RE_SOLVE_EXP_LOG.findall(w): # exp (x**y) and log (x//y)
+        for o,xf,xi,y,zf,zi in l:
+            x = float(xf) if xf else int(xi)
+            z = float(zf) if zf else int(zi)
+            if "//" in y: w = w.replace(o, str(math.log(x, z)), 1)
+            else: w = w.replace(o, str(x**z), 1)
+            
+    while l:=RE_SOLVE_PROD_DIV.findall(w): # prod (x*y) and div (x/y)
+        for o,xf,xi,y,zf,zi in l:
+            x = float(xf) if xf else int(xi)
+            z = float(zf) if zf else int(zi)
+            if "/" in y: w = w.replace(o, str(x/z), 1)
+            else: w = w.replace(o, str(x*z), 1)
+    while l:=RE_SOLVE_ADD_SUB.findall(w): # add (x+y) and subtract (x-y)
+        for o,xf,xi,y,zf,zi in l:
+            x = float(xf) if xf else int(xi)
+            z = float(zf) if zf else int(zi)
+            if y.count("-")%2: w = w.replace(o, str(x-z), 1)
+            else: w = w.replace(o, str(x+z), 1)
+    if m:=RE_INT_GET.match(w): w = int(m[0])
+    else: w = float(w)
+##        if had_dice: return www # can't save
+##        SOLVED_OPERATIONS[w] = www
+    return w
+##    return SOLVED_OPERATIONS[w]
+
+
+RE_NUM_2 = r"(?:(?:-?\d*\.\d+|-?\d+\.\d*)|(?:-?\d+))"
+RE_NUM_2_PAR = r"\("+RE_NUM_2+r"\)"
+RE_NUM_2 = r"(?:"+RE_NUM_2_PAR+"|"+RE_NUM_2+")" # or in parentheses # \([^\(\)]*\)
+
+RE_PARENTHESIS_PROD = re.compile(r"(\d+|\))(\()")
+RE_ANY_OPERATOR = r"[\+\-\*\/\!]+"
+RE_SOLVE = re.compile(
+    r"(?:"+RE_NUM_2+RE_ANY_OPERATOR+RE_NUM_2+"(?:"+RE_ANY_OPERATOR+RE_NUM_2+")?|"+RE_NUM_2_PAR+")+", flags=re.IGNORECASE)
+
+def solve(x:str):
+    for y,z in RE_PARENTHESIS_PROD.findall(x):
+        x = x.replace(f"{y}{z}", f"{y}*{z}")
+    while l:=RE_SOLVE.findall(x):
+        for w in l: x = x.replace(w, str(solveoperation(w)))
+    return x
+
+##print(solve("2+2"))
+##print(solve("2-2"))
+##print(solve("3*2"))
+##print(solve("3/2"))
+##print(solve("2**3"))
+##print(solve("2//3"))
+##print(solve("16**(.5)"))
+
+
+
+
+RE_ADV_PARENTHESIS_OPS = re.compile(r"(\(([^\(\)]+)\))")
+
+RE_ALGEBRAIC = r"[a-zA-Z]|{\d+}"
+RE_ADV_NUM = r"(?:("+RE_FLOAT.pattern+")|("+RE_INT.pattern+")|("+RE_ALGEBRAIC+"))"
+RE_ADV_SOLVE_EXP_LOG = re.compile(r"("+RE_ADV_NUM+r"(\*\*+|//+)"+RE_ADV_NUM+")")
+RE_ADV_SOLVE_PROD_DIV = re.compile(r"("+RE_ADV_NUM+r"(\*|/)"+RE_ADV_NUM+")")
+RE_ADV_SOLVE_ADD_SUB = re.compile(r"("+RE_ADV_NUM+r"(\++|\-+)"+RE_ADV_NUM+")")
+
+# apply an equation to values given in keyword arguments; x=1, y=np.array([1,8,.5])
+def advanced_solveoperation(equation, **kwargs):
+    i = 0
+    values = {}
+    
+    substitutions = {}
+    for k in re.findall(RE_ALGEBRAIC, equation):
+        a = "{"+str(i)+"}"
+        substitutions[a] = k
+        if k not in kwargs: return None # not solvable, missing inputs
+        equation = equation.replace(k, a, 1)
+        i += 1
+        
+    def get_current_value(a):
+        if a not in values:
+            k = substitutions[a]
+            if hasattr(kwargs[k], "copy"): values[a] = kwargs[k].copy()
+            else: values[a] = kwargs[k]
+        return values[a]
+    
+    def partial(w):
+##        print(w)
+        for x,z in RE_FACTORIAL.findall(w): w = w.replace(x, str(int(np.prod(np.arange(0, int(z))+1))))
+        
+        while l:=RE_ADV_PARENTHESIS_OPS.findall(w):
+            for x,z in l:
+                ww = partial(z)
+                w = w.replace(x, ww)
+        
+        while l:=RE_ADV_SOLVE_EXP_LOG.findall(w): # exp (x**y) and log (x//y)
+            for o,xf,xi,xA,y,zf,zi,zA in l:
+                if xA: x = get_current_value(xA)
+                else: x = float(xf) if xf else int(xi)
+                if zA: z = get_current_value(zA)
+                else: z = float(zf) if zf else int(zi)
+                
+                if "//" in y: r = np.log(x, z)
+                else: r = x**z
+                
+                if xA and zA: # combined
+                    values[xA] = r
+                    del values[zA]
+                    w = w.replace(o, xA)
+                elif xA:
+                    values[xA] = r
+                    w = w.replace(o, xA)
+                elif zA:
+                    values[zA] = r
+                    w = w.replace(o, zA)
+                else: w = w.replace(o, str(r), 1)
+                
+        while l:=RE_ADV_SOLVE_PROD_DIV.findall(w): # prod (x*y) and div (x/y)
+            for o,xf,xi,xA,y,zf,zi,zA in l:
+                if xA: x = get_current_value(xA)
+                else: x = float(xf) if xf else int(xi)
+                if zA: z = get_current_value(zA)
+                else: z = float(zf) if zf else int(zi)
+                
+                if "/" in y: r = x/z
+                else: r = x*z
+                    
+                if xA and zA: # combined
+                    values[xA] = r
+                    del values[zA]
+                    w = w.replace(o, xA)
+                elif xA:
+                    values[xA] = r
+                    w = w.replace(o, xA)
+                elif zA:
+                    values[zA] = r
+                    w = w.replace(o, zA)
+                else: w = w.replace(o, str(r), 1)
+                
+        while l:=RE_ADV_SOLVE_ADD_SUB.findall(w): # add (x+y) and subtract (x-y)
+            for o,xf,xi,xA,y,zf,zi,zA in l:
+                if xA: x = get_current_value(xA)
+                else: x = float(xf) if xf else int(xi)
+                if zA: z = get_current_value(zA)
+                else: z = float(zf) if zf else int(zi)
+                
+                if y.count("-")%2: r = x-z
+                else: r = x+z
+                
+                if xA and zA: # combined
+                    values[xA] = r
+                    del values[zA]
+                    w = w.replace(o, xA)
+                elif xA:
+                    values[xA] = r
+                    w = w.replace(o, xA)
+                elif zA:
+                    values[zA] = r
+                    w = w.replace(o, zA)
+                else: w = w.replace(o, str(r), 1)
+        return w
+    
+    partial(equation) # start the solving chain
+    
+    for k in values.keys():
+        if k not in kwargs: return values[k] # must be the result
+    return 0
+
+##inputs = {"x": -3,"y": np.array((3.5,6))}
+##print(inputs)
+##print(advanced_solveoperation("x**2+4!", **inputs))
+##print(advanced_solveoperation("(x-2)/y", **inputs))
+##print(advanced_solveoperation("(x**2+2)+(x-2)/y", **inputs))
+##print(advanced_solveoperation("((x-2)/(y+x))+z", **inputs))
+##input()
+#
+
+
 
 
 
@@ -157,17 +355,75 @@ def mapping_func2(x, y):
 def mapping_func3(x, y):
     return (y*np.cos(y+x**2)), x*np.sin(y**2+x)
 
+
+
+
+
+
+
+class UserModifiablePoint:
+    x = 0
+    y = 0
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def __str__(self):
+        return f"({self.x}, {self.y})"
+
+    
+class UserModifiableMappingFunction:
+    x = "1-a*x*x+y"
+    y = "b*x"
+
+    def __init__(self):
+        self.constants = {"a":1.4, "b":0.3}
+        
+    def required_constants(self): # return a set of keyword arguments __call__ requires
+        need = set(re.findall(RE_ALGEBRAIC, self.x))
+        need |= set(re.findall(RE_ALGEBRAIC, self.y))
+        if "x" in need: need.remove("x")
+        if "y" in need: need.remove("y")
+        return need
+
+    def missing_constants(self):
+        return self.required_constants()-set(self.constants.keys())
+
+    def trim_excess_constants(self):
+        required = self.required_constants()
+        for k in list(self.constants.keys()):
+            if k not in required: del self.constants[k]
+
+    def save(self):
+        pass
+    
+    def load(self):
+        pass
+    
+    def __str__(self):
+        x = self.x
+        y = self.y
+        for k,v in self.constants.items():
+            x = x.replace(k, str(v))
+            y = y.replace(k, str(v))
+        missing = self.missing_constants()
+        return f"(x= {x}, y= {y})" + (str(" Undefined values!") if missing else "")
+
+    def __call__(self, x, y, **inputs):
+        return (advanced_solveoperation(self.x, x=x, y=y, **inputs|self.constants),
+                advanced_solveoperation(self.y, x=x, y=y, **inputs|self.constants))
+
+
 class ConsoleInterface():
     interface_depth = 0
     
     PRECISION = 0.005 #ZOOM = 200
-    START_POINT = (0,0)
+    START_POINT = UserModifiablePoint(0,0)
     FUNCTION = None
     ALT_VISUALS = False
     AUTOFILL = False
 
     BORDER = 1
-    EPSILON = 1.
+    EPSILON = 0.1
     
     TIMESTEP = 0
     TOPLEFT = (0,0)
@@ -181,7 +437,7 @@ class ConsoleInterface():
     
     
     def __init__(self):
-        self.FUNCTION = mapping_func0
+        self.FUNCTION = UserModifiableMappingFunction()
 
     def _show_user_options(self, desc, options):
         desc = clean_text_box(desc)
@@ -211,6 +467,7 @@ class ConsoleInterface():
             if 0<=user_input<len(options):
                 f = options[user_input][1]
                 if f is not None:
+                    self._depth_print("-> "+options[user_input][0])
                     self.interface_depth += 1
                     output = f()
                     self.interface_depth -= 1
@@ -230,39 +487,34 @@ class ConsoleInterface():
     def mainmenu_options(self):
         options = [
             ("Start", self.activerun),
-            (f"Set Precision [{self.PRECISION}]", self.set_precision),
-            (f"Set Epsilon [{self.EPSILON}]", self.set_epsilon),
-            (f"Set Start Point [{self.START_POINT}]", self.set_startpoint),
-            (f"Mapping Functions [{self.FUNCTION}]", None),
-            (f"Load Configuration", None),
-            (f"Save Configuration", None),
-            (f"Exit", self.quit),
+            ("Set Precision", self.set_precision),
+            ("Set Start Point", self.set_startpoint),
+            ("Load State", None),
+            ("Exit", self.quit),
             ]
-        self._show_user_options("Simple interface for dynamic model visualization", options)
+        desc = "Simple interface for dynamic model visualization"
+        desc += f"\nPrecision: {self.PRECISION}"
+        desc += f"\nStarting point: {self.START_POINT}"
+        self._show_user_options(desc, options)
         return self._process_user_input(options)
     
     def set_precision(self):
-        desc = "Set the precision of the simulation."
+        desc = "Precision of the simulation."
         desc = clean_text_box(desc)
         self._depth_print(desc)
         self._set_attr("PRECISION")
         
     def set_epsilon(self):
-        desc = "Set the radius of random uniform noise"
+        desc = "Radius of the random uniform noise"
         desc = clean_text_box(desc)
         self._depth_print(desc)
         self._set_attr("EPSILON")
         
     def set_startpoint(self):
-        desc = "Set the starting point of the simulation"
+        desc = "Starting point of the simulation"
         desc = clean_text_box(desc)
         self._depth_print(desc)
         self._set_attr("START_POINT")
-        
-    def set_function(self):
-        desc = "Set the mapping function to use"
-        self._depth_print(desc)
-        self._set_attr("FUNCTION")
         
         
     def _set_attr(self, attr_name):
@@ -273,12 +525,26 @@ class ConsoleInterface():
         success = False
         if user_input:
             if t in [int, float]:
+                user_input = user_input.replace(",",".")
                 if RE_INT.match(user_input) or RE_FLOAT.match(user_input):
-                    user_input = t(user_input.replace(",","."))
+                    user_input = t(user_input)
                     if user_input>0:
                         setattr(self, attr_name, user_input)
                         self._depth_print("Value set")
                         success = True
+                else:
+                    self._depth_print("Invalid input")
+            elif t is str:
+                setattr(self, attr_name, user_input)
+                self._depth_print("Value set")
+                success = True
+            elif t is UserModifiablePoint:
+                m = RE_2D_POINT.match(user_input)
+                if m:
+                    new_point = UserModifiablePoint(float(m.group(1)), float(m.group(2)))
+                    setattr(self, attr_name, new_point)
+                    self._depth_print("Value set")
+                    success = True
                 else:
                     self._depth_print("Invalid input")
             else:
@@ -288,6 +554,90 @@ class ConsoleInterface():
         return success
         
     
+    def modifyfunction(self):
+        while not self.modifyfunction_options(): pass
+        
+    def modifyfunction_options(self):
+        options = [
+            ("Modify the x-axis equation", self._modifyfunction_axis_x),
+            ("Modify the y-axis equation", self._modifyfunction_axis_y),
+            ("Define constants", self._modifyfunction_define),
+            ("Save as", None),
+            ("Load", None),
+            ("Done", self.quit),
+            ]
+        desc = "asdasd"
+        desc += f"\nX-axis: {self.FUNCTION.x}"
+        desc += f"\nY-axis: {self.FUNCTION.y}"
+        
+        if self.FUNCTION.constants:
+            desc += "\nDefined:"
+            for k,v in self.FUNCTION.constants.items():
+                desc += f"\n  {k} = {v}"
+        missing_constants = self.FUNCTION.missing_constants()
+        if missing_constants:
+            desc += "\nUndefined: " + ", ".join(missing_constants)
+        
+        self._show_user_options(desc, options)
+        return self._process_user_input(options)
+
+    def _modifyfunction_axis_x(self):
+        desc = "Give a new x-axis equation for the function"
+        desc = clean_text_box(desc)
+        self._depth_print(desc)
+        user_input = self._depth_input(self.FUNCTION.x+" -> ")
+        if user_input:
+            self.FUNCTION.x = user_input
+            self._depth_print("Value set")
+        
+    def _modifyfunction_axis_y(self):
+        desc = "Give a new y-axis equation for the function."
+        desc = clean_text_box(desc)
+        self._depth_print(desc)
+        user_input = self._depth_input(self.FUNCTION.y+" -> ")
+        if user_input:
+            self.FUNCTION.y = user_input
+            self._depth_print("Value set")
+
+    def _modifyfunction_define(self):
+        desc = "Define or redefine function constants."
+        if self.FUNCTION.constants:
+            desc += "\nDefined:"
+            for k,v in self.FUNCTION.constants.items():
+                desc += f"\n  {k} = {v}"
+        missing_constants = self.FUNCTION.missing_constants()
+        if missing_constants:
+            desc += "\nUndefined: " + ", ".join(missing_constants)
+        desc = clean_text_box(desc)
+        self._depth_print(desc)
+
+        k = None
+        v = None
+        if 1:
+##        while 1:
+            user_input = self._depth_input("Constant: ")
+            if not user_input: return
+            if user_input in self.FUNCTION.constants:
+                k = user_input
+                user_input = self._depth_input(f"Redefine '{user_input}' as: ")
+                user_input = user_input.replace(",",".")
+                if m:=RE_FLOAT.match(user_input): v = float(user_input)
+                elif m:=RE_INT.match(user_input): v = int(user_input)
+            elif user_input in missing_constants:
+                k = user_input
+                user_input = self._depth_input(f"Define '{user_input}' as: ")
+                user_input = user_input.replace(",",".")
+                if m:=RE_FLOAT.match(user_input): v = float(user_input)
+                elif m:=RE_INT.match(user_input): v = int(user_input)
+            else:
+                self._depth_print("Invalid variable")
+        
+        if v is not None:
+            self.FUNCTION.constants[k] = v
+            self._depth_print("Value set")
+        elif k is not None:
+            self._depth_print("Invalid value")
+
 
     def activerun(self):
         self._activerun_init()
@@ -296,20 +646,22 @@ class ConsoleInterface():
         
     def activerun_options(self):
         options = [
-            ("Next", self._activerun_next),
+            ("Next State", self._activerun_next),
             ("Open Matplotlib Figure", self._activerun_visuals),
-            (f"Mapping Functions [{self.FUNCTION}]", None),
-            (f"Set Epsilon [{self.EPSILON}]", self.set_epsilon),
+            ("Modify Epsilon", self.set_epsilon),
+            ("Modify Function", self.modifyfunction),
             ("Run Until...", self.rununtil),
+            ("Save State", None),
             ("Stop", self.quit),
             ]
 
-
         tl, br = np.multiply(self.TOPLEFT, self.PRECISION), np.multiply(self.BOTTOMRIGHT, self.PRECISION)
         desc = f"""Timestep: {self.TIMESTEP}
-Precision: {self.PRECISION:.6f}
-Domain: ({tl[0]}..{br[0]}, {tl[1]}..{br[1]})
+Precision: {self.PRECISION}
+Epsilon radius: {self.EPSILON}
+Function: {self.FUNCTION}
 Array shape: {self.IMAGE.shape}
+Array domain: ({tl[0]} ... {br[0]}, {tl[1]} ... {br[1]})
 Hausdorff: ???
 """
         if self.RUNUNTIL_TIMESTEP>0:
@@ -326,12 +678,12 @@ Hausdorff: ???
         self.IMAGE = np.zeros((3,3), dtype=np.bool_)
         self.IMAGE[1,1] = True
 
-        adjusted_start = np.divide(self.START_POINT, self.PRECISION)
-        self.TOPLEFT = np.subtract(adjusted_start, np.divide(self.IMAGE.shape, 2))
+        start = (self.START_POINT.x, self.START_POINT.y)
+        self.TOPLEFT = np.subtract(start, np.divide(self.IMAGE.shape, 2))
         self.BOTTOMRIGHT = np.add(self.IMAGE.shape, self.TOPLEFT)
         #
         
-        self.IMAGE_HISTORY = self.IMAGE.astype(np.uint64)
+        self.IMAGE_HISTORY = self.IMAGE.astype(np.uint16)
         self.TOPLEFT_PREV = self.TOPLEFT
         self.TIMESTEP = 0
         
@@ -356,28 +708,29 @@ Hausdorff: ???
         
     def _activerun_next(self):
         #######
-        adjusted_epsilon = int(self.EPSILON/self.PRECISION)
+        epsilon_units = int(self.EPSILON/self.PRECISION)
         
-        eps_border = adjusted_epsilon+self.BORDER
-        eps_circle = circle_mask(adjusted_epsilon, border=self.BORDER)
+        eps_border_units = epsilon_units+self.BORDER
+        eps_circle = circle_mask(epsilon_units, border=self.BORDER)
         
         borders = get_mask_borders(self.IMAGE)
         indexes = calc_mask_indexes(self.IMAGE)
-
-        points_to_process = list(indexes[borders].astype(np.float64)+self.TOPLEFT)
-        points_processed = []
-        for x,y in points_to_process:
-            points_processed.append(self.FUNCTION(self.PRECISION,x,y))
-
-            self.TOPLEFT = np.minimum(self.TOPLEFT, np.subtract(points_processed[-1], eps_border))
-            self.BOTTOMRIGHT = np.maximum(self.BOTTOMRIGHT, np.add(points_processed[-1], eps_border))
         
-        new_mask_shape = np.subtract(self.BOTTOMRIGHT, self.TOPLEFT).astype(np.int64)
-            
+        points = indexes[borders].astype(np.float64)-np.divide(self.IMAGE.shape, 2)+.5
+        
+        points *= self.PRECISION
+        points[:,0], points[:,1] = self.FUNCTION(points[:,0], points[:,1])
+        points /= self.PRECISION # back to units
+        
+        self.TOPLEFT = np.minimum(self.TOPLEFT, np.min(np.subtract(points, eps_border_units), axis=0))
+        self.BOTTOMRIGHT = np.maximum(self.BOTTOMRIGHT, np.max(np.add(points, eps_border_units), axis=0))
+        
+        new_mask_shape = np.subtract(self.BOTTOMRIGHT, self.TOPLEFT).astype(np.int32)
+        
         new_mask = np.zeros(new_mask_shape+1, dtype=np.bool_)
-        for x,y in points_processed:
-            x = int(x-self.TOPLEFT[0]-eps_border)
-            y = int(y-self.TOPLEFT[1]-eps_border)
+        for x,y in points:
+            x = int(x-self.TOPLEFT[0]-eps_border_units)
+            y = int(y-self.TOPLEFT[1]-eps_border_units)
             x_slice = slice(max(x, 0), x+eps_circle.shape[0])
             y_slice = slice(max(y, 0), y+eps_circle.shape[1])
             new_mask[x_slice, y_slice] |= eps_circle
@@ -390,11 +743,11 @@ Hausdorff: ???
         # expand the total image array
         offset = (self.TOPLEFT_PREV-self.TOPLEFT)
         pad_r = np.subtract(self.IMAGE.shape, self.IMAGE_HISTORY.shape)/2
-        offset = (offset-pad_r).astype(np.int64)
+        offset = (offset-pad_r).astype(np.int32)
         pad_l = pad_r.copy()
         pad_r += pad_r%1>=.5
-        pad_r = np.clip(pad_r, a_min=0, a_max=None).astype(np.int64)
-        pad_l = np.clip(pad_l, a_min=0, a_max=None).astype(np.int64)
+        pad_r = np.clip(pad_r, a_min=0, a_max=None).astype(np.int32)
+        pad_l = np.clip(pad_l, a_min=0, a_max=None).astype(np.int32)
         pad = ((pad_l[0]+offset[0],pad_r[0]-offset[0]), (pad_l[1]+offset[1],pad_r[1]-offset[1]))
         self.IMAGE_HISTORY = np.pad(self.IMAGE_HISTORY, pad)
         #
