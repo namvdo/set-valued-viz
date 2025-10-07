@@ -727,6 +727,20 @@ impl Utils {
     }
 }
 
+// Discretize a circle in N uniformly spaced boundary points
+fn discretize_circle(center_x: f64, center_y: f64, radius: f64, n_points: usize) -> Vec<(f64, f64)> {
+    let mut points = Vec::with_capacity(n_points)
+
+    for i in 0..n_points {
+        let angle = 2.0 * std::f64::consts::PI * (i as f64) / (n_points as f64);
+        let x = center_x + radius * angle.cos();
+        let y = center_y + radius * angle.sin();
+        points.push((x, y))
+    }
+    
+    points
+}
+
 
 #[wasm_bindgen(start)]
 pub fn main() {
