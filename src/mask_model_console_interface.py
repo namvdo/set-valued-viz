@@ -1,30 +1,24 @@
 import re
 import math
-
-RE_INT = re.compile(r"-?\d+")
-RE_FLOAT = re.compile(r"-?\d*\.\d+|-?\d+\.\d*")
-RE_INT_OR_FLOAT_str = RE_FLOAT.pattern+"|"+RE_INT.pattern
-##RE_NOTEMPTY_LINE = re.compile(r"\s*(\S.*)(?:\n|$)")
-RE_2D_POINT = re.compile(r"\s*\(?\s*("+RE_INT_OR_FLOAT_str+r")\s*\,\s*("+RE_INT_OR_FLOAT_str+r")\s*\)?\s*")
-
 import matplotlib.pyplot as plt
 import numpy as np
 
 
 # from arrayprc
-def around(a):
-    signs = np.sign(a)
-    i = np.int_(a)
-    a *= signs
-    a %= 1
-    a *= 2*signs
-    return i+np.int_(a)
 
-def distance(a, b):
-    return np.linalg.norm(np.subtract(a, b), axis=-1) # n-dimensional point to point distance
-
-def nearestpoint_i(a, *b):
-    return np.argmin([distance(a, x) for x in b])
+##def around(a):
+##    signs = np.sign(a)
+##    i = np.int_(a)
+##    a *= signs
+##    a %= 1
+##    a *= 2*signs
+##    return i+np.int_(a)
+##
+##def distance(a, b):
+##    return np.linalg.norm(np.subtract(a, b), axis=-1) # n-dimensional point to point distance
+##
+##def nearestpoint_i(a, *b):
+##    return np.argmin([distance(a, x) for x in b])
 
 def circle_mask(r, inner=0, border=0):
     x = np.expand_dims(np.arange(-r, r+1), axis=1)
@@ -42,8 +36,15 @@ def circle_mask(r, inner=0, border=0):
 
 
 
+RE_INT = re.compile(r"-?\d+")
+RE_FLOAT = re.compile(r"-?\d*\.\d+|-?\d+\.\d*")
+RE_INT_OR_FLOAT_str = RE_FLOAT.pattern+"|"+RE_INT.pattern
+
+RE_2D_POINT = re.compile(r"\s*\(?\s*("+RE_INT_OR_FLOAT_str+r")\s*\,\s*("+RE_INT_OR_FLOAT_str+r")\s*\)?\s*")
+
+
 # from engine_base
-RE_FACTORIAL = re.compile(r"((\d+)\!)")
+RE_FACTORIAL = re.compile(r"((\d+)\!+)")
 RE_PARENTHESIS_OPS = re.compile(r"(\(([^\(\)]+)\))")
 
 RE_NUM = r"(?:("+RE_FLOAT.pattern+")|("+RE_INT.pattern+"))"
@@ -112,13 +113,19 @@ def solve(x:str):
 
 
 
-RE_ADV_PARENTHESIS_OPS = re.compile(r"(\(([^\(\)]+)\))")
+RE_ADV_PARENTHESIS_OPS = re.compile(r"((a?(?:sin|cos|tan))?\(([^\(\)]+)\))")
 
-RE_ALGEBRAIC = r"[a-zA-Z]|{\d+}"
-RE_ADV_NUM = r"(?:("+RE_FLOAT.pattern+")|("+RE_INT.pattern+")|("+RE_ALGEBRAIC+"))"
-RE_ADV_SOLVE_EXP_LOG = re.compile(r"("+RE_ADV_NUM+r"(\*\*+|//+)"+RE_ADV_NUM+")")
-RE_ADV_SOLVE_PROD_DIV = re.compile(r"("+RE_ADV_NUM+r"(\*|/)"+RE_ADV_NUM+")")
-RE_ADV_SOLVE_ADD_SUB = re.compile(r"("+RE_ADV_NUM+r"(\++|\-+)"+RE_ADV_NUM+")")
+RE_ALGEBRAIC = r"[a-zA-Z]+|(?:\{\d+\})"
+algebraic_blacklist = {"sin","cos","tan","asin","acos","atan"}
+
+RE_ADV_NUM = re.compile(r"(?:("+RE_FLOAT.pattern+")|("+RE_INT.pattern+")|("+RE_ALGEBRAIC+"))")
+RE_ADV_SOLVE_EXP_LOG = re.compile(r"("+RE_ADV_NUM.pattern+r"(\*\*+|//+)"+RE_ADV_NUM.pattern+")")
+RE_ADV_SOLVE_PROD_DIV = re.compile(r"("+RE_ADV_NUM.pattern+r"(\*|/)"+RE_ADV_NUM.pattern+")")
+RE_ADV_SOLVE_ADD_SUB = re.compile(r"("+RE_ADV_NUM.pattern+r"(\++|\-+)"+RE_ADV_NUM.pattern+")")
+
+RE_SIN_COS_TAN = re.compile(r"((a?(?:sin|cos|tan))\((.+)\))")
+
+RE_ADV_PARENTHESIS_PROD = re.compile(r"("+RE_ALGEBRAIC+r"|\d+|\))(\(|"+RE_ALGEBRAIC+r"|\d+)")
 
 # apply an equation to values given in keyword arguments; x=1, y=np.array([1,8,.5])
 def advanced_solveoperation(equation, **kwargs):
@@ -127,11 +134,12 @@ def advanced_solveoperation(equation, **kwargs):
     
     substitutions = {}
     for k in re.findall(RE_ALGEBRAIC, equation):
-        a = "{"+str(i)+"}"
-        substitutions[a] = k
-        if k not in kwargs: return None # not solvable, missing inputs
-        equation = equation.replace(k, a, 1)
-        i += 1
+        if k not in algebraic_blacklist:
+            a = "{"+str(i)+"}"
+            substitutions[a] = k
+            if k not in kwargs: return None # not solvable, missing inputs
+            equation = equation.replace(k, a, 1)
+            i += 1
         
     def get_current_value(a):
         if a not in values:
@@ -140,14 +148,34 @@ def advanced_solveoperation(equation, **kwargs):
             else: values[a] = kwargs[k]
         return values[a]
     
-    def partial(w):
-##        print(w)
-        for x,z in RE_FACTORIAL.findall(w): w = w.replace(x, str(int(np.prod(np.arange(0, int(z))+1))))
+    def single_operation(w):
+        for x,z in RE_FACTORIAL.findall(w):
+            w = w.replace(x, str(int(np.prod(np.arange(0, int(z))+1))))
         
-        while l:=RE_ADV_PARENTHESIS_OPS.findall(w):
-            for x,z in l:
-                ww = partial(z)
-                w = w.replace(x, ww)
+        for o,sct,z in RE_ADV_PARENTHESIS_OPS.findall(w):
+            ww = single_operation(z)
+            
+            xf,xi,xA = RE_ADV_NUM.match(ww).groups()
+            if xA: x = get_current_value(xA)
+            else: x = float(xf) if xf else int(xi)
+            match sct[-3:]:
+                case "sin":
+                    if sct[0]=="a": r = np.asin(x)
+                    else: r = np.sin(x)
+                case "cos":
+                    if sct[0]=="a": r = np.acos(x)
+                    else: r = np.cos(x)
+                case "tan":
+                    if sct[0]=="a": r = np.atan(x)
+                    else: r = np.tan(x)
+                case _: r = x
+            
+            if xA:
+                values[xA] = r
+                ww = xA
+            else: ww = str(r)
+            
+            w = w.replace(o, ww)
         
         while l:=RE_ADV_SOLVE_EXP_LOG.findall(w): # exp (x**y) and log (x//y)
             for o,xf,xi,xA,y,zf,zi,zA in l:
@@ -162,13 +190,13 @@ def advanced_solveoperation(equation, **kwargs):
                 if xA and zA: # combined
                     values[xA] = r
                     del values[zA]
-                    w = w.replace(o, xA)
+                    w = w.replace(o, xA, 1)
                 elif xA:
                     values[xA] = r
-                    w = w.replace(o, xA)
+                    w = w.replace(o, xA, 1)
                 elif zA:
                     values[zA] = r
-                    w = w.replace(o, zA)
+                    w = w.replace(o, zA, 1)
                 else: w = w.replace(o, str(r), 1)
                 
         while l:=RE_ADV_SOLVE_PROD_DIV.findall(w): # prod (x*y) and div (x/y)
@@ -184,13 +212,13 @@ def advanced_solveoperation(equation, **kwargs):
                 if xA and zA: # combined
                     values[xA] = r
                     del values[zA]
-                    w = w.replace(o, xA)
+                    w = w.replace(o, xA, 1)
                 elif xA:
                     values[xA] = r
-                    w = w.replace(o, xA)
+                    w = w.replace(o, xA, 1)
                 elif zA:
                     values[zA] = r
-                    w = w.replace(o, zA)
+                    w = w.replace(o, zA, 1)
                 else: w = w.replace(o, str(r), 1)
                 
         while l:=RE_ADV_SOLVE_ADD_SUB.findall(w): # add (x+y) and subtract (x-y)
@@ -206,28 +234,39 @@ def advanced_solveoperation(equation, **kwargs):
                 if xA and zA: # combined
                     values[xA] = r
                     del values[zA]
-                    w = w.replace(o, xA)
+                    w = w.replace(o, xA, 1)
                 elif xA:
                     values[xA] = r
-                    w = w.replace(o, xA)
+                    w = w.replace(o, xA, 1)
                 elif zA:
                     values[zA] = r
-                    w = w.replace(o, zA)
+                    w = w.replace(o, zA, 1)
                 else: w = w.replace(o, str(r), 1)
         return w
     
-    partial(equation) # start the solving chain
+    single_operation(equation) # start the solving chain
     
     for k in values.keys():
         if k not in kwargs: return values[k] # must be the result
     return 0
 
-##inputs = {"x": -3,"y": np.array((3.5,6))}
+def advanced_solve(equation, **inputs):
+    for y,z in RE_ADV_PARENTHESIS_PROD.findall(equation):
+        if y not in algebraic_blacklist and z not in algebraic_blacklist:
+            equation = equation.replace(f"{y}{z}", f"{y}*{z}")
+    return advanced_solveoperation(equation, **inputs)
+
+
+##inputs = {"x": 3,"y": np.array((3.5,6))}
 ##print(inputs)
+##print(advanced_solve("cos(x+1)3", **inputs))
 ##print(advanced_solveoperation("x**2+4!", **inputs))
 ##print(advanced_solveoperation("(x-2)/y", **inputs))
 ##print(advanced_solveoperation("(x**2+2)+(x-2)/y", **inputs))
 ##print(advanced_solveoperation("((x-2)/(y+x))+z", **inputs))
+##print(advanced_solveoperation("sin(-x)", **inputs))
+##print(advanced_solveoperation("cos(-x)", **inputs))
+##print(advanced_solveoperation("tan(-x)", **inputs))
 ##input()
 #
 
@@ -328,35 +367,22 @@ def clean_text_box(text, **kwargs_override):
     kwargs |= kwargs_override
     return text_box(text, **kwargs)
 
-    
-def mapping_wrapper(one_of_the_mapping_functions):
-    def wrapper(precision, x, y, *args, **kwargs):
-        x *= precision
-        y *= precision
-        x,y = one_of_the_mapping_functions(x,y,*args,**kwargs)
-        x /= precision
-        y /= precision
-        return x, y
-    return wrapper
-
-@mapping_wrapper
-def mapping_henon(x, y, a=1.4, b=0.3):
-    return (1-a*x*x+y), b*x
-@mapping_wrapper
-def mapping_func0(x, y):
-    return x/2, y/2
-@mapping_wrapper
-def mapping_func1(x, y):
-    return x * np.sin(np.pi*y*1.3), y * np.sin(np.pi*y)
-@mapping_wrapper
-def mapping_func2(x, y):
-    return (x*2 + x*np.sin(y**2))/3, (y + x*2*np.cos(x**2))/3
-@mapping_wrapper
-def mapping_func3(x, y):
-    return (y*np.cos(y+x**2)), x*np.sin(y**2+x)
 
 
 
+##def halve_the_array_size(array):
+##    pad = np.mod(array.shape, 2)
+##    smaller = np.zeros(np.true_divide(array.shape, 2).astype(np.int32)+pad, dtype=np.float64)
+##    array = np.pad(array, pad)
+##    smaller[:,:] = array[:-1:2,:-1:2].astype(np.float64) + array[1::2,1::2]
+##    return smaller/2
+##
+##def third_the_array_size(array):
+##    smaller = np.zeros(np.true_divide(array.shape, 3).astype(np.int32), dtype=np.float64)
+##    smaller[:,:] = array[:-2:3,:-2:3].astype(np.float64)
+##    smaller += array[1:-1:3,1:-1:3].astype(np.float64)
+##    smaller += array[2::3,2::3].astype(np.float64)
+##    return smaller/3
 
 
 
@@ -381,6 +407,7 @@ class UserModifiableMappingFunction:
     def required_constants(self): # return a set of keyword arguments __call__ requires
         need = set(re.findall(RE_ALGEBRAIC, self.x))
         need |= set(re.findall(RE_ALGEBRAIC, self.y))
+        need -= algebraic_blacklist
         if "x" in need: need.remove("x")
         if "y" in need: need.remove("y")
         return need
@@ -555,7 +582,8 @@ class ConsoleInterface():
         
     
     def modifyfunction(self):
-        while not self.modifyfunction_options(): pass
+        while not self.modifyfunction_options():
+            self.FUNCTION.trim_excess_constants()
         
     def modifyfunction_options(self):
         options = [
@@ -658,16 +686,15 @@ class ConsoleInterface():
         tl, br = np.multiply(self.TOPLEFT, self.PRECISION), np.multiply(self.BOTTOMRIGHT, self.PRECISION)
         desc = f"""Timestep: {self.TIMESTEP}
 Precision: {self.PRECISION}
-Epsilon radius: {self.EPSILON}
+Epsilon radius: {self.EPSILON} ({int(self.EPSILON/self.PRECISION)} pixels)
 Function: {self.FUNCTION}
 Array shape: {self.IMAGE.shape}
 Array domain: ({tl[0]} ... {br[0]}, {tl[1]} ... {br[1]})
-Hausdorff: ???
-"""
+Hausdorff: ???"""
         if self.RUNUNTIL_TIMESTEP>0:
             self.RUNUNTIL_TIMESTEP -= 1
             self._activerun_next()
-            self._depth_print(desc)
+            self._depth_print(desc+"\n")
             return False
         
         self._show_user_options(desc, options)
@@ -784,11 +811,34 @@ Hausdorff: ???
 
 
 
+
+
 if __name__ == "__main__":
     interface = ConsoleInterface()
     interface.mainmenu()
 
 
+
+    
+##    test_image = circle_mask(50, border=5)
+##    print(test_image.shape)
+##
+##    half_image = halve_the_array_size(test_image)
+##    print(half_image.shape)
+##    quarter_image = halve_the_array_size(half_image)
+##    quarter_image = (quarter_image*4).astype(np.int8)
+##    print(quarter_image.shape)
+##    print(quarter_image)
+##
+##    print("")
+##    third_image = third_the_array_size(test_image)
+##    print(third_image.shape)
+##    sixth_image = third_the_array_size(third_image)
+##    sixth_image = (sixth_image*9).astype(np.int8)
+##    print(sixth_image.shape)
+##    print(sixth_image)
+
+    
 
 
 
