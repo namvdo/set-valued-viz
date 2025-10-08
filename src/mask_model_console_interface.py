@@ -6,13 +6,13 @@ import numpy as np
 
 # from arrayprc
 
-##def around(a):
-##    signs = np.sign(a)
-##    i = np.int_(a)
-##    a *= signs
-##    a %= 1
-##    a *= 2*signs
-##    return i+np.int_(a)
+def around(a):
+    signs = np.sign(a)
+    i = np.int_(a)
+    a *= signs
+    a %= 1
+    a *= 2*signs
+    return i+np.int_(a)
 ##
 ##def distance(a, b):
 ##    return np.linalg.norm(np.subtract(a, b), axis=-1) # n-dimensional point to point distance
@@ -433,7 +433,7 @@ class UserModifiableMappingFunction:
             x = x.replace(k, str(v))
             y = y.replace(k, str(v))
         missing = self.missing_constants()
-        return f"(x= {x}, y= {y})" + (str(" Undefined values!") if missing else "")
+        return f"(x={x}, y={y})" + (str(" Has undefined constants!") if missing else "")
 
     def __call__(self, x, y, **inputs):
         return (advanced_solveoperation(self.x, x=x, y=y, **inputs|self.constants),
@@ -445,18 +445,26 @@ class ConsoleInterface():
     
     PRECISION = 0.005 #ZOOM = 200
     START_POINT = UserModifiablePoint(0,0)
+    
     FUNCTION = None
     ALT_VISUALS = False
     AUTOFILL = False
+    
+    ESCAPE_DISTANCE = 10.
+    # distance at which to consider them as escaped (prevents extreme array sizes)
 
     BORDER = 1
     EPSILON = 0.1
     
     TIMESTEP = 0
-    TOPLEFT = (0,0)
-    BOTTOMRIGHT = (0,0)
     IMAGE_HISTORY = None
     IMAGE = None
+    
+    TOPLEFT = (0,0)
+    BOTTOMRIGHT = (0,0)
+    TOPLEFT_PREV = (0,0)
+    BOTTOMRIGHT_PREV = (0,0)
+
 
     
     RUNUNTIL_TIMESTEP = 0
@@ -488,7 +496,7 @@ class ConsoleInterface():
         return input(depth+string, *args, **kwargs)
 
     def _process_user_input(self, options):
-        user_input = self._depth_input("\nSELECTION: ")
+        user_input = self._depth_input("SELECT: ")
         if user_input and user_input.isnumeric():
             user_input = int(user_input)
             if 0<=user_input<len(options):
@@ -501,7 +509,8 @@ class ConsoleInterface():
                     return output
                 else:
                     self._depth_print("Not implemented")
-            else: self._depth_print("User input was not in range")
+            else:
+                self._depth_print("Not a valid option")
         else: self._depth_print("Invalid input")
         print("")
         return False
@@ -516,17 +525,19 @@ class ConsoleInterface():
             ("Start", self.activerun),
             ("Set Precision", self.set_precision),
             ("Set Start Point", self.set_startpoint),
-            ("Load State", None),
+            ("Set Escape Distance", self.set_escapedistance),
+            ("Load", None),
             ("Exit", self.quit),
             ]
         desc = "Simple interface for dynamic model visualization"
-        desc += f"\nPrecision: {self.PRECISION}"
+        desc += f"\n\nPrecision: {self.PRECISION}"
         desc += f"\nStarting point: {self.START_POINT}"
+        desc += f"\nEscape distance: {self.ESCAPE_DISTANCE} ({int(self.ESCAPE_DISTANCE/self.PRECISION)} pixels)"
         self._show_user_options(desc, options)
         return self._process_user_input(options)
     
     def set_precision(self):
-        desc = "Precision of the simulation."
+        desc = "Precision of the simulation"
         desc = clean_text_box(desc)
         self._depth_print(desc)
         self._set_attr("PRECISION")
@@ -535,7 +546,7 @@ class ConsoleInterface():
         desc = "Radius of the random uniform noise"
         desc = clean_text_box(desc)
         self._depth_print(desc)
-        self._set_attr("EPSILON")
+        self._set_attr("EPSILON", zero_ok=True)
         
     def set_startpoint(self):
         desc = "Starting point of the simulation"
@@ -543,8 +554,14 @@ class ConsoleInterface():
         self._depth_print(desc)
         self._set_attr("START_POINT")
         
+    def set_escapedistance(self):
+        desc = "Distance at which to consider points as escaped\n(prevents extreme array sizes)"
+        desc = clean_text_box(desc)
+        self._depth_print(desc)
+        self._set_attr("ESCAPE_DISTANCE")
         
-    def _set_attr(self, attr_name):
+        
+    def _set_attr(self, attr_name, negative_ok=False, zero_ok=False):
         current_value = getattr(self, attr_name, None)
         t = type(current_value)
         
@@ -553,14 +570,18 @@ class ConsoleInterface():
         if user_input:
             if t in [int, float]:
                 user_input = user_input.replace(",",".")
-                if RE_INT.match(user_input) or RE_FLOAT.match(user_input):
+                if RE_INT.match(user_input) or (t is float and RE_FLOAT.match(user_input)):
                     user_input = t(user_input)
-                    if user_input>0:
+                    if user_input>0 or (negative_ok and user_input<0) or zero_ok:
                         setattr(self, attr_name, user_input)
                         self._depth_print("Value set")
                         success = True
-                else:
-                    self._depth_print("Invalid input")
+                if not success:
+                    complain = "! Given value must be "
+                    if not zero_ok: complain += "non-zero "
+                    if not negative_ok: complain += "positive "
+                    complain += "integer" if t is int else "float"
+                    self._depth_print(complain)
             elif t is str:
                 setattr(self, attr_name, user_input)
                 self._depth_print("Value set")
@@ -573,7 +594,7 @@ class ConsoleInterface():
                     self._depth_print("Value set")
                     success = True
                 else:
-                    self._depth_print("Invalid input")
+                    self._depth_print("Not a recognizable 2 dimensional point")
             else:
                 self._depth_print(f"Value setting of type ({t}) is not defined")
         else: self._depth_print("Invalid input")
@@ -587,15 +608,14 @@ class ConsoleInterface():
         
     def modifyfunction_options(self):
         options = [
-            ("Modify the x-axis equation", self._modifyfunction_axis_x),
-            ("Modify the y-axis equation", self._modifyfunction_axis_y),
-            ("Define constants", self._modifyfunction_define),
-            ("Save as", None),
-            ("Load", None),
+            ("Modify the X-axis Equation", self._modifyfunction_axis_x),
+            ("Modify the Y-axis Equation", self._modifyfunction_axis_y),
+            ("Define Constants", self._modifyfunction_define),
+            ("Save Function", None),
+            ("Load Function", None),
             ("Done", self.quit),
             ]
-        desc = "asdasd"
-        desc += f"\nX-axis: {self.FUNCTION.x}"
+        desc = f"\nX-axis: {self.FUNCTION.x}"
         desc += f"\nY-axis: {self.FUNCTION.y}"
         
         if self.FUNCTION.constants:
@@ -604,13 +624,13 @@ class ConsoleInterface():
                 desc += f"\n  {k} = {v}"
         missing_constants = self.FUNCTION.missing_constants()
         if missing_constants:
-            desc += "\nUndefined: " + ", ".join(missing_constants)
+            desc += "\nUndefined:" + "\n ".join(missing_constants)
         
         self._show_user_options(desc, options)
         return self._process_user_input(options)
 
     def _modifyfunction_axis_x(self):
-        desc = "Give a new x-axis equation for the function"
+        desc = "Set a new X-axis equation for the function"
         desc = clean_text_box(desc)
         self._depth_print(desc)
         user_input = self._depth_input(self.FUNCTION.x+" -> ")
@@ -619,7 +639,7 @@ class ConsoleInterface():
             self._depth_print("Value set")
         
     def _modifyfunction_axis_y(self):
-        desc = "Give a new y-axis equation for the function."
+        desc = "Set a new Y-axis equation for the function."
         desc = clean_text_box(desc)
         self._depth_print(desc)
         user_input = self._depth_input(self.FUNCTION.y+" -> ")
@@ -628,7 +648,7 @@ class ConsoleInterface():
             self._depth_print("Value set")
 
     def _modifyfunction_define(self):
-        desc = "Define or redefine function constants."
+        desc = "Define function constants"
         if self.FUNCTION.constants:
             desc += "\nDefined:"
             for k,v in self.FUNCTION.constants.items():
@@ -658,7 +678,7 @@ class ConsoleInterface():
                 if m:=RE_FLOAT.match(user_input): v = float(user_input)
                 elif m:=RE_INT.match(user_input): v = int(user_input)
             else:
-                self._depth_print("Invalid variable")
+                self._depth_print("Invalid constant")
         
         if v is not None:
             self.FUNCTION.constants[k] = v
@@ -674,45 +694,70 @@ class ConsoleInterface():
         
     def activerun_options(self):
         options = [
-            ("Next State", self._activerun_next),
+            ("Next Timestep", self._activerun_next),
             ("Open Matplotlib Figure", self._activerun_visuals),
             ("Modify Epsilon", self.set_epsilon),
             ("Modify Function", self.modifyfunction),
-            ("Run Until...", self.rununtil),
-            ("Save State", None),
+            ("Run Until Timestep", self.set_rununtil_timestep),
+            ("Run Until Hausdorff", None),
+            ("Save Timestep", None),
+            ("Load Timestep", None),
+            ("More Data...", self._activerun_configuration),
             ("Stop", self.quit),
             ]
 
-        tl, br = np.multiply(self.TOPLEFT, self.PRECISION), np.multiply(self.BOTTOMRIGHT, self.PRECISION)
-        desc = f"""Timestep: {self.TIMESTEP}
-Precision: {self.PRECISION}
-Epsilon radius: {self.EPSILON} ({int(self.EPSILON/self.PRECISION)} pixels)
-Function: {self.FUNCTION}
-Array shape: {self.IMAGE.shape}
-Array domain: ({tl[0]} ... {br[0]}, {tl[1]} ... {br[1]})
-Hausdorff: ???"""
+##        tl, br = np.divide(self.TOPLEFT, self.PRECISION), np.divide(self.BOTTOMRIGHT, self.PRECISION)
+        desc = f"Timestep: {self.TIMESTEP}"
+        desc += f"\nEpsilon radius: {self.EPSILON} ({int(self.EPSILON/self.PRECISION)} pixels)"
+        desc += f"\nFunction: {self.FUNCTION}"
         if self.RUNUNTIL_TIMESTEP>0:
             self.RUNUNTIL_TIMESTEP -= 1
-            self._activerun_next()
+            desc = clean_text_box(desc)
             self._depth_print(desc+"\n")
+            self._activerun_next(print_steps=False)
             return False
         
         self._show_user_options(desc, options)
         return self._process_user_input(options)
 
+    def _activerun_configuration(self):
+        desc = "Configuration:"
+        desc += f"\n Precision: {self.PRECISION}"
+        desc += f"\n Starting point: {self.START_POINT}"
+        desc += f"\n Escape distance: {self.ESCAPE_DISTANCE} ({int(self.ESCAPE_DISTANCE/self.PRECISION)} pixels)"
+        desc += "\n\nCurrent Array:"
+        desc += f"\n Domain: ({self.TOPLEFT[0]} .. {self.BOTTOMRIGHT[0]}, {self.TOPLEFT[1]} .. {self.BOTTOMRIGHT[1]})"
+        desc += f"\n Shape: {self.IMAGE.shape}"
+        desc += "\n\nStatistics:"
+        desc += f"\n Points processed: {self.STAT_POINTS_PROCESSED_TOTAL} ({self.STAT_POINTS_PROCESSED_PREV} last timestep)"
+        desc += f"\n Points escaped: {self.STAT_POINTS_ESCAPED_TOTAL} ({self.STAT_POINTS_ESCAPED_PREV} last timestep)"
+        desc = clean_text_box(desc)
+        self._depth_print(desc)
+        self._depth_input("Back...")
+
+
     def _activerun_init(self):
         # place the starting point on the mask
         self.IMAGE = np.zeros((3,3), dtype=np.bool_)
         self.IMAGE[1,1] = True
-
-        start = (self.START_POINT.x, self.START_POINT.y)
-        self.TOPLEFT = np.subtract(start, np.divide(self.IMAGE.shape, 2))
-        self.BOTTOMRIGHT = np.add(self.IMAGE.shape, self.TOPLEFT)
+        
+        tl = -np.divide(self.IMAGE.shape, 2).astype(np.int32).astype(np.float64)
+        br = np.add(self.IMAGE.shape, tl)
+        self.TOPLEFT = tl*self.PRECISION
+        self.BOTTOMRIGHT = br*self.PRECISION
         #
         
         self.IMAGE_HISTORY = self.IMAGE.astype(np.uint16)
-        self.TOPLEFT_PREV = self.TOPLEFT
+        self.TOPLEFT_PREV = self.TOPLEFT.copy()
+        self.BOTTOMRIGHT_PREV = self.BOTTOMRIGHT.copy()
         self.TIMESTEP = 0
+
+        self._PADDING_ERROR = np.zeros(2)
+
+        self.STAT_POINTS_ESCAPED_PREV = 0
+        self.STAT_POINTS_ESCAPED_TOTAL = 0
+        self.STAT_POINTS_PROCESSED_PREV = 0
+        self.STAT_POINTS_PROCESSED_TOTAL = 0
         
     def _activerun_clear(self):
         plt.close()
@@ -721,71 +766,135 @@ Hausdorff: ???"""
         self.TIMESTEP = 0
 
     def _activerun_visuals(self):
-        axis_range = (self.TOPLEFT[0],self.BOTTOMRIGHT[0],self.TOPLEFT[1],self.BOTTOMRIGHT[1])
-        axis_range = np.multiply(axis_range, self.PRECISION)
+        # swapped x and y axis
+        axis_range = (self.TOPLEFT[0],self.BOTTOMRIGHT[0],-self.BOTTOMRIGHT[1],-self.TOPLEFT[1])
         
-        fig, ax = plt.subplots(1,2)
-        ax[0].imshow(self.IMAGE_HISTORY, extent=axis_range)
-        ax[1].imshow(self.IMAGE, extent=axis_range)
+        fig, ax = plt.subplots(1, 2, figsize=(12, 6))
+        ax[0].imshow(self.IMAGE_HISTORY.swapaxes(0, 1), extent=axis_range)
+        ax[1].imshow(self.IMAGE.swapaxes(0, 1), extent=axis_range)
         ax[0].set_title(f"Cumulative Timesteps")
         ax[1].set_title(f"Timestep: {self.TIMESTEP}")
         self._depth_print("Close matplotlib window to continue", -1)
         plt.show()
         print("")
+
+    def _activerun_fail_check(self): # would it crash
+        return bool(self.FUNCTION.missing_constants())
         
-    def _activerun_next(self):
+    def _activerun_next(self, print_steps=True):
+        if self._activerun_fail_check():
+            self._depth_print("Run failed")
+            return
+        
+        if print_steps: self._depth_print("Start")
         #######
-        epsilon_units = int(self.EPSILON/self.PRECISION)
-        
-        eps_border_units = epsilon_units+self.BORDER
-        eps_circle = circle_mask(epsilon_units, border=self.BORDER)
+        eps_circle = circle_mask(int(self.EPSILON/self.PRECISION), border=self.BORDER)
         
         borders = get_mask_borders(self.IMAGE)
         indexes = calc_mask_indexes(self.IMAGE)
         
-        points = indexes[borders].astype(np.float64)-np.divide(self.IMAGE.shape, 2)+.5
+        points = indexes[borders].astype(np.float64)
         
+        # translate indexes to their corresponding points
         points *= self.PRECISION
+        points += self.TOPLEFT
+
+        # process the points using the function
+        n = points.shape[0]
+        if print_steps: self._depth_print(f"Applying the function to {n} points")
         points[:,0], points[:,1] = self.FUNCTION(points[:,0], points[:,1])
-        points /= self.PRECISION # back to units
+        self.STAT_POINTS_PROCESSED_PREV = n
+        self.STAT_POINTS_PROCESSED_TOTAL += n
         
-        self.TOPLEFT = np.minimum(self.TOPLEFT, np.min(np.subtract(points, eps_border_units), axis=0))
-        self.BOTTOMRIGHT = np.maximum(self.BOTTOMRIGHT, np.max(np.add(points, eps_border_units), axis=0))
-        
-        new_mask_shape = np.subtract(self.BOTTOMRIGHT, self.TOPLEFT).astype(np.int32)
-        
-        new_mask = np.zeros(new_mask_shape+1, dtype=np.bool_)
+        # check for escapees and delete them
+        escaped_points = np.zeros(points.shape[0], dtype=np.bool_)
+        escaped_points |= np.abs(points[:,0]-self.START_POINT.x)>=self.ESCAPE_DISTANCE
+        escaped_points |= np.abs(points[:,1]-self.START_POINT.y)>=self.ESCAPE_DISTANCE
+        if escaped_points.any():
+            points = points[~escaped_points]
+            n = escaped_points.sum()
+            self.STAT_POINTS_ESCAPED_PREV = n
+            self.STAT_POINTS_ESCAPED_TOTAL += n
+            if print_steps: self._depth_print(f"! Escapees: {n} of {escaped_points.size} points")
+            if points.size==0:
+                if print_steps: self._depth_print(f"-> Every point escaped")
+                return
+        #
+
+        # measure the new topleft and bottomright
+        eps_r = eps_circle.shape[0]/2 # space needed around a point for the epsilon circle
+        eps_r *= self.PRECISION
+        temp_points = np.subtract(points, eps_r)
+        self.TOPLEFT[0] = min(self.TOPLEFT[0], temp_points[:,0].min())
+        self.TOPLEFT[1] = min(self.TOPLEFT[1], temp_points[:,1].min())
+        temp_points += eps_r*2
+        self.BOTTOMRIGHT[0] = max(self.BOTTOMRIGHT[0], temp_points[:,0].max())
+        self.BOTTOMRIGHT[1] = max(self.BOTTOMRIGHT[1], temp_points[:,1].max())
+
+        # calculate the new image shape
+        image_domain = np.subtract(self.BOTTOMRIGHT, self.TOPLEFT)
+        image_shape = image_domain/self.PRECISION
+
+        # translate the points to positive index
+        points -= self.TOPLEFT
+        points /= self.PRECISION
+
+        # create and paint a new image with circles
+        if print_steps: self._depth_print("Painting epsilon circles")
+        eps_r = eps_circle.shape[0]//2
+        new_image = np.zeros(image_shape.astype(np.int32)+1, dtype=np.bool_)
         for x,y in points:
-            x = int(x-self.TOPLEFT[0]-eps_border_units)
-            y = int(y-self.TOPLEFT[1]-eps_border_units)
-            x_slice = slice(max(x, 0), x+eps_circle.shape[0])
-            y_slice = slice(max(y, 0), y+eps_circle.shape[1])
-            new_mask[x_slice, y_slice] |= eps_circle
-        self.IMAGE = new_mask
+            x = int(x)
+            y = int(y)
+            x_slice = slice(x-eps_r, x+eps_r+1)
+            y_slice = slice(y-eps_r, y+eps_r+1)
+            new_image[x_slice, y_slice] |= eps_circle
+        self.IMAGE = new_image
+        #
 
         if self.AUTOFILL:
             self.IMAGE |= fill_closed_areas(self.IMAGE)
         #########
         
-        # expand the total image array
-        offset = (self.TOPLEFT_PREV-self.TOPLEFT)
-        pad_r = np.subtract(self.IMAGE.shape, self.IMAGE_HISTORY.shape)/2
-        offset = (offset-pad_r).astype(np.int32)
-        pad_l = pad_r.copy()
-        pad_r += pad_r%1>=.5
-        pad_r = np.clip(pad_r, a_min=0, a_max=None).astype(np.int32)
-        pad_l = np.clip(pad_l, a_min=0, a_max=None).astype(np.int32)
-        pad = ((pad_l[0]+offset[0],pad_r[0]-offset[0]), (pad_l[1]+offset[1],pad_r[1]-offset[1]))
+        # expand the cumulative image array
+        pad_l = -(self.TOPLEFT-self.TOPLEFT_PREV) / self.PRECISION
+        shape_diff = np.subtract(self.IMAGE.shape, self.IMAGE_HISTORY.shape)
+
+        # collect the error from padding misplacement
+        # also shift the topleft and bottomright accordingly
+        pad_error = pad_l%1
+        self._PADDING_ERROR += pad_error
+        self.TOPLEFT += pad_error*self.PRECISION
+        self.BOTTOMRIGHT += pad_error*self.PRECISION
+
+        # consume full integers of the padding error to adjust the image back to place toward negative
+        # also shift the topleft and bottomright back in to place
+        pad_correction = self._PADDING_ERROR.astype(np.int8)
+        if pad_correction.any():
+            self._PADDING_ERROR -= pad_correction
+            pad_l += pad_correction
+            self.TOPLEFT -= pad_correction*self.PRECISION
+            self.BOTTOMRIGHT -= pad_correction*self.PRECISION
+        pad_r = np.clip(shape_diff-pad_l.astype(np.int32), a_min=0, a_max=None)
+        pad = ((int(pad_l[0]),int(pad_r[0])), (int(pad_l[1]),int(pad_r[1])))
         self.IMAGE_HISTORY = np.pad(self.IMAGE_HISTORY, pad)
         #
 
         # add the mask to create a full image
-        if self.ALT_VISUALS: self.IMAGE_HISTORY[self.IMAGE] = self.IMAGE[self.IMAGE]*(self.TIMESTEP+1)
-        else: self.IMAGE_HISTORY += self.IMAGE
+        
+        # if there was pad correction done, then self.IMAGE_HISTORY could be larger
+        shape_diff = np.subtract(self.IMAGE_HISTORY.shape, self.IMAGE.shape)
+        
+        if self.ALT_VISUALS:
+            self.IMAGE_HISTORY[shape_diff[0]:,shape_diff[1]:][self.IMAGE] = self.IMAGE[self.IMAGE]*(self.TIMESTEP+1)
+        else:
+            self.IMAGE_HISTORY[shape_diff[0]:,shape_diff[1]:] += self.IMAGE
         #
         
-        self.TOPLEFT_PREV = self.TOPLEFT
+        self.TOPLEFT_PREV[:] = self.TOPLEFT
+        self.BOTTOMRIGHT_PREV[:] = self.BOTTOMRIGHT
         self.TIMESTEP += 1
+        if print_steps: self._depth_print("Done")
 
 
 
@@ -795,20 +904,6 @@ Hausdorff: ???"""
         self._depth_print(desc)
         if self._set_attr("RUNUNTIL_TIMESTEP"):
             self.RUNUNTIL_TIMESTEP = max(self.RUNUNTIL_TIMESTEP-self.TIMESTEP, 0)
-            return True
-
-    def rununtil(self):
-        while not self.rununtil_options(): pass
-    
-    def rununtil_options(self):
-        options = [
-            ("Timestep is reached", self.set_rununtil_timestep),
-            ("Hausdorff distance is exceeded", None),
-            ("Cancel", self.quit),
-            ]
-        self._show_user_options("Run until...", options)
-        return self._process_user_input(options)
-
 
 
 
