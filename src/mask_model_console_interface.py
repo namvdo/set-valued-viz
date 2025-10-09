@@ -3,6 +3,20 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 
+from time import perf_counter_ns as nspec # nanoseconds
+
+# from timepck
+def function_timer(func):
+    def wrapper(*args, **kwargs):
+        print(func)
+        t_start = nspec()
+        out = func(*args, **kwargs)
+        t_stop = nspec()
+        print(f"{(t_stop-t_start)/1e6:.3f} ms")
+        return out
+    return wrapper
+#
+
 
 # from arrayprc
 
@@ -14,11 +28,11 @@ def around(a):
     a *= 2*signs
     return i+np.int_(a)
 ##
-##def distance(a, b):
-##    return np.linalg.norm(np.subtract(a, b), axis=-1) # n-dimensional point to point distance
-##
-##def nearestpoint_i(a, *b):
-##    return np.argmin([distance(a, x) for x in b])
+def distance(a, b):
+    return np.linalg.norm(np.subtract(a, b), axis=-1) # n-dimensional point to point distance
+
+def nearestpoint_i(a, *b):
+    return np.argmin([distance(a, x) for x in b])
 
 def circle_mask(r, inner=0, border=0):
     x = np.expand_dims(np.arange(-r, r+1), axis=1)
@@ -275,13 +289,13 @@ def advanced_solve(equation, **inputs):
 
 
 
-def get_mask_borders(mask):
-    borders = mask.copy()
-    borders[1:,:] = mask[1:]*~mask[:-1]
-    borders[:,1:] |= mask[:,1:]*~mask[:,:-1]
-    borders[:-1,:] |= ~mask[1:,]*mask[:-1]
-    borders[:,:-1] |= ~mask[:,1:]*mask[:,:-1]
-    return borders
+def get_mask_border(mask):
+    border = mask.copy()
+    border[1:,:] = mask[1:]*~mask[:-1]
+    border[:,1:] |= mask[:,1:]*~mask[:,:-1]
+    border[:-1,:] |= ~mask[1:,]*mask[:-1]
+    border[:,:-1] |= ~mask[:,1:]*mask[:,:-1]
+    return border
 
 def calc_mask_indexes(mask):
     indexes = np.expand_dims(np.arange(mask.shape[0]), axis=1)
@@ -318,6 +332,72 @@ def fill_closed_areas(mask): # very crude
             i = ii
     
     return fill_mask_hor*fill_mask_ver
+
+
+
+
+
+
+
+
+
+def simple_hausdorff_distance(source_mask, target_mask):
+    # flood source_mask until target_mask is covered
+    # source_mask and target_mask must be same shapes
+    steps = 0
+    flood_mask = np.zeros_like(source_mask)
+    while not ((source_mask|target_mask)==source_mask).all():
+        flood_mask[:,1:] |= (source_mask[:,1:]!=source_mask[:,:-1])
+        flood_mask[:,:-1] |= flood_mask[:,1:]
+        source_mask |= flood_mask
+        if ((source_mask|target_mask)==source_mask).all():
+            return steps+.5
+        
+        flood_mask[1:,:] |= (source_mask[1:,:]!=source_mask[:-1,:])
+        flood_mask[:-1,:] |= flood_mask[1:,:]
+        source_mask |= flood_mask
+##        print(source_mask.astype(np.int8), end="\n\n")
+        steps += 1
+    return steps
+
+@function_timer
+def hausdorff_distance(source_mask, target_mask):
+    source_floodable = source_mask.copy()
+    steps = simple_hausdorff_distance(source_floodable, target_mask)
+    if steps==0: return 0 # fully inside
+    
+    border = get_mask_border(source_floodable)
+    border_overlap = border*target_mask
+    
+    indexes = calc_mask_indexes(source_mask)
+    border_overlap_points = indexes[border_overlap]
+    source_points = indexes[source_mask]
+
+    if source_points.shape[0]>1:
+        # reject unimportant points
+##        print(source_points.shape[0])
+        rejects = source_points[:,0]<(source_points[:,0].max()-1)
+        rejects *= source_points[:,1]<(source_points[:,1].max()-1)
+        rejects *= source_points[:,0]>(source_points[:,0].min()+1)
+        rejects *= source_points[:,1]>(source_points[:,1].min()+1)
+        source_points = source_points[~rejects]
+##        print("->", source_points.shape[0])
+    
+    max_distance = 0
+    for p in border_overlap_points:
+        i = nearestpoint_i(p, *source_points)
+        max_distance = max(max_distance, distance(p, source_points[i]))
+    return max_distance
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -464,12 +544,9 @@ class ConsoleInterface():
     BOTTOMRIGHT = (0,0)
     TOPLEFT_PREV = (0,0)
     BOTTOMRIGHT_PREV = (0,0)
-
-
     
     RUNUNTIL_TIMESTEP = 0
     RUNUNTIL_HAUSDORFF = None
-    
     
     def __init__(self):
         self.FUNCTION = UserModifiableMappingFunction()
@@ -574,7 +651,6 @@ class ConsoleInterface():
                     user_input = t(user_input)
                     if user_input>0 or (negative_ok and user_input<0) or zero_ok:
                         setattr(self, attr_name, user_input)
-                        self._depth_print("Value set")
                         success = True
                 if not success:
                     complain = "! Given value must be "
@@ -584,20 +660,20 @@ class ConsoleInterface():
                     self._depth_print(complain)
             elif t is str:
                 setattr(self, attr_name, user_input)
-                self._depth_print("Value set")
                 success = True
             elif t is UserModifiablePoint:
                 m = RE_2D_POINT.match(user_input)
                 if m:
                     new_point = UserModifiablePoint(float(m.group(1)), float(m.group(2)))
                     setattr(self, attr_name, new_point)
-                    self._depth_print("Value set")
                     success = True
                 else:
                     self._depth_print("Not a recognizable 2 dimensional point")
             else:
                 self._depth_print(f"Value setting of type ({t}) is not defined")
         else: self._depth_print("Invalid input")
+        if success:
+            self._depth_print("Value set")
         print("")
         return success
         
@@ -725,9 +801,10 @@ class ConsoleInterface():
         desc += f"\n Precision: {self.PRECISION}"
         desc += f"\n Starting point: {self.START_POINT}"
         desc += f"\n Escape distance: {self.ESCAPE_DISTANCE} ({int(self.ESCAPE_DISTANCE/self.PRECISION)} pixels)"
-        desc += "\n\nCurrent Array:"
+        desc += "\n\nArray:"
         desc += f"\n Domain: ({self.TOPLEFT[0]} .. {self.BOTTOMRIGHT[0]}, {self.TOPLEFT[1]} .. {self.BOTTOMRIGHT[1]})"
         desc += f"\n Shape: {self.IMAGE.shape}"
+##        desc += f"\n Hausdorff: "
         desc += "\n\nStatistics:"
         desc += f"\n Points processed: {self.STAT_POINTS_PROCESSED_TOTAL} ({self.STAT_POINTS_PROCESSED_PREV} last timestep)"
         desc += f"\n Points escaped: {self.STAT_POINTS_ESCAPED_TOTAL} ({self.STAT_POINTS_ESCAPED_PREV} last timestep)"
@@ -745,6 +822,8 @@ class ConsoleInterface():
         br = np.add(self.IMAGE.shape, tl)
         self.TOPLEFT = tl*self.PRECISION
         self.BOTTOMRIGHT = br*self.PRECISION
+        self.TOPLEFT = np.add(self.TOPLEFT, (self.START_POINT.x,-self.START_POINT.y))
+        self.BOTTOMRIGHT = np.add(self.BOTTOMRIGHT, (self.START_POINT.x,-self.START_POINT.y))
         #
         
         self.IMAGE_HISTORY = self.IMAGE.astype(np.uint16)
@@ -780,7 +859,7 @@ class ConsoleInterface():
 
     def _activerun_fail_check(self): # would it crash
         return bool(self.FUNCTION.missing_constants())
-        
+    
     def _activerun_next(self, print_steps=True):
         if self._activerun_fail_check():
             self._depth_print("Run failed")
@@ -790,10 +869,10 @@ class ConsoleInterface():
         #######
         eps_circle = circle_mask(int(self.EPSILON/self.PRECISION), border=self.BORDER)
         
-        borders = get_mask_borders(self.IMAGE)
+        border = get_mask_border(self.IMAGE)
         indexes = calc_mask_indexes(self.IMAGE)
         
-        points = indexes[borders].astype(np.float64)
+        points = indexes[border].astype(np.float64)
         
         # translate indexes to their corresponding points
         points *= self.PRECISION
@@ -817,7 +896,7 @@ class ConsoleInterface():
             self.STAT_POINTS_ESCAPED_TOTAL += n
             if print_steps: self._depth_print(f"! Escapees: {n} of {escaped_points.size} points")
             if points.size==0:
-                if print_steps: self._depth_print(f"-> Every point escaped")
+                if print_steps: self._depth_print("Abort")
                 return
         #
 
@@ -849,16 +928,15 @@ class ConsoleInterface():
             x_slice = slice(x-eps_r, x+eps_r+1)
             y_slice = slice(y-eps_r, y+eps_r+1)
             new_image[x_slice, y_slice] |= eps_circle
-        self.IMAGE = new_image
-        #
 
         if self.AUTOFILL:
-            self.IMAGE |= fill_closed_areas(self.IMAGE)
+            new_image |= fill_closed_areas(new_image)
         #########
         
         # expand the cumulative image array
+        if print_steps: self._depth_print("Padding arrays")
         pad_l = -(self.TOPLEFT-self.TOPLEFT_PREV) / self.PRECISION
-        shape_diff = np.subtract(self.IMAGE.shape, self.IMAGE_HISTORY.shape)
+        shape_diff = np.subtract(new_image.shape, self.IMAGE_HISTORY.shape)
 
         # collect the error from padding misplacement
         # also shift the topleft and bottomright accordingly
@@ -880,11 +958,22 @@ class ConsoleInterface():
         self.IMAGE_HISTORY = np.pad(self.IMAGE_HISTORY, pad)
         #
 
+        # if there was pad correction done, then the previous image could be larger than the new one
+        shape_diff = np.subtract(self.IMAGE_HISTORY.shape, new_image.shape)
+        #
+
+        # hausdorff
+        if print_steps: self._depth_print("Calculating Hausdorff distances")
+        self.IMAGE = np.pad(self.IMAGE, pad) # needed for hausdorff
+        dist1 = hausdorff_distance(new_image.copy(), self.IMAGE[shape_diff[0]:,shape_diff[1]:])
+        dist2 = hausdorff_distance(self.IMAGE[shape_diff[0]:,shape_diff[1]:], new_image)
+        dist1 *= self.PRECISION
+        dist2 *= self.PRECISION
+        print(dist1, dist2)
+        self.IMAGE = new_image # previous image no longer needed
+        #
+        
         # add the mask to create a full image
-        
-        # if there was pad correction done, then self.IMAGE_HISTORY could be larger
-        shape_diff = np.subtract(self.IMAGE_HISTORY.shape, self.IMAGE.shape)
-        
         if self.ALT_VISUALS:
             self.IMAGE_HISTORY[shape_diff[0]:,shape_diff[1]:][self.IMAGE] = self.IMAGE[self.IMAGE]*(self.TIMESTEP+1)
         else:
@@ -907,11 +996,18 @@ class ConsoleInterface():
 
 
 
-
 if __name__ == "__main__":
     interface = ConsoleInterface()
     interface.mainmenu()
 
+
+    # hausdorff testing
+##    test_image = circle_mask(3, border=8)
+##    test_image2 = np.zeros_like(test_image)
+##    test_image2[3,3] = True
+##    
+##    out = hausdorff_distance(test_image, test_image2)
+##    print(out)
 
 
     
