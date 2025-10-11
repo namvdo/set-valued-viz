@@ -7,7 +7,6 @@ import pickle
 from time import perf_counter_ns as nspec # nanoseconds
 
 WORKDIR, FILENAME = os.path.abspath(sys.argv[0]).rsplit(os.path.sep, 1)
-
 SAVE_DIR = os.path.join(WORKDIR, "mask_model_saves")
 
 # from timepck
@@ -89,14 +88,6 @@ def save(path, obj):
 
 
 # from arrayprc
-def around(a):
-    signs = np.sign(a)
-    i = np.int_(a)
-    a *= signs
-    a %= 1
-    a *= 2*signs
-    return i+np.int_(a)
-
 def distance(a, b):
     return np.linalg.norm(np.subtract(a, b), axis=-1) # n-dimensional point to point distance
 
@@ -262,131 +253,12 @@ def advanced_solveoperation(equation, **kwargs):
     return 0
 
 def advanced_solve(equation, **inputs):
+    equation = equation.replace(" ", "")
     for y,z in RE_ADV_PARENTHESIS_PROD.findall(equation):
         if y not in algebraic_blacklist and z not in algebraic_blacklist:
             equation = equation.replace(f"{y}{z}", f"{y}*{z}")
     return advanced_solveoperation(equation, **inputs)
-
-
-##inputs = {"x": 3,"y": np.array((3.5,6))}
-##print(inputs)
-##print(advanced_solve("cos(x+1)3", **inputs))
-##print(advanced_solveoperation("x**2+4!", **inputs))
-##print(advanced_solveoperation("(x-2)/y", **inputs))
-##print(advanced_solveoperation("(x**2+2)+(x-2)/y", **inputs))
-##print(advanced_solveoperation("((x-2)/(y+x))+z", **inputs))
-##print(advanced_solveoperation("sin(-x)", **inputs))
-##print(advanced_solveoperation("cos(-x)", **inputs))
-##print(advanced_solveoperation("tan(-x)", **inputs))
-##input()
 #
-
-
-
-
-
-
-def get_mask_border(mask):
-    border = mask.copy()
-    border[1:,:] = mask[1:]*~mask[:-1]
-    border[:,1:] |= mask[:,1:]*~mask[:,:-1]
-    border[:-1,:] |= ~mask[1:,]*mask[:-1]
-    border[:,:-1] |= ~mask[:,1:]*mask[:,:-1]
-    return border
-
-def calc_mask_indexes(mask):
-    indexes = np.expand_dims(np.arange(mask.shape[0]), axis=1)
-    indexes = np.expand_dims(indexes, axis=2)
-    indexes = np.repeat(indexes, mask.shape[1], axis=1)
-    indexes = np.repeat(indexes, 2, axis=2)
-    indexes[:,:,1] = np.arange(mask.shape[1])
-    return indexes
-
-
-def fill_closed_areas(mask): # very crude
-    fill_mask_hor = np.zeros(mask.shape, dtype=np.bool_).copy()
-    fill_mask_ver = fill_mask_hor.copy()
-    
-    for r,row in enumerate(mask):
-        i = row.argmax() # first one
-        while 1:
-            j = i+row[i:].argmin() # first zero after that
-            ii = j+row[j:].argmax() # closing one
-            if j==ii:
-                break
-            fill_mask_hor[r,j:ii] = True
-            i = ii
-            
-    for c in range(mask.shape[1]):
-        col = mask[:,c]
-        i = col.argmax() # first one
-        while 1:
-            j = i+col[i:].argmin() # first zero after that
-            ii = j+col[j:].argmax() # closing one
-            if j==ii:
-                break
-            fill_mask_ver[j:ii,c] = True
-            i = ii
-    
-    return fill_mask_hor*fill_mask_ver
-
-
-
-
-
-
-
-
-
-def simple_hausdorff_distance(source_mask, target_mask):
-    # flood source_mask until target_mask is covered
-    # source_mask and target_mask must be same shapes
-    steps = 0
-    flood_mask = np.zeros_like(source_mask)
-    while not ((source_mask|target_mask)==source_mask).all():
-        flood_mask[:,1:] |= (source_mask[:,1:]!=source_mask[:,:-1])
-        flood_mask[:,:-1] |= flood_mask[:,1:]
-        source_mask |= flood_mask
-        if ((source_mask|target_mask)==source_mask).all():
-            return steps+.5
-        
-        flood_mask[1:,:] |= (source_mask[1:,:]!=source_mask[:-1,:])
-        flood_mask[:-1,:] |= flood_mask[1:,:]
-        source_mask |= flood_mask
-##        print(source_mask.astype(np.int8), end="\n\n")
-        steps += 1
-    return steps
-
-##@function_timer
-def hausdorff_distance(source_mask, target_mask):
-    source_floodable = source_mask.copy()
-    steps = simple_hausdorff_distance(source_floodable, target_mask)
-    if steps==0: return 0 # fully inside
-    
-    border = get_mask_border(source_floodable)
-    border_overlap = border*target_mask
-    
-    indexes = calc_mask_indexes(source_mask)
-    border_overlap_points = indexes[border_overlap]
-    source_points = indexes[source_mask]
-
-    if source_points.shape[0]>1:
-        # reject unimportant points
-##        print(source_points.shape[0])
-        rejects = source_points[:,0]<(source_points[:,0].max()-1)
-        rejects *= source_points[:,1]<(source_points[:,1].max()-1)
-        rejects *= source_points[:,0]>(source_points[:,0].min()+1)
-        rejects *= source_points[:,1]>(source_points[:,1].min()+1)
-        source_points = source_points[~rejects]
-##        print("->", source_points.shape[0])
-    
-    max_distance = 0
-    for p in border_overlap_points:
-        i = nearestpoint_i(p, *source_points)
-        max_distance = max(max_distance, distance(p, source_points[i]))
-    return max_distance
-
-
 
 
 
@@ -447,23 +319,6 @@ def clean_text_box(text, **kwargs_override):
 
 
 
-##def halve_the_array_size(array):
-##    pad = np.mod(array.shape, 2)
-##    smaller = np.zeros(np.true_divide(array.shape, 2).astype(np.int32)+pad, dtype=np.float64)
-##    array = np.pad(array, pad)
-##    smaller[:,:] = array[:-1:2,:-1:2].astype(np.float64) + array[1::2,1::2]
-##    return smaller/2
-##
-##def third_the_array_size(array):
-##    smaller = np.zeros(np.true_divide(array.shape, 3).astype(np.int32), dtype=np.float64)
-##    smaller[:,:] = array[:-2:3,:-2:3].astype(np.float64)
-##    smaller += array[1:-1:3,1:-1:3].astype(np.float64)
-##    smaller += array[2::3,2::3].astype(np.float64)
-##    return smaller/3
-
-
-
-
 class UserModifiablePoint:
     x = 0
     y = 0
@@ -477,6 +332,7 @@ class UserModifiablePoint:
 class UserModifiableMappingFunction:
     x = "1-a*x*x+y"
     y = "b*x"
+    epsilon = 0
 
     def __init__(self):
         self.constants = {"a":1.4, "b":0.3}
@@ -496,105 +352,44 @@ class UserModifiableMappingFunction:
         required = self.required_constants()
         for k in list(self.constants.keys()):
             if k not in required: del self.constants[k]
+
+    def copy(self):
+        new = type(self)()
+        new.constants = self.constants.copy()
+        new.epsilon = self.epsilon
+        new.x = self.x
+        new.y = self.y
+        return new
     
     def __str__(self):
         x = self.x
         y = self.y
         for k,v in self.constants.items():
-            x = x.replace(k, str(v))
-            y = y.replace(k, str(v))
+            v = str(v)
+            x = x.replace(k, v)
+            y = y.replace(k, v)
         missing = self.missing_constants()
-        return f"(x={x}, y={y})" + (str(" Has undefined constants!") if missing else "")
+        return f"(x={x}, y={y})" + (str(" undefined constants!") if missing else "")
 
     def __call__(self, x, y, **inputs):
-        return (advanced_solveoperation(self.x, x=x, y=y, **inputs|self.constants),
-                advanced_solveoperation(self.y, x=x, y=y, **inputs|self.constants))
+        return (advanced_solve(self.x, x=x, y=y, **inputs|self.constants),
+                advanced_solve(self.y, x=x, y=y, **inputs|self.constants))
 
 
 
-class ModelStatistics():
-    escaped_points = 0
-    escaped_points_total = 0
-    processed_points = 0
-    processed_points_total = 0
-    hausdorff_distance = 0
-    
-    def __init__(self):
-        self.timeline = [] # ? log various events & configuration changes at timesteps
-
-    def log_processed_points(self, n):
-        self.processed_points = n
-        self.processed_points_total += n
-        
-    def log_escaped_points(self, n):
-        self.escaped_points = n
-        self.escaped_points_total += n
-
-    def log_hausdorff(self, dist):
-        self.hausdorff_distance = dist
 
 class ModelConfiguration():
-    alt_visuals = False
-    autofill = False
-    
-    precision = 0.005
+    timestep = 0
     start_point = UserModifiablePoint(0,0)
-    escape_distance = 10.
-    # distance at which to consider them as escaped (prevents extreme array sizes)
     
     border_width = 1
     epsilon_radius = 0.1
-    timestep = 0
-    
-    image_history = None
-    image = None
-    
-    topleft = (0,0)
-    bottomright = (0,0)
-    topleft_old = (0,0)
 
     def __init__(self):
-        self.padding_error = np.zeros(2)
+        self.timesteps = [] # stack of UserModifiableMappingFunction
         
-        # place the starting point on the mask
-        self.image = circle_mask(0, border=self.border_width)
-        
-        tl = -np.divide(self.image.shape, 2).astype(np.int32).astype(np.float64)
-        br = np.add(self.image.shape, tl)
-        self.topleft = tl*self.precision
-        self.bottomright = br*self.precision
-        self.topleft = np.add(self.topleft, (self.start_point.x,-self.start_point.y))
-        self.bottomright = np.add(self.bottomright, (self.start_point.x,-self.start_point.y))
+        pass
         #
-        
-        self.image_history = self.image.astype(np.uint16)
-        self.topleft_old = self.topleft.copy()
-        self.timestep = 0
-
-    def epsilon_circle(self):
-        return circle_mask(int(self.epsilon_radius/self.precision), border=self.border_width)
-
-    def calc_current_border_points(self):
-        border = get_mask_border(self.image)
-        indexes = calc_mask_indexes(self.image)
-        return indexes[border].astype(np.float64)
-
-    def points_as_units(self, points):
-        points -= self.topleft
-        points /= self.precision
-
-    def points_as_values(self, points):
-        points *= self.precision
-        points += self.topleft
-    
-    def visualization(self):
-        axis_range = (self.topleft[0],self.bottomright[0],-self.bottomright[1],-self.topleft[1])
-        fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-        ax[0].imshow(self.image_history.swapaxes(0, 1), extent=axis_range)
-        ax[1].imshow(self.image.swapaxes(0, 1), extent=axis_range)
-        ax[0].set_title(f"Cumulative Timesteps")
-        ax[1].set_title(f"Timestep: {self.timestep}")
-        plt.show()
 
 class ConsoleInterface():
     interface_depth = 0
@@ -602,7 +397,6 @@ class ConsoleInterface():
     autorun_hausdorff = 0
     
     def __init__(self):
-        self.stats = ModelStatistics()
         self.config = ModelConfiguration()
         self.function = UserModifiableMappingFunction()
 
@@ -655,29 +449,15 @@ class ConsoleInterface():
     def mainmenu_options(self):
         options = [
             ("Start", self.activerun),
-            ("Set Precision", self.set_precision),
             ("Set Start Point", self.set_startpoint),
-            ("Set Escape Distance", self.set_escapedistance),
-##            ("Load", None),
             ("Exit", self.quit),
             ]
         desc = "Simple interface for dynamic model visualization"
-        desc += f"\n\nPrecision: {self.config.precision}"
         desc += f"\nStarting point: {self.config.start_point}"
-        desc += f"\nEscape distance: {self.config.escape_distance} ({int(self.config.escape_distance/self.config.precision)} pixels)"
         self._show_user_options(desc, options)
         return self._process_user_input(options)
 
 
-
-
-    
-    def set_precision(self):
-        desc = "Precision of the simulation"
-        desc = clean_text_box(desc)
-        self._depth_print(desc)
-        self._set_attr("precision", target=self.config)
-        
     def set_epsilon(self):
         desc = "Radius of the random uniform noise"
         desc = clean_text_box(desc)
@@ -690,18 +470,11 @@ class ConsoleInterface():
         self._depth_print(desc)
         self._set_attr("start_point", target=self.config)
         
-    def set_escapedistance(self):
-        desc = "Distance at which to consider points as escaped\n(prevents extreme array sizes)"
-        desc = clean_text_box(desc)
-        self._depth_print(desc)
-        self._set_attr("escape_distance", target=self.config)
-    
     def set_autorun_timesteps(self):
         self.autorun_timesteps = self.config.timestep
         if self._set_attr("autorun_timesteps", zero_ok=True):
             self.autorun_timesteps = max(self.autorun_timesteps-self.config.timestep, 0)
         else: self.autorun_timesteps = 0
-
         
         
     def _set_attr(self, attr_name, negative_ok=False, zero_ok=False, target=None):
@@ -720,7 +493,7 @@ class ConsoleInterface():
                         setattr(target, attr_name, user_input)
                         success = True
                 if not success:
-                    complain = "! Given value must be a "
+                    complain = "Given value must be a "
                     if not zero_ok: complain += "non-zero "
                     if not negative_ok: complain += "positive "
                     complain += "integer" if t is int else "float"
@@ -840,16 +613,14 @@ class ConsoleInterface():
             ("Modify Epsilon", self.set_epsilon),
             ("Modify Function", self.modifyfunction),
             ("Run Until Timestep", self.set_autorun_timesteps),
-            ("Run Until Hausdorff", None),
             ("Save State", self.save_timestep),
             ("Load State", self.load_timestep),
             ("More Data...", self._activerun_moredata),
             ("Stop", self.quit),
             ]
 
-##        tl, br = np.divide(self.config.topleft, self.config.precision), np.divide(self.config.bottomright, self.config.precision)
         desc = f"Timestep: {self.config.timestep}"
-        desc += f"\nEpsilon radius: {self.config.epsilon_radius} ({int(self.config.epsilon_radius/self.config.precision)} pixels)"
+        desc += f"\nEpsilon radius: {self.config.epsilon_radius}"
         desc += f"\nFunction: {self.function}"
         if self.autorun_timesteps>0:
             self.autorun_timesteps -= 1
@@ -862,18 +633,7 @@ class ConsoleInterface():
         return self._process_user_input(options)
 
     def _activerun_moredata(self):
-        desc = "Configuration:"
-        desc += f"\n Precision: {self.config.precision}"
-        desc += f"\n Starting point: {self.config.start_point}"
-        desc += f"\n Escape distance: {self.config.escape_distance} ({int(self.config.escape_distance/self.config.precision)} pixels)"
-        desc += "\n\nArray:"
-        desc += f"\n Domain: ({self.config.topleft[0]} .. {self.config.bottomright[0]}, {self.config.topleft[1]} .. {self.config.bottomright[1]})"
-        desc += f"\n Shape: {self.config.image.shape}"
-        desc += "\n\nStatistics:"
-        desc += f"\n Points processed: {self.stats.processed_points_total} ({self.stats.processed_points} last timestep)"
-        desc += f"\n Points escaped: {self.stats.escaped_points_total} ({self.stats.escaped_points} last timestep)"
-        desc += f"\n Hausdorff dist: {self.stats.hausdorff_distance} ({self.stats.hausdorff_distance/self.config.precision:.1f} pixels)"
-        
+        desc = "Configuration"
         desc = clean_text_box(desc)
         self._depth_print(desc)
         self._depth_input("Back...")
@@ -884,7 +644,7 @@ class ConsoleInterface():
 
     def _activerun_visuals(self):
         self._depth_print("Close matplotlib window to continue", -1)
-        self.config.visualization()
+##        self.config.visualization()
         print("")
 
     def _activerun_fail_check(self): # would it crash
@@ -894,134 +654,7 @@ class ConsoleInterface():
         if self._activerun_fail_check():
             self._depth_print("Run failed")
             return
-        
-        if print_steps: self._depth_print("Start")
-        #######
-        self.config.topleft_old[:] = self.config.topleft
-
-        # create the circle mask & get border points from the image
-        eps_circle = self.config.epsilon_circle()
-        points = self.config.calc_current_border_points()
-        #
-        
-        # translate indexes to their corresponding points
-        self.config.points_as_values(points)
-
-        # process the points using the function
-        n = points.shape[0]
-        if print_steps: self._depth_print(f"Processing {n} points")
-        points[:,0], points[:,1] = self.function(points[:,0], points[:,1])
-        self.stats.log_processed_points(n)
-        
-        # check for escapees and delete them
-        escaped_points = np.zeros(points.shape[0], dtype=np.bool_)
-        escaped_points |= np.abs(points[:,0]-self.config.start_point.x)>=self.config.escape_distance
-        escaped_points |= np.abs(points[:,1]-self.config.start_point.y)>=self.config.escape_distance
-        if escaped_points.any():
-            points = points[~escaped_points]
-            n = escaped_points.sum()
-            self.stats.log_escaped_points(n)
-            if print_steps: self._depth_print(f"-> {n} of {escaped_points.size} points escaped")
-            if points.size==0:
-                if print_steps: self._depth_print("-> Aborted")
-                return
-        #
-        
-        # measure the new topleft and bottomright
-        eps_r = eps_circle.shape[0]/2 # space needed around a point for the epsilon circle
-        eps_r *= self.config.precision
-        temp_points = np.subtract(points, eps_r)
-        self.config.topleft[0] = min(self.config.topleft[0], temp_points[:,0].min())
-        self.config.topleft[1] = min(self.config.topleft[1], temp_points[:,1].min())
-        temp_points += eps_r*2
-        self.config.bottomright[0] = max(self.config.bottomright[0], temp_points[:,0].max())
-        self.config.bottomright[1] = max(self.config.bottomright[1], temp_points[:,1].max())
-
-
-        # translate the points to positive integer format
-        self.config.points_as_units(points)
-        
-        # calculate the new image shape
-        image_domain = np.subtract(self.config.bottomright, self.config.topleft)
-        image_shape = image_domain/self.config.precision
-        image_shape = np.maximum(image_shape.astype(np.int32)+((image_shape%1)!=0), self.config.image_history.shape)
-
-        # create the new image array
-        new_image = np.zeros(image_shape, dtype=np.bool_)
-        
-        # paint the new image with circles
-        if print_steps: self._depth_print("Painting")
-        eps_r = eps_circle.shape[0]//2
-        for x,y in points:
-            x = int(x)
-            y = int(y)
-            x_slice = slice(x-eps_r, x+eps_r+1)
-            y_slice = slice(y-eps_r, y+eps_r+1)
-            new_image[x_slice, y_slice] |= eps_circle
-        
-        if self.config.autofill:
-            new_image |= fill_closed_areas(new_image)
-        #########
-        
-        if print_steps: self._depth_print("Padding")
-        #### PADDING CORRECTION
-        # expand the cumulative image array
-        pad_l = -(self.config.topleft-self.config.topleft_old) / self.config.precision
-
-        # collect the error from padding misplacement
-        # also shift the topleft and bottomright accordingly
-        pad_error = pad_l%1
-        self.config.padding_error += pad_error
-        self.config.topleft += pad_error*self.config.precision
-        self.config.bottomright += pad_error*self.config.precision
-
-        # consume full integers of the padding error to adjust the image back to place (towards negative)
-        # also shift the topleft and bottomright back in to place
-        pad_correction = self.config.padding_error.astype(np.int8)
-        if pad_correction.any():
-            self.config.padding_error -= pad_correction
-            self.config.topleft -= pad_correction*self.config.precision
-            self.config.bottomright -= pad_correction*self.config.precision
-##            print("PAD_CORRECTION:", pad_correction)
-        ####
-        
-        # do the padding
-        shape_diff = np.subtract(image_shape, self.config.image_history.shape)
-        pad_r = shape_diff-pad_l.astype(np.int32)
-        pad_l += pad_correction
-        pad = ((int(pad_l[0]),int(pad_r[0])), (int(pad_l[1]),int(pad_r[1])))
-##        print("PAD:", pad)
-        
-        self.config.image_history = np.pad(self.config.image_history, pad)
-        self.config.image = np.pad(self.config.image, pad) # needed for hausdorff
-        if pad_correction.any():
-            new_image = np.pad(new_image, ((pad_correction[0],0),(pad_correction[1],0)))
-        #
-        
-##        print("same shapes:", new_image.shape, self.config.image.shape, self.config.image_history.shape)
-        
-        # hausdorff
-        if print_steps: self._depth_print("Hausdorff")
-        dist = hausdorff_distance(new_image, self.config.image)
-        dist = max(dist, hausdorff_distance(self.config.image, new_image))
-        dist *= self.config.precision
-        self.stats.log_hausdorff(dist)
-        if print_steps: self._depth_print(f"-> {dist:.3f}")
-        #
-
-        # previous image is no longer needed
-        self.config.image = new_image
-        #
-        
-        # add the mask to create a full image
-        if self.config.alt_visuals:
-            self.config.image_history[self.config.image] = self.config.image[self.config.image]*(self.config.timestep+1)
-        else:
-            self.config.image_history += self.config.image
-        #
-        
-        self.config.timestep += 1
-        if print_steps: self._depth_print("Done")
+        # TODO
 
 
 
@@ -1056,7 +689,7 @@ class ConsoleInterface():
         if name is None:
             name = self._depth_input("Save as: ")
         if name:
-            obj = (self.config, self.stats, self.function)
+            obj = None
             save(os.path.join(SAVE_DIR, name+".timestep"), obj)
 
     def save_function(self, name=None):
@@ -1072,8 +705,6 @@ class ConsoleInterface():
             name = self._depth_input("Timestep name: ")
         if name:
             obj = self._load_file(name, "timestep")
-            if obj is not None:
-                self.config, self.stats, self.function = obj
                 
     def load_function(self, name=None):
         if name is None:
@@ -1096,40 +727,236 @@ class ConsoleInterface():
             else: self._depth_print(f"File not found: '{f}'")
         else: self._depth_print("Cancelled")
 
+
+
+def radians_absolute(radians): # -inf...inf -> 0...2*np.pi
+    radians = np.mod(radians, np.pi*2)
+    radians[radians<0] = radians[radians<0]+np.pi*2
+    return radians
+
+def radians_to_offsets(radians):
+    offsets = np.repeat(np.expand_dims(radians, axis=1), 2, axis=1)
+    offsets[:,0] = np.sin(offsets[:,0])
+    offsets[:,1] = np.cos(offsets[:,1])
+    return offsets
+
+def offsets_to_radians(offsets):
+    return np.arctan2(offsets[:,0], offsets[:,1])
+
+
+
+def toggle_mask_to_continous_mask(toggle_mask):
+    continous = np.zeros_like(toggle_mask)
+    value = True
+    i = j = 0
+    while j<toggle_mask.size:
+        i = toggle_mask[j:].argmax() # next one
+        ii = toggle_mask[j:].argmin()
+        if i==ii: break
+        j += i
+        continous[j:] = value
+        value = not value
+        j += 1
+    return continous
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def function_stack_test():
+    config = ModelConfiguration()
+    config.resolution = 512
+    n = int(np.pi*config.resolution)*2
+    config.radians = np.linspace(0, np.pi*2, n)
+
+    start_func = UserModifiableMappingFunction()
+    start_func.x = "x/5"
+    start_func.y = "y/2"
+    start_func.epsilon = 0.5
+    start_point = UserModifiablePoint(0,0.2)
+    timesteps = [] # stack of UserModifiableMappingFunction
+    
+    current_func = start_func.copy()
+    
+    def bounding_box(points):
+        topleft = np.zeros(2)
+        bottomright = np.zeros(2)
+        topleft[0] = points[:,0].min()
+        topleft[1] = points[:,1].min()
+        bottomright[0] = points[:,0].max()
+        bottomright[1] = points[:,1].max()
+        return topleft, bottomright
+
+    def point_normals(points):
+        diff = np.diff(points, prepend=points[-1:], axis=0)
+        return offsets_to_radians(diff)-np.pi/2
+
+    def process_with_function_stack(radians):
+        # starting
+        inner_points = np.repeat([(start_point.x, -start_point.y)], radians.size, axis=0).astype(np.float64)
+        outer_points = np.zeros_like(inner_points)
+        outer_points[:,0], outer_points[:,1] = start_func(inner_points[:,0], inner_points[:,1])
+        outer_points += radians_to_offsets(radians) * start_func.epsilon
+        
+        for timestep_func in timesteps:
+            outer_points[:,0], outer_points[:,1] = timestep_func(outer_points[:,0], outer_points[:,1])
+            
+            # now outer_points must be expanded outward by the epsilon
+            normals = point_normals(outer_points)
+            
+            candidates0 = radians_to_offsets(normals) # either inside or outside
+            candidates1 = radians_to_offsets(normals+np.pi) # either inside or outside
+            candidates0 *= timestep_func.epsilon
+            candidates1 *= timestep_func.epsilon
+            candidates0 += outer_points
+            candidates1 += outer_points
+
+
+##            normals0 = point_normals(candidates0)
+##            normals1 = point_normals(candidates1)
+##            edges0 = abs(np.diff(normals0, prepend=normals0[-1:]))>(np.pi/2)
+##            edges1 = abs(np.diff(normals1, prepend=normals1[-1:]))>(np.pi/2)
+##            classification = toggle_mask_to_continous_mask(edges0)
+##            temp = candidates0[classification]
+##            candidates0[classification] = candidates1[classification]
+##            candidates1[classification] = temp
+            
+
+##            # the one with less edgy normals wins
+##            score0 = abs(np.diff(point_normals(candidates0))).sum()
+##            score1 = abs(np.diff(point_normals(candidates1))).sum()
+##            if score0<score1:
+##                outer_points = candidates0
+##                inner_points = candidates1
+##            else:
+##                outer_points = candidates1
+##                inner_points = candidates0
+            
+            # findout which has the larger bounding box -> the outside
+            # and make the outside points the new outer_points
+            cand0_topleft, cand0_bottomright = bounding_box(candidates0)
+            cand1_topleft, cand1_bottomright = bounding_box(candidates1)
+            cand0_area = np.prod(np.subtract(cand0_bottomright, cand0_topleft))
+            cand1_area = np.prod(np.subtract(cand1_bottomright, cand1_topleft))
+            if cand0_area>cand1_area:
+                outer_points = candidates0
+                inner_points = candidates1
+            else:
+                outer_points = candidates1
+                inner_points = candidates0
+
+        return outer_points, inner_points
+
+    def pixelize_points(points, topleft, bottomright):
+        pixelized_points = points-topleft
+        pixelized_points /= (bottomright-topleft).max()#max(pixelized_points.max(), 1)
+        pixelized_points *= config.resolution-1
+        return pixelized_points
+    
+    # now every timestep forward use the ever increasingly accurate radian array to create the new boundary
+    def draw_timestep_image():
+        outer_points, inner_points = process_with_function_stack(config.radians)
+        
+        done = False
+        while not done:
+            # bounding box
+            topleft, bottomright = bounding_box(outer_points)
+            topleft2, bottomright2 = bounding_box(inner_points)
+            topleft = np.minimum(topleft, topleft2)
+            bottomright = np.maximum(bottomright, bottomright2)
+            domain = np.subtract(bottomright, topleft)
+            #
+            
+            # bring the points to the pixel range
+            outer_pixels = pixelize_points(outer_points, topleft, bottomright)
+            
+            # resulting image might not appear continuous if there are pixel wide differences
+            # solution is to expand the radians array in those areas and calculate their values through the stack
+            diff = np.diff(outer_pixels, axis=0) # , prepend=outer_pixels[-1:], append=outer_pixels[:1]
+            gap_size = (diff[:,0]+diff[:,1]).astype(np.int32)-2
+            gap_mask = gap_size>0
+            gap_ratio = gap_mask.sum()/gap_mask.size
+            if gap_ratio>0.01 and config.radians.size<1e5:
+                # extend the radians at the gap points
+                lower_limit_mask = np.pad(gap_mask, (0,1))
+                upper_limit_mask = np.pad(gap_mask, (1,0))
+                
+                lower_limits = config.radians[lower_limit_mask]
+                upper_limits = config.radians[upper_limit_mask]
+                additional_radians = np.linspace(lower_limits, upper_limits, 3)[1]
+                
+                config.radians = np.append(config.radians, additional_radians)
+                config.radians.sort()
+                print(config.radians.shape)
+                additional_outer_points, additional_inner_points = process_with_function_stack(additional_radians)
+                outer_points = np.append(outer_points, additional_outer_points, axis=0)
+                inner_points = np.append(inner_points, additional_inner_points, axis=0)
+
+            else:
+                done = True
+        
+        # values are now continuous -> ready to draw
+        inner_pixels = pixelize_points(inner_points, topleft, bottomright)
+        
+        outer_pixels += .5 # center to pixels
+        inner_pixels += .5 # center to pixels
+        aspect = max(outer_pixels[:,0].max(), inner_pixels[:,0].max())/max(outer_pixels[:,1].max(), inner_pixels[:,1].max())
+        x_aspect = min(aspect, 1)
+        y_aspect = min(1/aspect, 1)
+        shape = (int(config.resolution*x_aspect)+1, int(config.resolution*y_aspect)+1)
+##        shape = (config.resolution, config.resolution)
+
+        image = np.zeros(shape)
+        for x,y in outer_pixels.astype(np.uint16):
+            image[x,y] = 2
+        for x,y in inner_pixels.astype(np.uint16):
+            image[x,y] = 1
+        return image.astype(np.uint8), topleft, bottomright
+        
+##        image = np.zeros((*shape, 3))
+##        for x,y in outer_pixels.astype(np.uint16):
+##            image[x,y,0] += 1
+##        for x,y in inner_pixels.astype(np.uint16):
+##            image[x,y,1] += 1
+##        image[:,:,0] /= max(image[:,:,0].max(), 1)
+##        image[:,:,1] /= max(image[:,:,1].max(), 1)
+##        image[:,:,2] /= max(image[:,:,2].max(), 1)
+##        image *= 255
+##        return image.astype(np.uint8), topleft, bottomright
+
+    while 1:
+        image, topleft, bottomright = draw_timestep_image()
+        extent = (topleft[0],bottomright[0],-bottomright[1],-topleft[1])
+        plt.imshow(image.swapaxes(0, 1), extent=extent)
+        plt.show()
+        
+        timesteps.append(current_func.copy())
+    
+
 if __name__ == "__main__":
-    interface = ConsoleInterface()
-    interface.mainmenu()
+    function_stack_test()
 
-
-    # hausdorff testing
-##    test_image = circle_mask(3, border=8)
-##    test_image2 = np.zeros_like(test_image)
-##    test_image2[3,3] = True
-##    
-##    out = hausdorff_distance(test_image, test_image2)
-##    print(out)
-
-
+    ## toggle_mask_to_continous_mask
+##    a = np.zeros(8, dtype=np.bool_)
+##    a[0] = True
+##    a[7] = True
+##    print(a)
+##    b = toggle_mask_to_continous_mask(a)
+##    print(b)
     
-##    test_image = circle_mask(50, border=5)
-##    print(test_image.shape)
-##
-##    half_image = halve_the_array_size(test_image)
-##    print(half_image.shape)
-##    quarter_image = halve_the_array_size(half_image)
-##    quarter_image = (quarter_image*4).astype(np.int8)
-##    print(quarter_image.shape)
-##    print(quarter_image)
-##
-##    print("")
-##    third_image = third_the_array_size(test_image)
-##    print(third_image.shape)
-##    sixth_image = third_the_array_size(third_image)
-##    sixth_image = (sixth_image*9).astype(np.int8)
-##    print(sixth_image.shape)
-##    print(sixth_image)
+##    interface = ConsoleInterface()
+##    interface.mainmenu()
 
-    
 
 
 
