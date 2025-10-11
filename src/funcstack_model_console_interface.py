@@ -7,7 +7,7 @@ import pickle
 from time import perf_counter_ns as nspec # nanoseconds
 
 WORKDIR, FILENAME = os.path.abspath(sys.argv[0]).rsplit(os.path.sep, 1)
-SAVE_DIR = os.path.join(WORKDIR, "mask_model_saves")
+SAVE_DIR = os.path.join(WORKDIR, "funcstack_model_saves")
 
 # from timepck
 def function_timer(func):
@@ -125,6 +125,7 @@ RE_SIN_COS_TAN = re.compile(r"((a?(?:sin|cos|tan))\((.+)\))")
 RE_ADV_PARENTHESIS_PROD = re.compile(r"("+RE_ALGEBRAIC+r"|\d+|\))(\(|"+RE_ALGEBRAIC+r"|\d+)")
 
 algebraic_blacklist = {"sin","cos","tan","asin","acos","atan"} # not valid variable names in equations
+# add 'abs'
 
 # apply an equation to values given in keyword arguments; x=1, y=np.array([1,8,.5])
 def advanced_solveoperation(equation, **kwargs):
@@ -262,8 +263,46 @@ def advanced_solve(equation, **inputs):
 
 
 
+def radians_absolute(radians): # -inf...inf -> 0...2*np.pi
+    radians = np.mod(radians, np.pi*2)
+    radians[radians<0] = radians[radians<0]+np.pi*2
+    return radians
 
+def radians_to_offsets(radians):
+    offsets = np.repeat(np.expand_dims(radians, axis=1), 2, axis=1)
+    offsets[:,0] = np.sin(offsets[:,0])
+    offsets[:,1] = np.cos(offsets[:,1])
+    return offsets
 
+def offsets_to_radians(offsets):
+    return np.arctan2(offsets[:,0], offsets[:,1])
+
+def point_normals(points):
+    diff = np.diff(points, prepend=points[-1:], axis=0)
+    return offsets_to_radians(diff)-np.pi/2
+
+def bounding_box(points):
+    topleft = np.zeros(2)
+    bottomright = np.zeros(2)
+    topleft[0] = points[:,0].min()
+    topleft[1] = points[:,1].min()
+    bottomright[0] = points[:,0].max()
+    bottomright[1] = points[:,1].max()
+    return topleft, bottomright
+
+##def toggle_mask_to_continous_mask(toggle_mask):
+##    continous = np.zeros_like(toggle_mask)
+##    value = True
+##    i = j = 0
+##    while j<toggle_mask.size:
+##        i = toggle_mask[j:].argmax() # next one
+##        ii = toggle_mask[j:].argmin()
+##        if i==ii: break
+##        j += i
+##        continous[j:] = value
+##        value = not value
+##        j += 1
+##    return continous
 
 
 
@@ -319,6 +358,12 @@ def clean_text_box(text, **kwargs_override):
 
 
 
+
+
+
+
+
+
 class UserModifiablePoint:
     x = 0
     y = 0
@@ -332,7 +377,7 @@ class UserModifiablePoint:
 class UserModifiableMappingFunction:
     x = "1-a*x*x+y"
     y = "b*x"
-    epsilon = 0
+    epsilon = 0.1
 
     def __init__(self):
         self.constants = {"a":1.4, "b":0.3}
@@ -369,7 +414,7 @@ class UserModifiableMappingFunction:
             x = x.replace(k, v)
             y = y.replace(k, v)
         missing = self.missing_constants()
-        return f"(x={x}, y={y})" + (str(" undefined constants!") if missing else "")
+        return f"(x={x}, y={y}) eps={self.epsilon}" + (str(" (has undefined constants)") if missing else "")
 
     def __call__(self, x, y, **inputs):
         return (advanced_solve(self.x, x=x, y=y, **inputs|self.constants),
@@ -379,29 +424,122 @@ class UserModifiableMappingFunction:
 
 
 class ModelConfiguration():
-    timestep = 0
-    start_point = UserModifiablePoint(0,0)
-    
-    border_width = 1
-    epsilon_radius = 0.1
-
     def __init__(self):
-        self.timesteps = [] # stack of UserModifiableMappingFunction
+        self.start_point = UserModifiablePoint(0,0)
+        self.start_func = UserModifiableMappingFunction()
+        self.timesteps = [] # UserModifiableMappingFunction stack
+
+    def process_with_function_stack(self, radians, stop_index=-1):
+        inner_points = np.repeat([(self.start_point.x, -self.start_point.y)], radians.size, axis=0).astype(np.float64)
+        outer_points = np.zeros_like(inner_points)
+        outer_points[:,0], outer_points[:,1] = self.start_func(inner_points[:,0], inner_points[:,1])
+        outer_points += radians_to_offsets(radians) * self.start_func.epsilon
         
-        pass
-        #
+        for timestep_func in self.timesteps[:stop_index]:
+            outer_points[:,0], outer_points[:,1] = timestep_func(outer_points[:,0], outer_points[:,1])
+            
+            # now outer_points must be expanded outward by the epsilon
+            normals = point_normals(outer_points)
+            
+            candidates0 = radians_to_offsets(normals) # either inside or outside
+            candidates1 = radians_to_offsets(normals+np.pi) # either inside or outside
+            candidates0 *= timestep_func.epsilon
+            candidates1 *= timestep_func.epsilon
+            candidates0 += outer_points
+            candidates1 += outer_points
+            
+            # findout which has the larger bounding box -> the outside
+            # and make the outside points the new outer_points
+            cand0_topleft, cand0_bottomright = bounding_box(candidates0)
+            cand1_topleft, cand1_bottomright = bounding_box(candidates1)
+            cand0_area = np.prod(np.subtract(cand0_bottomright, cand0_topleft))
+            cand1_area = np.prod(np.subtract(cand1_bottomright, cand1_topleft))
+            if cand0_area>cand1_area:
+                outer_points = candidates0
+                inner_points = candidates1
+            else:
+                outer_points = candidates1
+                inner_points = candidates0
+
+        return outer_points, inner_points
+
+    # now every timestep forward use the ever increasingly accurate radian array to create the new boundary
+    def draw_timestep_image(self, resolution, stop_index=-1):
+        radians = np.linspace(0, np.pi*2, int(np.pi*resolution*2))
+        outer_points, inner_points = self.process_with_function_stack(radians, stop_index=stop_index)
+
+        def pixelize_points(points, topleft, bottomright, resolution):
+            pixelized_points = points-topleft
+            pixelized_points /= (bottomright-topleft).max()
+            pixelized_points *= resolution-1
+            return pixelized_points
+        
+        done = False
+        while not done:
+            # bounding box
+            topleft, bottomright = bounding_box(outer_points)
+            topleft2, bottomright2 = bounding_box(inner_points)
+            topleft = np.minimum(topleft, topleft2)
+            bottomright = np.maximum(bottomright, bottomright2)
+            domain = np.subtract(bottomright, topleft)
+            #
+            
+            # bring the points to the pixel range
+            outer_pixels = pixelize_points(outer_points, topleft, bottomright, resolution)
+            
+            # resulting image might not appear continuous if there are pixel wide differences
+            # solution is to expand the radians array in those areas and calculate their values through the stack
+            diff = np.diff(outer_pixels, axis=0) # , prepend=outer_pixels[-1:], append=outer_pixels[:1]
+            gap_size = (diff[:,0]+diff[:,1]).astype(np.int32)-2
+            gap_mask = gap_size>0
+            gap_ratio = gap_mask.sum()/gap_mask.size
+            if gap_ratio>0.01 and radians.size<1e5:
+                # extend the radians at the gap points
+                lower_limit_mask = np.pad(gap_mask, (0,1))
+                upper_limit_mask = np.pad(gap_mask, (1,0))
+                
+                lower_limits = radians[lower_limit_mask]
+                upper_limits = radians[upper_limit_mask]
+                additional_radians = np.linspace(lower_limits, upper_limits, 3)[1]
+                
+                radians = np.append(radians, additional_radians)
+                radians.sort()
+                
+                additional_outer_points, additional_inner_points = self.process_with_function_stack(additional_radians, stop_index=stop_index)
+                outer_points = np.append(outer_points, additional_outer_points, axis=0)
+                inner_points = np.append(inner_points, additional_inner_points, axis=0)
+            else:
+                done = True
+        
+        # values are now continuous -> ready to draw
+        inner_pixels = pixelize_points(inner_points, topleft, bottomright, resolution)
+        
+        outer_pixels += .5 # center to pixels
+        inner_pixels += .5 # center to pixels
+        aspect = max(outer_pixels[:,0].max(), inner_pixels[:,0].max())/max(outer_pixels[:,1].max(), inner_pixels[:,1].max())
+        x_aspect = min(aspect, 1)
+        y_aspect = min(1/aspect, 1)
+        shape = (int(resolution*x_aspect)+1, int(resolution*y_aspect)+1)
+
+        image = np.zeros(shape)
+        for x,y in outer_pixels.astype(np.uint16):
+            image[x,y] = 2
+        for x,y in inner_pixels.astype(np.uint16):
+            image[x,y] = 1
+        return image.astype(np.uint8), topleft, bottomright
+
 
 class ConsoleInterface():
     interface_depth = 0
-    autorun_timesteps = 0
-    autorun_hausdorff = 0
+
+    timestep = 0
+    resolution = 1024
     
     def __init__(self):
         self.config = ModelConfiguration()
-        self.function = UserModifiableMappingFunction()
-
+    
     def _show_user_options(self, desc, options):
-        desc = clean_text_box(desc)
+        desc = clean_text_box(desc, pad_t=0, pad_b=0)
         
         string = ""
         for i,x in enumerate(options):
@@ -441,41 +579,68 @@ class ConsoleInterface():
         print("")
         return False
 
-    def quit(self): return True
+    def _quit(self): return True
 
     def mainmenu(self):
-        while not self.mainmenu_options(): pass
-    
-    def mainmenu_options(self):
+        while not self._options(): pass
+
+    def _options(self):
         options = [
-            ("Start", self.activerun),
-            ("Set Start Point", self.set_startpoint),
-            ("Exit", self.quit),
+            ("Next Timestep", self._next),
+            ("Move To Timestep", self._move),
+            ("Remove Timestep", None), # self._remove
+            ("Modify Function", self.modifyfunction),
+            ("Modify Start Point", self.set_startpoint),
+            ("Open Matplotlib Figure", self._visuals),
+            ("Modify Resolution", self.set_resolution),
+            ("Save", self.save_configuration),
+            ("Load", self.load_configuration),
+##            ("More Data...", self._moredata),
+            ("Exit", self._quit),
             ]
-        desc = "Simple interface for dynamic model visualization"
+        
+        desc = f"Timestep: {self.timestep} of {len(self.config.timesteps)}"
+        desc += "\n"+str("Starting " if self.timestep==0 else "")+f"Function: {self._targeted_function()}"
         desc += f"\nStarting point: {self.config.start_point}"
+        desc += f"\nResolution: {self.resolution}"
+        
         self._show_user_options(desc, options)
         return self._process_user_input(options)
 
+    def _targeted_function(self):
+        if self.timestep==0: return self.config.start_func
+        return self.config.timesteps[self.timestep-1]
+
+##    def _moredata(self):
+##        desc = "Configuration"
+##        desc = clean_text_box(desc)
+##        self._depth_print(desc)
+##        self._depth_input("Back...")
 
     def set_epsilon(self):
+        function = self._targeted_function()
         desc = "Radius of the random uniform noise"
-        desc = clean_text_box(desc)
+        desc = clean_text_box(desc, pad_t=0, pad_b=0)
         self._depth_print(desc)
-        self._set_attr("epsilon_radius", zero_ok=True, target=self.config)
+        self._set_attr("epsilon", zero_ok=True, target=function)
         
     def set_startpoint(self):
         desc = "Starting point of the simulation"
-        desc = clean_text_box(desc)
+        desc = clean_text_box(desc, pad_t=0, pad_b=0)
         self._depth_print(desc)
         self._set_attr("start_point", target=self.config)
         
-    def set_autorun_timesteps(self):
-        self.autorun_timesteps = self.config.timestep
-        if self._set_attr("autorun_timesteps", zero_ok=True):
-            self.autorun_timesteps = max(self.autorun_timesteps-self.config.timestep, 0)
-        else: self.autorun_timesteps = 0
+##    def set_autorun_timesteps(self):
+##        self.autorun_timesteps = self.config.timestep
+##        if self._set_attr("autorun_timesteps", zero_ok=True):
+##            self.autorun_timesteps = max(self.autorun_timesteps-self.config.timestep, 0)
+##        else: self.autorun_timesteps = 0
         
+    def set_resolution(self):
+        desc = "Maximum pixel width or height of the matplotlib figure"
+        desc = clean_text_box(desc, pad_t=0, pad_b=0)
+        self._depth_print(desc)
+        self._set_attr("resolution")
         
     def _set_attr(self, attr_name, negative_ok=False, zero_ok=False, target=None):
         if target is None: target = self
@@ -493,7 +658,7 @@ class ConsoleInterface():
                         setattr(target, attr_name, user_input)
                         success = True
                 if not success:
-                    complain = "Given value must be a "
+                    complain = "Value must be a "
                     if not zero_ok: complain += "non-zero "
                     if not negative_ok: complain += "positive "
                     complain += "integer" if t is int else "float"
@@ -519,26 +684,30 @@ class ConsoleInterface():
         
     
     def modifyfunction(self):
+        function = self._targeted_function()
         while not self.modifyfunction_options():
-            self.function.trim_excess_constants()
+            function.trim_excess_constants()
         
     def modifyfunction_options(self):
+        function = self._targeted_function()
         options = [
+            ("Define Constants", self._modifyfunction_define),
+            ("Modify Epsilon", self.set_epsilon),
             ("Modify the X-axis Equation", self._modifyfunction_axis_x),
             ("Modify the Y-axis Equation", self._modifyfunction_axis_y),
-            ("Define Constants", self._modifyfunction_define),
             ("Save Function", self.save_function),
             ("Load Function", self.load_function),
-            ("Done", self.quit),
+            ("Done", self._quit),
             ]
-        desc = f"X-axis: {self.function.x}"
-        desc += f"\nY-axis: {self.function.y}"
+        desc = f"X-axis: {function.x}"
+        desc += f"\nY-axis: {function.y}"
+        desc += f"\nEpsilon: {function.epsilon}"
         
-        if self.function.constants:
+        if function.constants:
             desc += "\nDefined:"
-            for k,v in self.function.constants.items():
+            for k,v in function.constants.items():
                 desc += f"\n  {k} = {v}"
-        missing_constants = self.function.missing_constants()
+        missing_constants = function.missing_constants()
         if missing_constants:
             desc += "\nUndefined: " + ", ".join(missing_constants)
         
@@ -546,33 +715,36 @@ class ConsoleInterface():
         return self._process_user_input(options)
 
     def _modifyfunction_axis_x(self):
+        function = self._targeted_function()
         desc = "Set a new X-axis equation for the function"
-        desc = clean_text_box(desc)
+        desc = clean_text_box(desc, pad_t=0, pad_b=0)
         self._depth_print(desc)
-        user_input = self._depth_input(self.function.x+" -> ")
+        user_input = self._depth_input(function.x+" -> ")
         if user_input:
-            self.function.x = user_input
+            function.x = user_input
             self._depth_print("Value set")
         
     def _modifyfunction_axis_y(self):
+        function = self._targeted_function()
         desc = "Set a new Y-axis equation for the function"
-        desc = clean_text_box(desc)
+        desc = clean_text_box(desc, pad_t=0, pad_b=0)
         self._depth_print(desc)
-        user_input = self._depth_input(self.function.y+" -> ")
+        user_input = self._depth_input(function.y+" -> ")
         if user_input:
-            self.function.y = user_input
+            function.y = user_input
             self._depth_print("Value set")
 
     def _modifyfunction_define(self):
+        function = self._targeted_function()
         desc = "Define function constants"
-        if self.function.constants:
+        if function.constants:
             desc += "\nDefined:"
-            for k,v in self.function.constants.items():
+            for k,v in function.constants.items():
                 desc += f"\n  {k} = {v}"
-        missing_constants = self.function.missing_constants()
+        missing_constants = function.missing_constants()
         if missing_constants:
             desc += "\nUndefined: " + ", ".join(missing_constants)
-        desc = clean_text_box(desc)
+        desc = clean_text_box(desc, pad_t=0, pad_b=0)
         self._depth_print(desc)
 
         k = v = None
@@ -580,7 +752,7 @@ class ConsoleInterface():
         user_input = self._depth_input("Constant: ")
         if not user_input:
             return
-        if user_input in self.function.constants:
+        if user_input in function.constants:
             k = user_input
             user_input = self._depth_input(f"Redefine '{user_input}' as: ")
             user_input = user_input.replace(",",".")
@@ -596,65 +768,67 @@ class ConsoleInterface():
             self._depth_print("Invalid constant")
         
         if v is not None:
-            self.function.constants[k] = v
+            function.constants[k] = v
             self._depth_print("Value set")
         elif k is not None:
             self._depth_print("Invalid value")
 
 
-    def activerun(self):
-        self._activerun_init()
-        while not self.activerun_options(): pass
-        
-    def activerun_options(self):
-        options = [
-            ("Next Timestep", self._activerun_next),
-            ("Open Matplotlib Figure", self._activerun_visuals),
-            ("Modify Epsilon", self.set_epsilon),
-            ("Modify Function", self.modifyfunction),
-            ("Run Until Timestep", self.set_autorun_timesteps),
-            ("Save State", self.save_timestep),
-            ("Load State", self.load_timestep),
-            ("More Data...", self._activerun_moredata),
-            ("Stop", self.quit),
-            ]
+##    def activerun(self):
+##        while not self.activerun_options(): pass
+##        
+##    def activerun_options(self):
 
-        desc = f"Timestep: {self.config.timestep}"
-        desc += f"\nEpsilon radius: {self.config.epsilon_radius}"
-        desc += f"\nFunction: {self.function}"
-        if self.autorun_timesteps>0:
-            self.autorun_timesteps -= 1
-            desc = clean_text_box(desc)
-            self._depth_print(desc+"\n")
-            self._activerun_next(print_steps=False)
-            return False
-        
-        self._show_user_options(desc, options)
-        return self._process_user_input(options)
-
-    def _activerun_moredata(self):
-        desc = "Configuration"
-        desc = clean_text_box(desc)
-        self._depth_print(desc)
-        self._depth_input("Back...")
-
-
-    def _activerun_init(self):
-        self.config = ModelConfiguration()
-
-    def _activerun_visuals(self):
-        self._depth_print("Close matplotlib window to continue", -1)
-##        self.config.visualization()
-        print("")
-
-    def _activerun_fail_check(self): # would it crash
-        return bool(self.function.missing_constants())
     
-    def _activerun_next(self, print_steps=True):
-        if self._activerun_fail_check():
-            self._depth_print("Run failed")
-            return
-        # TODO
+    def check_functions(self):
+        fails = []
+        for i,func in enumerate([self.config.start_func]+self.config.timesteps):
+            if func.missing_constants():
+                fails.append(f"{i}: "+str(func))
+        if fails:
+            desc = "Functions failed at timesteps:\n "
+            desc += "\n ".join(fails)
+##            desc = text_box(desc, t="#", l="#", r="#")
+            self._depth_print(desc)
+        else:
+            self._depth_print("Functions OK")
+            return True
+        return False
+
+    def _visuals(self):
+        if self.check_functions():
+            out = self.config.draw_timestep_image(self.resolution, stop_index=self.timestep)
+            if out is not None:
+                self._depth_print("Close matplotlib window to continue...")
+                image, topleft, bottomright = out
+                extent = (topleft[0],bottomright[0],-bottomright[1],-topleft[1])
+                plt.imshow(image.swapaxes(0, 1), extent=extent)
+                plt.show()
+                print("")
+    
+    def _next(self):
+        function = self._targeted_function()
+        if self.timestep==len(self.config.timesteps):
+            self.config.timesteps.append(function.copy())
+        self.timestep += 1
+        
+    def _move(self):
+        function = self._targeted_function()
+        desc = "Move to specific timestep in the function stack."
+        desc += "\nInput a timestep greater than the range to extend the stack using the function below."
+        desc += f"\nFunction: {function}"
+        desc += f"\nCurrent range: 0..{len(self.config.timesteps)}"
+        desc = clean_text_box(desc, pad_t=0, pad_b=0)
+        self._depth_print(desc)
+        
+        old_timestep = self.timestep
+        self._set_attr("timestep", zero_ok=True)
+        if old_timestep<self.timestep:
+            diff = self.timestep-len(self.config.timesteps)
+            if diff>0:
+                for i in range(diff): self.config.timesteps.append(function.copy())
+            
+        
 
 
 
@@ -683,37 +857,46 @@ class ConsoleInterface():
                 desc += f"{name}"+"."*(10 + max_name_len*2-len(name) + max_size_len*2-len(size))+size
             
             desc = clean_text_box(desc, l=">", pad_t=0, pad_b=0)
-            self._depth_print(desc)
+        else:
+            desc = "No valid files found"
+        self._depth_print(desc)
+        return bool(saves)
 
-    def save_timestep(self, name=None):
+    def save_configuration(self, name=None):
         if name is None:
             name = self._depth_input("Save as: ")
         if name:
-            obj = None
-            save(os.path.join(SAVE_DIR, name+".timestep"), obj)
+            obj = self.config
+            save(os.path.join(SAVE_DIR, name+".configuration"), obj)
 
     def save_function(self, name=None):
+        function = self._targeted_function()
         if name is None:
+            self._depth_print(str(function))
             name = self._depth_input("Save as: ")
         if name:
-            obj = self.function
+            obj = function
             save(os.path.join(SAVE_DIR, name+".function"), obj)
     
-    def load_timestep(self, name=None):
+    def load_configuration(self, name=None):
         if name is None:
-            self.list_savefiles("timestep")
-            name = self._depth_input("Timestep name: ")
+            if self.list_savefiles("configuration"):
+                name = self._depth_input("File name: ")
         if name:
-            obj = self._load_file(name, "timestep")
+            obj = self._load_file(name, "configuration")
+            if obj is not None:
+                self.config = obj
+                self.timestep = 0
                 
     def load_function(self, name=None):
         if name is None:
             self.list_savefiles("function")
-            name = self._depth_input("Function name: ")
+            name = self._depth_input("File name: ")
         if name:
             obj = self._load_file(name, "function")
             if obj is not None:
-                self.function = obj
+                if self.timestep==0: self.config.start_func = obj
+                self.config.timesteps[self.timestep] = obj
 
     def _load_file(self, name, ext):
         if name:
@@ -729,222 +912,42 @@ class ConsoleInterface():
 
 
 
-def radians_absolute(radians): # -inf...inf -> 0...2*np.pi
-    radians = np.mod(radians, np.pi*2)
-    radians[radians<0] = radians[radians<0]+np.pi*2
-    return radians
-
-def radians_to_offsets(radians):
-    offsets = np.repeat(np.expand_dims(radians, axis=1), 2, axis=1)
-    offsets[:,0] = np.sin(offsets[:,0])
-    offsets[:,1] = np.cos(offsets[:,1])
-    return offsets
-
-def offsets_to_radians(offsets):
-    return np.arctan2(offsets[:,0], offsets[:,1])
-
-
-
-def toggle_mask_to_continous_mask(toggle_mask):
-    continous = np.zeros_like(toggle_mask)
-    value = True
-    i = j = 0
-    while j<toggle_mask.size:
-        i = toggle_mask[j:].argmax() # next one
-        ii = toggle_mask[j:].argmin()
-        if i==ii: break
-        j += i
-        continous[j:] = value
-        value = not value
-        j += 1
-    return continous
 
 
 
 
-
-
-
-
-
-
-
-
-
+    
 
 
 def function_stack_test():
     config = ModelConfiguration()
-    config.resolution = 512
-    n = int(np.pi*config.resolution)*2
-    config.radians = np.linspace(0, np.pi*2, n)
-
-    start_func = UserModifiableMappingFunction()
-    start_func.x = "x/5"
-    start_func.y = "y/2"
-    start_func.epsilon = 0.5
-    start_point = UserModifiablePoint(0,0.2)
-    timesteps = [] # stack of UserModifiableMappingFunction
     
-    current_func = start_func.copy()
+    # something
+##    config.start_func.x = "(y/3+x)/(y**2+1)"
+##    config.start_func.y = "(x+1)/(y+3)"
+
+    # fish mouth
+##    config.start_func.x = "x/4"
+##    config.start_func.y = "(y**2)/(y+3)"
+
+    # nice henon
+    config.start_func.epsilon = 0.005
+    config.start_point.x = -.1
+    config.start_point.y = .1
     
-    def bounding_box(points):
-        topleft = np.zeros(2)
-        bottomright = np.zeros(2)
-        topleft[0] = points[:,0].min()
-        topleft[1] = points[:,1].min()
-        bottomright[0] = points[:,0].max()
-        bottomright[1] = points[:,1].max()
-        return topleft, bottomright
-
-    def point_normals(points):
-        diff = np.diff(points, prepend=points[-1:], axis=0)
-        return offsets_to_radians(diff)-np.pi/2
-
-    def process_with_function_stack(radians):
-        # starting
-        inner_points = np.repeat([(start_point.x, -start_point.y)], radians.size, axis=0).astype(np.float64)
-        outer_points = np.zeros_like(inner_points)
-        outer_points[:,0], outer_points[:,1] = start_func(inner_points[:,0], inner_points[:,1])
-        outer_points += radians_to_offsets(radians) * start_func.epsilon
-        
-        for timestep_func in timesteps:
-            outer_points[:,0], outer_points[:,1] = timestep_func(outer_points[:,0], outer_points[:,1])
-            
-            # now outer_points must be expanded outward by the epsilon
-            normals = point_normals(outer_points)
-            
-            candidates0 = radians_to_offsets(normals) # either inside or outside
-            candidates1 = radians_to_offsets(normals+np.pi) # either inside or outside
-            candidates0 *= timestep_func.epsilon
-            candidates1 *= timestep_func.epsilon
-            candidates0 += outer_points
-            candidates1 += outer_points
-
-
-##            normals0 = point_normals(candidates0)
-##            normals1 = point_normals(candidates1)
-##            edges0 = abs(np.diff(normals0, prepend=normals0[-1:]))>(np.pi/2)
-##            edges1 = abs(np.diff(normals1, prepend=normals1[-1:]))>(np.pi/2)
-##            classification = toggle_mask_to_continous_mask(edges0)
-##            temp = candidates0[classification]
-##            candidates0[classification] = candidates1[classification]
-##            candidates1[classification] = temp
-            
-
-##            # the one with less edgy normals wins
-##            score0 = abs(np.diff(point_normals(candidates0))).sum()
-##            score1 = abs(np.diff(point_normals(candidates1))).sum()
-##            if score0<score1:
-##                outer_points = candidates0
-##                inner_points = candidates1
-##            else:
-##                outer_points = candidates1
-##                inner_points = candidates0
-            
-            # findout which has the larger bounding box -> the outside
-            # and make the outside points the new outer_points
-            cand0_topleft, cand0_bottomright = bounding_box(candidates0)
-            cand1_topleft, cand1_bottomright = bounding_box(candidates1)
-            cand0_area = np.prod(np.subtract(cand0_bottomright, cand0_topleft))
-            cand1_area = np.prod(np.subtract(cand1_bottomright, cand1_topleft))
-            if cand0_area>cand1_area:
-                outer_points = candidates0
-                inner_points = candidates1
-            else:
-                outer_points = candidates1
-                inner_points = candidates0
-
-        return outer_points, inner_points
-
-    def pixelize_points(points, topleft, bottomright):
-        pixelized_points = points-topleft
-        pixelized_points /= (bottomright-topleft).max()#max(pixelized_points.max(), 1)
-        pixelized_points *= config.resolution-1
-        return pixelized_points
+    resolution = 2048
     
-    # now every timestep forward use the ever increasingly accurate radian array to create the new boundary
-    def draw_timestep_image():
-        outer_points, inner_points = process_with_function_stack(config.radians)
-        
-        done = False
-        while not done:
-            # bounding box
-            topleft, bottomright = bounding_box(outer_points)
-            topleft2, bottomright2 = bounding_box(inner_points)
-            topleft = np.minimum(topleft, topleft2)
-            bottomright = np.maximum(bottomright, bottomright2)
-            domain = np.subtract(bottomright, topleft)
-            #
-            
-            # bring the points to the pixel range
-            outer_pixels = pixelize_points(outer_points, topleft, bottomright)
-            
-            # resulting image might not appear continuous if there are pixel wide differences
-            # solution is to expand the radians array in those areas and calculate their values through the stack
-            diff = np.diff(outer_pixels, axis=0) # , prepend=outer_pixels[-1:], append=outer_pixels[:1]
-            gap_size = (diff[:,0]+diff[:,1]).astype(np.int32)-2
-            gap_mask = gap_size>0
-            gap_ratio = gap_mask.sum()/gap_mask.size
-            if gap_ratio>0.01 and config.radians.size<1e5:
-                # extend the radians at the gap points
-                lower_limit_mask = np.pad(gap_mask, (0,1))
-                upper_limit_mask = np.pad(gap_mask, (1,0))
-                
-                lower_limits = config.radians[lower_limit_mask]
-                upper_limits = config.radians[upper_limit_mask]
-                additional_radians = np.linspace(lower_limits, upper_limits, 3)[1]
-                
-                config.radians = np.append(config.radians, additional_radians)
-                config.radians.sort()
-                print(config.radians.shape)
-                additional_outer_points, additional_inner_points = process_with_function_stack(additional_radians)
-                outer_points = np.append(outer_points, additional_outer_points, axis=0)
-                inner_points = np.append(inner_points, additional_inner_points, axis=0)
-
-            else:
-                done = True
-        
-        # values are now continuous -> ready to draw
-        inner_pixels = pixelize_points(inner_points, topleft, bottomright)
-        
-        outer_pixels += .5 # center to pixels
-        inner_pixels += .5 # center to pixels
-        aspect = max(outer_pixels[:,0].max(), inner_pixels[:,0].max())/max(outer_pixels[:,1].max(), inner_pixels[:,1].max())
-        x_aspect = min(aspect, 1)
-        y_aspect = min(1/aspect, 1)
-        shape = (int(config.resolution*x_aspect)+1, int(config.resolution*y_aspect)+1)
-##        shape = (config.resolution, config.resolution)
-
-        image = np.zeros(shape)
-        for x,y in outer_pixels.astype(np.uint16):
-            image[x,y] = 2
-        for x,y in inner_pixels.astype(np.uint16):
-            image[x,y] = 1
-        return image.astype(np.uint8), topleft, bottomright
-        
-##        image = np.zeros((*shape, 3))
-##        for x,y in outer_pixels.astype(np.uint16):
-##            image[x,y,0] += 1
-##        for x,y in inner_pixels.astype(np.uint16):
-##            image[x,y,1] += 1
-##        image[:,:,0] /= max(image[:,:,0].max(), 1)
-##        image[:,:,1] /= max(image[:,:,1].max(), 1)
-##        image[:,:,2] /= max(image[:,:,2].max(), 1)
-##        image *= 255
-##        return image.astype(np.uint8), topleft, bottomright
-
     while 1:
-        image, topleft, bottomright = draw_timestep_image()
+        image, topleft, bottomright = config.draw_timestep_image(resolution)
         extent = (topleft[0],bottomright[0],-bottomright[1],-topleft[1])
         plt.imshow(image.swapaxes(0, 1), extent=extent)
         plt.show()
         
-        timesteps.append(current_func.copy())
-    
+        config.timesteps.append(config.start_func.copy())
+
 
 if __name__ == "__main__":
-    function_stack_test()
+##    function_stack_test()
 
     ## toggle_mask_to_continous_mask
 ##    a = np.zeros(8, dtype=np.bool_)
@@ -954,8 +957,8 @@ if __name__ == "__main__":
 ##    b = toggle_mask_to_continous_mask(a)
 ##    print(b)
     
-##    interface = ConsoleInterface()
-##    interface.mainmenu()
+    interface = ConsoleInterface()
+    interface.mainmenu()
 
 
 
