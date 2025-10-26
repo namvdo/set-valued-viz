@@ -8,11 +8,14 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "build-wasm": "cd ../src && wasm-pack build --target web --out-dir pkg && cp -r ../pkg/* ../frontend/src/pkg/"
+    "build-wasm": "wasm-pack build ../ --target web --out-dir ./src/pkg"
   },
   "dependencies": {
+    "@react-three/drei": "^10.7.6",
+    "@react-three/fiber": "^9.4.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "three": "^0.180.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.33.0",

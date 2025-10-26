@@ -22,7 +22,7 @@ extern "C" {
 // Macro for console.log debugging
 macro_rules! console_log {
     ($($t:tt)*) => {
-        (log(&format_args!($($t)*).to_string()))
+        log(&format_args!($($t)*).to_string())
     };
 }
 
@@ -212,7 +212,7 @@ impl StateVector {
 
     /// Calculate distance to another state vector
     #[wasm_bindgen]
-    pub fn calculate_distance(&self, other: StateVector) -> f64 {
+    pub fn calculate_distance(&self, other: &StateVector) -> f64 {
         let distance_x = other.x - self.x;
         let distance_y = other.y - self.y;
         (distance_x * distance_x + distance_y * distance_y).sqrt() 
@@ -236,6 +236,459 @@ impl StateVector {
     pub fn set_y(&mut self, y: f64) { self.y = y }
 }
 
+
+#[derive(Clone, Debug)]
+struct BoundaryPoint {
+    /// Position in 2D space (x, y)
+    position: (f64, f64),
+    /// Outward unit normal vector (nx, ny)
+    normal: (f64, f64)
+}
+
+
+impl BoundaryPoint {
+    fn new(x: f64, y: f64, nx: f64, ny: f64) -> Self {
+        // Normalize the normal vector
+        let mag = (nx * nx + ny * ny).sqrt();
+        let normal = if mag > 1e-10 {
+            (nx / mag, ny / mag)
+        } else {
+            console_log!("Warning: Zero normal vector at: ({}, {}), using default", x, y);
+            (1.0, 1.0)
+        };
+
+        BoundaryPoint {
+            position: (x, y),
+            normal: normal,
+        }
+    }
+
+    fn on_circle(cx: f64, cy: f64, epsilon: f64, angle: f64) -> Self {
+        let x = cx + epsilon * angle.cos();
+        let y = cy + epsilon * angle.sin();
+
+        // For a circle, the outward normal is just the radial direction 
+        let nx = angle.cos();
+        let ny = angle.sin();
+
+        BoundaryPoint {
+            position: (x, y),
+            normal: (nx, ny)
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub struct SetValuedSimulation {
+    henon_map: HenonMap,
+    epsilon: f64,
+    /// Boundary points with their normal vectors
+    boundary_points: Vec<BoundaryPoint>,
+    iteration_count: usize,
+    /// Convergence threshold for termination
+    convergence_threshold: f64
+}
+
+#[wasm_bindgen]
+impl SetValuedSimulation {
+    /// Initialize with circular initial set
+    /// 
+    /// Algorithm 1, Step (i)-(iii):
+    /// - Pick initial point (center)
+    /// - Map it forward [we start at the mapped point]
+    /// - Sample boundary points on ∂B_ε(center)
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        params: &SystemParameters,
+        epsilon: f64,
+        initial_center_x: f64,
+        initial_center_y: f64,
+        n_boundary_points: usize
+    ) -> Result<SetValuedSimulation, JsValue> {
+        if epsilon <= 0.0 || epsilon.is_nan() || epsilon.is_infinite() {
+            return Err(JsValue::from_str("Parameter 'epsilon' must be a positive number"));
+        } 
+        if n_boundary_points < 3 {
+            let err = format!("Parameter 'n_boundary_points' must be at least 3, got: {}", n_boundary_points);
+            return Err(JsValue::from_str(err.as_str()));
+        }
+        
+        let henon_map = HenonMap::new(params);
+        let state0 = StateVector::new(initial_center_x, initial_center_y);
+        let state1 = henon_map.iterate(&state0);
+        let center_x = state1.x();
+        let center_y = state1.y();
+        
+        let mut boundary_points = Vec::with_capacity(n_boundary_points);
+        for i in 0..n_boundary_points {
+            let angle = 2.0 * f64::consts::PI * (i as f64) / (n_boundary_points as f64);
+            let boundary_point = BoundaryPoint::on_circle(center_x, center_y, epsilon, angle);
+            boundary_points.push(boundary_point);
+        }
+        
+        console_log!("Initialized set-valued simulation with {} boundary points", boundary_points.len());
+        Ok(SetValuedSimulation {
+            henon_map,
+            epsilon,
+            boundary_points,
+            iteration_count: 0,
+            convergence_threshold: 1e-6
+        }) 
+    }
+
+
+    //// Get detailed iteration data for visualization
+    /// Returns: [mapped_points (flat), projected_points (flat), normals (flat)]
+    #[wasm_bindgen]
+    pub fn get_iteration_details(&self) -> Vec<f64> {
+        let mut result = Vec::new();
+        
+        let a = self.henon_map.get_parameters().a();
+        let b = self.henon_map.get_parameters().b();
+        
+        for point in &self.boundary_points {
+            let (x, y) = point.position;
+            let (nx, ny) = point.normal;
+            
+            // Compute mapped point f(zk)
+            let f_x = 1.0 - a * x * x + y;
+            let f_y = b * x;
+            
+            result.push(f_x);
+            result.push(f_y);
+        }
+        
+        result
+    }
+
+    /// Perform 1 iteration and return detailed visualization data
+    /// Returns JSON string with all intermediate steps
+    #[wasm_bindgen]
+    pub fn iterate_boundary_with_details(&mut self) -> Result<String, JsValue> {
+        if self.boundary_points.is_empty() {
+            return Err(JsValue::from_str("No boundary points initialized"));
+        }
+
+        let n = self.boundary_points.len();
+        let mut mapped_points = Vec::new();
+        let mut projected_points = Vec::new();
+        let mut normals = Vec::new();
+        let mut new_boundary_points = Vec::with_capacity(n);
+        let mut max_movement: f64 = 0.0;
+
+        let a = self.henon_map.get_parameters().a();
+        let b = self.henon_map.get_parameters().b();
+
+        // Step (v): For each boundary point zk
+        for old_point in &self.boundary_points {
+            let (x, y) = old_point.position;
+            let (nx, ny) = old_point.normal;
+            
+            // Safety check
+            if !x.is_finite() || !y.is_finite() || x.abs() > 100.0 || y.abs() > 100.0 {
+                continue;
+            }
+            
+            // Step (v-a): Compute f(zk)
+            let f_x = 1.0 - a * x * x + y;
+            let f_y = b * x;
+            
+            if !f_x.is_finite() || !f_y.is_finite() || f_x.abs() > 100.0 || f_y.abs() > 100.0 {
+                continue;
+            }
+            
+            mapped_points.push(f_x);
+            mapped_points.push(f_y);
+            
+            // Step (v-b): Transform normal using Jacobian transpose
+            let j11 = -2.0 * a * x;
+            let j21 = b;
+            let j12 = 1.0;
+            
+            let nx_transformed = j11 * nx + j21 * ny;
+            let ny_transformed = j12 * nx;
+            
+            let normal_mag = (nx_transformed * nx_transformed + ny_transformed * ny_transformed).sqrt();
+            
+            let (nx_new, ny_new) = if normal_mag > 1e-8 {
+                (nx_transformed / normal_mag, ny_transformed / normal_mag)
+            } else {
+                let radial_mag = (f_x * f_x + f_y * f_y).sqrt();
+                if radial_mag > 1e-8 {
+                    (f_x / radial_mag, f_y / radial_mag)
+                } else {
+                    (nx, ny)
+                }
+            };
+
+            normals.push(nx_new);
+            normals.push(ny_new);
+
+            // Step (v-c): Project outward
+            let new_x = f_x + self.epsilon * nx_new;
+            let new_y = f_y + self.epsilon * ny_new;
+            
+            if !new_x.is_finite() || !new_y.is_finite() {
+                continue;
+            }
+
+            projected_points.push(new_x);
+            projected_points.push(new_y);
+
+            let movement = ((new_x - x).powi(2) + (new_y - y).powi(2)).sqrt();
+            if movement.is_finite() && movement > max_movement {
+                max_movement = movement;
+            }
+
+            new_boundary_points.push(BoundaryPoint::new(new_x, new_y, nx_new, ny_new));
+        }
+
+        if new_boundary_points.is_empty() {
+            return Err(JsValue::from_str("All boundary points diverged"));
+        }
+
+        self.boundary_points = new_boundary_points;
+        self.iteration_count += 1;
+
+        // Create JSON with all visualization data
+        let result = format!(
+            r#"{{"iteration": {}, "mapped_points": {:?}, "projected_points": {:?}, "normals": {:?}, "epsilon": {}, "max_movement": {}}}"#,
+            self.iteration_count,
+            mapped_points,
+            projected_points,
+            normals,
+            self.epsilon,
+            max_movement
+        );
+
+        Ok(result)
+    }
+
+
+    /// Perform 1 iteration of Algorithm 1
+    /// This implements step (iv) and (v) of Algorithm 1
+    #[wasm_bindgen]
+    pub fn iterate_boundary(&mut self) -> Result<f64, JsValue> {
+        if self.boundary_points.is_empty() {
+            return Err(JsValue::from_str("No boundary points initialized"));
+        }
+
+        let n = self.boundary_points.len();
+        let mut new_boundary_points = Vec::with_capacity(n);
+        let mut max_movement: f64 = 0.0;
+
+        // Step (v): For each boundary point zk
+        for old_point in &self.boundary_points {
+            let (x, y) = old_point.position;
+            let (nx, ny) = old_point.normal;
+            
+            // Safety check: Skip diverged points
+            if !x.is_finite() || !y.is_finite() || x.abs() > 100.0 || y.abs() > 100.0 {
+                console_log!("Skipping diverged point: ({}, {})", x, y);
+                continue;
+            }
+            
+            // Step (v-a): Compute f(zk) - Direct Hénon map calculation
+            let a = self.henon_map.get_parameters().a();
+            let b = self.henon_map.get_parameters().b();
+            let f_x = 1.0 - a * x * x + y;
+            let f_y = b * x;
+            
+            // Check if mapped point is valid
+            if !f_x.is_finite() || !f_y.is_finite() || f_x.abs() > 100.0 || f_y.abs() > 100.0 {
+                console_log!("Skipping point with invalid mapping: f({}, {}) = ({}, {})", 
+                            x, y, f_x, f_y);
+                continue;
+            }
+            
+            // Step (v-b): Compute transformed normal vector using Jacobian transpose
+            // For Hénon map: J = [[-2*a*x, 1], [b, 0]]
+            // Transform normal: n_new = J^T * n = [[-2*a*x, b], [1, 0]] * [nx, ny]
+            let j11 = -2.0 * a * x;
+            let j12 = 1.0;
+            let j21 = b;
+            let j22 = 0.0;
+            
+            // n_new = J^T * n
+            let nx_transformed = j11 * nx + j21 * ny;
+            let ny_transformed = j12 * nx + j22 * ny;
+            
+            // Normalize the transformed normal
+            let normal_mag = (nx_transformed * nx_transformed + ny_transformed * ny_transformed).sqrt();
+            
+            let (nx_new, ny_new) = if normal_mag > 1e-8 {
+                (nx_transformed / normal_mag, ny_transformed / normal_mag)
+            } else {
+                // Fallback: Use radial direction from origin if normal is too small
+                let radial_mag = (f_x * f_x + f_y * f_y).sqrt();
+                if radial_mag > 1e-8 {
+                    (f_x / radial_mag, f_y / radial_mag)
+                } else {
+                    // Ultimate fallback: Use previous normal
+                    console_log!("Using previous normal at f({}, {}) = ({}, {})", 
+                                x, y, f_x, f_y);
+                    (nx, ny)
+                }
+            };
+
+            // Step (v-c): Project outward ẑk = f(zk) + ε * n(f(zk))
+            let new_x = f_x + self.epsilon * nx_new;
+            let new_y = f_y + self.epsilon * ny_new;
+            
+            // Final safety check
+            if !new_x.is_finite() || !new_y.is_finite() {
+                console_log!("Skipping non-finite projection: ({}, {})", new_x, new_y);
+                continue;
+            }
+
+            // Track maximum movement for convergence check
+            let movement = ((new_x - x).powi(2) + (new_y - y).powi(2)).sqrt();
+            if movement.is_finite() && movement > max_movement {
+                max_movement = movement;
+            }
+
+            new_boundary_points.push(BoundaryPoint::new(new_x, new_y, nx_new, ny_new));
+        }
+
+        // Check if we lost too many points
+        if new_boundary_points.is_empty() {
+            return Err(JsValue::from_str("All boundary points diverged"));
+        }
+        
+        if new_boundary_points.len() < n / 2 {
+            console_log!("⚠️  Lost {} boundary points (from {} to {})", 
+                        n - new_boundary_points.len(), n, new_boundary_points.len());
+        }
+
+        // Step (vi): Replace old boundary with new boundary
+        self.boundary_points = new_boundary_points;
+        self.iteration_count += 1;
+
+        console_log!("✓ Iteration {}: {} points, max movement = {:.6e}", 
+                    self.iteration_count, self.boundary_points.len(), max_movement);
+        Ok(max_movement)
+        } 
+        /// Runs the Algorithm 1 until convergence or maximum iterations reached
+        /// Returns number of iterations performed
+        #[wasm_bindgen]
+        pub fn run_until_convergence(&mut self, max_iterations: usize) -> Result<usize, JsValue> {
+            console_log!("Running Algorithm 1 until convergence (max {} iterations)", max_iterations);
+
+            for iter in 0..max_iterations {
+                let movement = self.iterate_boundary()?;
+
+                // Step (T): check termination condition
+                if movement < self.convergence_threshold {
+                    console_log!("Converged after: {} iterations (movement = {:.6e} < threshold = {:.6e})", iter + 1, movement, self.convergence_threshold);
+                    return Ok(iter + 1);
+                }
+            }
+
+            console_log!("Reach maximum iterations ({}) without full convergence", max_iterations);
+            Ok(max_iterations)
+        }
+
+        /// Run Algorithm 1 and track the full history of boundary points for visualization.
+        /// Returns a flat array of all boundary points from all iterations,
+        /// with each iteration separated by a NaN value.
+        /// Format: [x1, y1, ..., xN, yN, NaN, x1', y1', ..., xN', yN', NaN, ...]
+        #[wasm_bindgen]
+        pub fn track_boundary_evolution(&mut self, max_iterations: usize) -> Result<Vec<f64>, JsValue> {
+            let mut history = Vec::new();
+
+            // Add initial state to history
+            let initial_positions = self.get_boundary_positions();
+            history.extend(initial_positions);
+            history.push(f64::NAN);
+
+            for iter in 0..max_iterations {
+                let movement = self.iterate_boundary()?;
+
+                // Add current boundary to history
+                let positions = self.get_boundary_positions();
+                history.extend(positions);
+                history.push(f64::NAN);
+
+                if movement < self.convergence_threshold {
+                    console_log!("Converged after {} iterations.", iter + 1);
+                    break;
+                }
+            }
+
+            Ok(history)
+        }
+
+    /// Get boundary positions as flat array [x1, y1, x2, y2, ....]
+    #[wasm_bindgen(js_name = getBoundaryPositions)]
+    pub fn get_boundary_positions(&self) -> Vec<f64> {
+        let mut result = Vec::with_capacity(self.boundary_points.len() * 2);
+        for point in &self.boundary_points {
+            result.push(point.position.0);
+            result.push(point.position.1);
+        }
+        result
+    }
+
+    /// Get current normal vectors as flat array [nx1, ny1, nx2, ny2, ...]
+    #[wasm_bindgen(js_name = getNormalVectors)]
+    pub fn get_normal_vectors(&self) -> Vec<f64> {
+        let mut result = Vec::with_capacity(self.boundary_points.len() * 2);
+        for point in &self.boundary_points {
+            result.push(point.normal.0);
+            result.push(point.normal.1);
+        }
+        result
+    }
+
+    /// Get number of iterations performed
+    #[wasm_bindgen(js_name = getIterationCount)]
+    pub fn get_iteration_count(&self) -> usize {
+        self.iteration_count
+    }
+
+    /// Set convergence threshold 
+    pub fn set_convergence_threshold(&mut self, threshold: f64) {
+        self.convergence_threshold = threshold;
+        console_log!("Set convergence threshold to {}", threshold);
+    }
+
+    /// Get the center of mass of boundary points
+    #[wasm_bindgen(js_name = getCentroid)]
+    pub fn get_centroid(&self) -> Vec<f64> {
+        if self.boundary_points.is_empty() {
+            return vec![0.0, 0.0];
+        }
+
+        let mut sum_x = 0.0;
+        let mut sum_y = 0.0;
+        for point in &self.boundary_points {
+            sum_x += point.position.0;
+            sum_y += point.position.1;
+        }
+
+        let n = self.boundary_points.len() as f64;
+        vec![sum_x / n, sum_y / n]
+    }
+
+    /// Compute approximate area enclosed by boundary points (using shoelace formula)
+    #[wasm_bindgen(js_name = computeEnclosedArea)]
+    pub fn compute_enclosed_area(&self) -> f64 {
+        let n = self.boundary_points.len();
+        if n < 3 {
+            return 0.0;
+        }
+        let mut area = 0.0;
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let (xi, yi) = self.boundary_points[i].position;
+            let (xj, yj) = self.boundary_points[j].position;
+            area += xi * yj - xj * yi;
+        }
+
+        (area / 2.0).abs()
+    }
+}
+
 /// Deterministic Henon map implementation 
 /// 
 /// Mathematical formulation 
@@ -250,60 +703,42 @@ pub struct HenonMap {
 #[wasm_bindgen]
 impl HenonMap {
     /// Create a new Henon map with given parameters
-    #[wasm_bindgen]
-    pub fn new(params: SystemParameters) -> HenonMap {
+    #[wasm_bindgen(constructor)]
+    pub fn new(params: &SystemParameters) -> HenonMap {
         console_log!("Create Henon map with a={}, b={}", params.a(), params.b());
-        HenonMap { params }
+        HenonMap { params: *params }
     } 
 
     /// Create Henon map with custom parameters
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = withParameters)]
     pub fn with_parameters(a: f64, b: f64) -> Result<HenonMap, JsValue> {
         let system_parameters = SystemParameters::new(a, b)?;
-        Ok(HenonMap::new(system_parameters))
+        Ok(HenonMap::new(&system_parameters))
     }
 
     /// Create Henon map with default parameters (a=1.4, b=0.3)
     pub fn default() -> HenonMap {
-        HenonMap::new(SystemParameters::default())
+        let params = SystemParameters::default();
+        HenonMap::new(&params)
     }
 
     /// Single iteration of deterministic Henon map
     /// 
     /// Applies the transformation (x, y) = (1 - a*x^2 + y, bx)
+    /// 
     #[wasm_bindgen]
     pub fn iterate(&self, state: &StateVector) -> StateVector {
         let a = self.params.a();
         let b = self.params.b();
         let x = state.x();
         let y = state.y();
-        
-        // Check for overflow before calculation - Hénon attractor is bounded roughly [-2, 2] x [-1, 1]
-        const MAX_VALUE: f64 = 10.0; // Tighter bound for Hénon attractor
-        if x.abs() > MAX_VALUE || y.abs() > MAX_VALUE {
-            console_log!("Deterministic state values too large: x={}, y={}", x, y);
-            // Clamp to attractor bounds instead of hard reset
-            let clamped_x = x.clamp(-2.0, 2.0);
-            let clamped_y = y.clamp(-1.0, 1.0);
-            return StateVector::new(clamped_x, clamped_y);
-        }
-        
-        let x_new: f64 = 1.0 - a * x * x + y;
-        let y_new: f64 = b * x;
-        
-        // Check if result is finite
-        if !x_new.is_finite() || !y_new.is_finite() {
-            console_log!("Deterministic iteration invalid: x_new={}, y_new={}, x={}, y={}, a={}, b={}", 
-                        x_new, y_new, x, y, a, b);
-            // Return a safe state to avoid divergence
-            return StateVector::new(0.1, 0.1);
-        }
 
+        let x_new = 1.0 - (a * x * x) + y;
+        let y_new = b * x;
         StateVector::new(x_new, y_new)
     }
 
-    /// Generate trajectory from initial conditions 
-    /// 
+
     /// Returns a flattened array of coordinates [x1, y1, x2, y2, ...]
     /// This format is optimized for JavaScript/WebAssembly transfer
     #[wasm_bindgen]
@@ -338,8 +773,8 @@ impl HenonMap {
     /// Returns flatten 2x2 matrix: [∂f/∂x, ∂f/∂y, ∂g/∂x, ∂g/∂y] 
     /// J = [-2ax   1]
     ///     [b      0]        
-    #[wasm_bindgen]
-    pub fn jacobian_matrix(&self, state: StateVector) -> Vec<f64> {
+    #[wasm_bindgen(js_name = jacobianMatrix)]
+    pub fn jacobian_matrix(&self, state: &StateVector) -> Vec<f64> {
         let a = self.params.a();
         let b = self.params.b();
         let x = state.x();
@@ -356,7 +791,7 @@ impl HenonMap {
     /// Returns flatten array of fixed point coordinates [x1, y1, x2, y2, ...]
     /// Can return 0, 2, or 4 values dependent on the discriminant
     #[wasm_bindgen]
-    pub fn fixed_points(&self) -> Vec<f64> {
+    pub fn fixed_points(&self) -> Result<Vec<f64>, JsValue> {
         let a = self.params.a();
         let b = self.params.b();
 
@@ -369,25 +804,26 @@ impl HenonMap {
         if discriminant < 0.0 {
             // No real fixed-point
             console_log!("No real fixed points (discriminant = {})", discriminant);
-            vec![]
+            Ok(vec![])
         } else if discriminant == 0.0 {
             // One fixed point
             let x = - coefficient_b / (2.0 * coefficient_a);
             let y = b * x;
             console_log!("One fixed point: ({}, {})", x, y);
-            vec![x, y]
+            Ok(vec![x, y])
         } else {
             // Two fixed points
             let sqrt_disc = discriminant.sqrt();
             let x1 = (-coefficient_b + sqrt_disc) / (2.0 * coefficient_a);
-            let x2 = (-coefficient_b - sqrt_disc) / (2.0  * coefficient_b);
+            let x2 = (-coefficient_b - sqrt_disc) / (2.0 * coefficient_a);
             let y1 = b * x1;
             let y2 = b * x2;
             console_log!("Two fixed-points: ({},{}), ({}.{})", x1, y1, x2, y2);
-            vec![x1, y1, x2, y2]
+            Ok(vec![x1, y1, x2, y2])
         }
 
     }
+
 
     /// Get system parameters
     #[wasm_bindgen]
@@ -420,13 +856,13 @@ pub struct SetValuedHenonMap {
 #[wasm_bindgen]
 impl SetValuedHenonMap {
     /// Create a new set-valued Henon map
-    #[wasm_bindgen]
-    pub fn new(params: SystemParameters, noise_params: NoiseParameters) -> Result<SetValuedHenonMap, JsValue> {
-        Ok(SetValuedHenonMap { params, noise_params })
+    #[wasm_bindgen(constructor)]
+    pub fn new(params: &SystemParameters, noise_params: &NoiseParameters) -> Result<SetValuedHenonMap, JsValue> {
+        Ok(SetValuedHenonMap { params: *params, noise_params: *noise_params })
     }
 
     /// Create set-valued map with custom parameters
-    #[wasm_bindgen]
+    #[wasm_bindgen(js_name = withParameters)]
     pub fn with_parameters(
         a: f64,
         b: f64,
@@ -435,7 +871,7 @@ impl SetValuedHenonMap {
     ) -> Result<SetValuedHenonMap, JsValue> {
         let params = SystemParameters::new(a, b)?;
         let noise_params = NoiseParameters::new(epsilon_x, epsilon_y)?;
-        SetValuedHenonMap::new(params, noise_params)
+        SetValuedHenonMap::new(&params, &noise_params)
     }
 
     /// Create set-valued map with default parameters
@@ -579,15 +1015,15 @@ impl SetValuedHenonMap {
 
     /// Update system parameters
     #[wasm_bindgen]
-    pub fn set_parameters(&mut self, params: SystemParameters) {
+    pub fn set_parameters(&mut self, params: &SystemParameters) {
         console_log!("Update system parameters to a={}, b={}", params.a(), params.b());
-        self.params = params;
+        self.params = *params;
     }
 
     /// Update noise parameters
-    pub fn set_noise_parameters(&mut self, noise_params: NoiseParameters) {
+    pub fn set_noise_parameters(&mut self, noise_params: &NoiseParameters) {
         console_log!("Update noise parameters to epsilon_x={}, epsilon_y={}", noise_params.epsilon_x(), noise_params.epsilon_y());
-        self.noise_params = noise_params;
+        self.noise_params = *noise_params;
     }
 }
 
@@ -727,27 +1163,9 @@ impl Utils {
     }
 }
 
-// Discretize a circle in N uniformly spaced boundary points
-fn discretize_circle(center_x: f64, center_y: f64, radius: f64, n_points: usize) -> Vec<(f64, f64)> {
-    let mut points = Vec::with_capacity(n_points)
-
-    for i in 0..n_points {
-        let angle = 2.0 * std::f64::consts::PI * (i as f64) / (n_points as f64);
-        let x = center_x + radius * angle.cos();
-        let y = center_y + radius * angle.sin();
-        points.push((x, y))
-    }
-    
-    points
-}
 
 
 #[wasm_bindgen(start)]
 pub fn main() {
     console_log!("Rust WebAsssembly Henon Map library loaded")
 }
-
-
-
-
-

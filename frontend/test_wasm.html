@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WASM Test</title>
+</head>
+<body>
+    <h1>WASM API Test</h1>
+    <pre id="output"></pre>
+
+    <script type="module">
+        const output = document.getElementById('output');
+
+        function log(msg) {
+            output.textContent += msg + '\n';
+            console.log(msg);
+        }
+
+        try {
+            log('Loading WASM module...');
+            const wasm = await import('./pkg/set_valued_viz.js');
+            await wasm.default();
+
+            log('✓ WASM loaded successfully');
+
+            // Test Utils
+            wasm.Utils.init();
+            log('✓ Utils initialized');
+            log('Version: ' + wasm.Utils.version());
+
+            // Test SystemParameters
+            const params = new wasm.SystemParameters(1.4, 0.3);
+            log('✓ SystemParameters created: a=' + params.a + ', b=' + params.b);
+
+            // Test SetValuedSimulation
+            log('\nCreating SetValuedSimulation...');
+            const sim = new wasm.SetValuedSimulation(
+                params,
+                0.1,    // epsilon
+                0.1,    // initial_center_x
+                0.1,    // initial_center_y
+                8       // n_boundary_points
+            );
+            log('✓ Simulation created');
+
+            // Get initial boundary
+            const initialBoundary = sim.getBoundaryPositions();
+            log('✓ Initial boundary points: ' + initialBoundary.length / 2);
+
+            // Test iteration with details
+            log('\nPerforming iteration with details...');
+            const detailsJson = sim.iterate_boundary_with_details();
+            const details = JSON.parse(detailsJson);
+            log('✓ Iteration completed');
+            log('  Iteration: ' + details.iteration);
+            log('  Mapped points: ' + details.mapped_points.length / 2);
+            log('  Projected points: ' + details.projected_points.length / 2);
+            log('  Normals: ' + details.normals.length / 2);
+            log('  Max movement: ' + details.max_movement);
+
+            // Get boundary after iteration
+            const newBoundary = sim.getBoundaryPositions();
+            log('✓ New boundary points: ' + newBoundary.length / 2);
+
+            // Get iteration count
+            const iterCount = sim.getIterationCount();
+            log('✓ Iteration count: ' + iterCount);
+
+            log('\n✅ All tests passed!');
+
+            // Clean up
+            sim.free();
+            params.free();
+
+        } catch (error) {
+            log('❌ Error: ' + error.message);
+            log('Stack: ' + error.stack);
+        }
+    </script>
+</body>
+</html>

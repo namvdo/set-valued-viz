@@ -16,5 +16,11 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['./pkg/set_valued_viz.js']
+  },
+  assetsInclude: ['**/*.wasm'],
+  resolve: {
+    alias: {
+      '@pkg': '/pkg'
+    }
   }
 })
