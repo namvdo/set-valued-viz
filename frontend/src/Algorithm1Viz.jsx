@@ -44,7 +44,7 @@ function DetailedStepVisualization({ stepData, visualizationMode, epsilon }) {
       {/* Step 1: Show mapped points f(zk) */}
       {showMapped && mappedPoints.map((point, idx) => (
         <mesh key={`mapped-${idx}`} position={point}>
-          <sphereGeometry args={[0.02, 16, 16]} />
+          <sphereGeometry args={[0.008, 16, 16]} />
           <meshBasicMaterial color="#00ffff" />
         </mesh>
       ))}
@@ -87,29 +87,23 @@ function DetailedStepVisualization({ stepData, visualizationMode, epsilon }) {
           {/* Boundary points */}
           {projectedPointsArray.map((point, idx) => (
             <mesh key={`projected-${idx}`} position={point}>
-              <sphereGeometry args={[0.025, 16, 16]} />
+              <sphereGeometry args={[0.010, 16, 16]} />
               <meshBasicMaterial color="#ff00ff" />
             </mesh>
           ))}
         </>
       )}
 
-      {/* Optional: Show normal vectors */}
+      {/* Show normal vectors from mapped points to projected points */}
       {showNormals && mappedPoints.map((point, idx) => {
-        if (idx * 2 + 1 >= normals.length) return null;
-        const nx = normals[idx * 2];
-        const ny = normals[idx * 2 + 1];
-        const endPoint = new THREE.Vector3(
-          point.x + nx * epsilon * 1.5,
-          point.y + ny * epsilon * 1.5,
-          0
-        );
+        if (idx >= projectedPointsArray.length) return null;
+        const projectedPoint = projectedPointsArray[idx];
         return (
           <Line
             key={`normal-${idx}`}
-            points={[point, endPoint]}
+            points={[point, projectedPoint]}
             color="#00ff00"
-            lineWidth={1}
+            lineWidth={1.5}
           />
         );
       })}
@@ -288,11 +282,42 @@ export default function Algorithm1Viz({
   visualizationMode = 'all',
   showDetailedViz = false
 }) {
+  const canvasRef = useRef(null);
+
+  // Handle WebGL context loss - MOVED HERE
+  useEffect(() => {
+    const handleContextLost = (event) => {
+      event.preventDefault();
+      console.warn('WebGL context lost. Attempting to restore...');
+    };
+
+    const handleContextRestored = () => {
+      console.log('WebGL context restored');
+    };
+
+    const canvasElement = canvasRef.current?.querySelector('canvas');
+    if (canvasElement) {
+      canvasElement.addEventListener('webglcontextlost', handleContextLost);
+      canvasElement.addEventListener('webglcontextrestored', handleContextRestored);
+
+      return () => {
+        canvasElement.removeEventListener('webglcontextlost', handleContextLost);
+        canvasElement.removeEventListener('webglcontextrestored', handleContextRestored);
+      };
+    }
+  }, []);
+
   return (
-    <div style={{ width: '100%', height: '100%', minHeight: '500px', position: 'relative' }}>
+    <div ref={canvasRef} style={{ width: '100%', height: '100%', minHeight: '500px', position: 'relative' }}>
       <Canvas
         camera={{ position: [0, 0, 5], fov: 50 }}
         style={{ background: '#000' }}
+        gl={{ 
+          preserveDrawingBuffer: true,
+          antialias: true,
+          alpha: false,
+          powerPreference: "high-performance"
+        }}
       >
         <Scene
           boundaryHistory={boundaryHistory}
@@ -373,7 +398,7 @@ export default function Algorithm1Viz({
           <div>• Left-click + drag: Rotate</div>
           <div>• Right-click + drag: Pan</div>
           <div>• Scroll: Zoom</div>
-          <div style={{ marginTop: '8px', fontSize: '10px', opacity: 0.8 }}>
+          <div style={{ marginTop: '8px', fontSize: '10px', opacity: '0.8' }}>
             Use "Step Forward (Detailed)" to iterate
           </div>
         </div>

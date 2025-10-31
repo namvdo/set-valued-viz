@@ -337,28 +337,54 @@ impl SetValuedSimulation {
     }
 
 
-    //// Get detailed iteration data for visualization
-    /// Returns: [mapped_points (flat), projected_points (flat), normals (flat)]
+    /// Get initial state for visualization (iteration 0)
+    /// Returns JSON string with boundary points that haven't been iterated yet
     #[wasm_bindgen]
-    pub fn get_iteration_details(&self) -> Vec<f64> {
-        let mut result = Vec::new();
-        
-        let a = self.henon_map.get_parameters().a();
-        let b = self.henon_map.get_parameters().b();
-        
+    pub fn get_initial_state_details(&self) -> Result<String, JsValue> {
+        if self.boundary_points.is_empty() {
+            return Err(JsValue::from_str("No boundary points initialized"));
+        }
+
+        // For initial state, the boundary_points ARE already the projected points
+        // (they were created as points on the circle boundary in the constructor)
+        let mut projected_points = Vec::new();
+        let mut normals = Vec::new();
+
+        // Compute centroid of current boundary
+        let mut centroid_x = 0.0;
+        let mut centroid_y = 0.0;
+
         for point in &self.boundary_points {
             let (x, y) = point.position;
             let (nx, ny) = point.normal;
-            
-            // Compute mapped point f(zk)
-            let f_x = 1.0 - a * x * x + y;
-            let f_y = b * x;
-            
-            result.push(f_x);
-            result.push(f_y);
+
+            projected_points.push(x);
+            projected_points.push(y);
+            normals.push(nx);
+            normals.push(ny);
+
+            centroid_x += x;
+            centroid_y += y;
         }
-        
-        result
+
+        let n = self.boundary_points.len() as f64;
+        centroid_x /= n;
+        centroid_y /= n;
+
+        // For initial state, mapped_points are at the centroid (the initial f(x0))
+        let mapped_points = vec![centroid_x, centroid_y];
+
+        let result = format!(
+            r#"{{"iteration": 0, "mapped_points": {:?}, "projected_points": {:?}, "normals": {:?}, "epsilon": {}, "max_movement": 0.0, "centroid": [{}, {}]}}"#,
+            mapped_points,
+            projected_points,
+            normals,
+            self.epsilon,
+            centroid_x,
+            centroid_y
+        );
+
+        Ok(result)
     }
 
     /// Perform 1 iteration and return detailed visualization data
@@ -375,6 +401,9 @@ impl SetValuedSimulation {
         let mut normals = Vec::new();
         let mut new_boundary_points = Vec::with_capacity(n);
         let mut max_movement: f64 = 0.0;
+        let mut centroid_x = 0.0;
+        let mut centroid_y = 0.0;
+        let mut n_valid = 0;
 
         let a = self.henon_map.get_parameters().a();
         let b = self.henon_map.get_parameters().b();
@@ -399,14 +428,32 @@ impl SetValuedSimulation {
             
             mapped_points.push(f_x);
             mapped_points.push(f_y);
+
+            centroid_x += f_x;
+            centroid_y += f_y;
+            n_valid += 1;
             
-            // Step (v-b): Transform normal using Jacobian transpose
-            let j11 = -2.0 * a * x;
-            let j21 = b;
-            let j12 = 1.0;
-            
-            let nx_transformed = j11 * nx + j21 * ny;
-            let ny_transformed = j12 * nx;
+            // Step (v-b): Transform normal using (J^(-1))^T (inverse transpose)
+            // For Hénon map: J = [[-2ax, 1], [b, 0]]
+            // det(J) = -b
+            // J^(-1) = (1/-b) * [[0, -1], [-b, -2ax]] = [[0, 1/b], [1, 2ax/b]]
+            // (J^(-1))^T = [[0, 1], [1/b, 2ax/b]]
+            // Normal vectors are covectors and transform with inverse transpose!
+
+            // Check for degenerate case where b ≈ 0
+            if b.abs() < 1e-10 {
+                console_log!("⚠️ Warning: b ≈ 0, Jacobian is nearly singular");
+                continue;
+            }
+
+            let nx_transformed = ny;  // First row: 0*nx + 1*ny
+            let ny_transformed = nx / b + (2.0 * a * x / b) * ny;  // Second row: (1/b)*nx + (2ax/b)*ny
+
+            // Safety check for transformed normal
+            if !nx_transformed.is_finite() || !ny_transformed.is_finite() {
+                console_log!("⚠️ Warning: Non-finite transformed normal");
+                continue;
+            }
             
             let normal_mag = (nx_transformed * nx_transformed + ny_transformed * ny_transformed).sqrt();
             
@@ -447,18 +494,26 @@ impl SetValuedSimulation {
             return Err(JsValue::from_str("All boundary points diverged"));
         }
 
+        // Compute centroid
+        if n_valid > 0 {
+            centroid_x /= n_valid as f64;
+            centroid_y /= n_valid as f64;
+        }
+
         self.boundary_points = new_boundary_points;
         self.iteration_count += 1;
 
         // Create JSON with all visualization data
         let result = format!(
-            r#"{{"iteration": {}, "mapped_points": {:?}, "projected_points": {:?}, "normals": {:?}, "epsilon": {}, "max_movement": {}}}"#,
+            r#"{{"iteration": {}, "mapped_points": {:?}, "projected_points": {:?}, "normals": {:?}, "epsilon": {}, "max_movement": {}, "centroid": [{}, {}]}}"#,
             self.iteration_count,
             mapped_points,
             projected_points,
             normals,
             self.epsilon,
-            max_movement
+            max_movement,
+            centroid_x,
+            centroid_y
         );
 
         Ok(result)
@@ -501,17 +556,15 @@ impl SetValuedSimulation {
                 continue;
             }
             
-            // Step (v-b): Compute transformed normal vector using Jacobian transpose
-            // For Hénon map: J = [[-2*a*x, 1], [b, 0]]
-            // Transform normal: n_new = J^T * n = [[-2*a*x, b], [1, 0]] * [nx, ny]
-            let j11 = -2.0 * a * x;
-            let j12 = 1.0;
-            let j21 = b;
-            let j22 = 0.0;
-            
-            // n_new = J^T * n
-            let nx_transformed = j11 * nx + j21 * ny;
-            let ny_transformed = j12 * nx + j22 * ny;
+            // Step (v-b): Transform normal using (J^(-1))^T (inverse transpose)
+            // For Hénon map: J = [[-2ax, 1], [b, 0]]
+            // det(J) = -b
+            // J^(-1) = [[0, 1/b], [1, 2ax/b]]
+            // (J^(-1))^T = [[0, 1], [1/b, 2ax/b]]
+            // Normal vectors are covectors and must transform with inverse transpose!
+
+            let nx_transformed = ny;  // 0*nx + 1*ny
+            let ny_transformed = nx / b + (2.0 * a * x / b) * ny;  // (1/b)*nx + (2ax/b)*ny
             
             // Normalize the transformed normal
             let normal_mag = (nx_transformed * nx_transformed + ny_transformed * ny_transformed).sqrt();

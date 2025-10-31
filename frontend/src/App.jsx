@@ -21,8 +21,8 @@ function App() {
   const [params, setParams] = useState({
     a: 1.4,
     b: 0.3,
-    x0: 0.1,
-    y0: 0.1,
+    x0: 0.6,
+    y0: 0.3,
     epsilonX: 0.05,
     epsilonY: 0.05,
     iterations: 100,
@@ -280,8 +280,13 @@ function App() {
       const initialBoundary = setValuedSimulationRef.current.getBoundaryPositions();
       console.log('✓ Initial boundary retrieved:', initialBoundary.length / 2, 'points');
 
-      // Clear step data
-      setCurrentStepData(null);
+      // Get initial state details for visualization
+      const initialStateJson = setValuedSimulationRef.current.get_initial_state_details();
+      const initialState = JSON.parse(initialStateJson);
+      console.log('✓ Initial state details:', initialState);
+
+      // Set step data to show initial state
+      setCurrentStepData(initialState);
 
       // Set initial algorithm data
       setAlgorithm1Data({
@@ -664,36 +669,41 @@ function App() {
     }
 
     // Step 4: Draw projected boundary points
-    if (visualizationMode === 'projected' || visualizationMode === 'all') {
-      // Connect with lines
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-
-      for (let i = 0; i < projected_points.length; i += 2) {
-        const x = scaleX(projected_points[i]);
-        const y = scaleY(projected_points[i + 1]);
-
-        if (i === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-      }
-      ctx.closePath();
-      ctx.stroke();
-
-      // Draw points
-      ctx.fillStyle = '#ff00ff';
-      for (let i = 0; i < projected_points.length; i += 2) {
-        const x = scaleX(projected_points[i]);
-        const y = scaleY(projected_points[i + 1]);
-
-        ctx.beginPath();
-        ctx.arc(x, y, 4, 0, 2 * Math.PI);
-        ctx.fill();
-      }
+if (visualizationMode === 'projected' || visualizationMode === 'all') {
+  // Connect with lines to form CLOSED curve
+  ctx.strokeStyle = '#ff00ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  
+  for (let i = 0; i < projected_points.length; i += 2) {
+    const x = scaleX(projected_points[i]);
+    const y = scaleY(projected_points[i + 1]);
+    
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
     }
+  }
+  
+  ctx.closePath();
+  ctx.stroke();
+  
+  // Optional: Fill the interior with semi-transparent color
+  ctx.fillStyle = 'rgba(255, 0, 255, 0.1)';
+  ctx.fill();
+  
+  // Draw boundary points on top
+  ctx.fillStyle = '#ff00ff';
+  for (let i = 0; i < projected_points.length; i += 2) {
+    const x = scaleX(projected_points[i]);
+    const y = scaleY(projected_points[i + 1]);
+    
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+}
 
     // Draw labels
     ctx.fillStyle = '#ffffff';
@@ -723,16 +733,6 @@ function App() {
 
   }, []);
 
-
-  useEffect(() => {
-    if (algorithm1CanvasRef.current && currentStepData) {
-      drawAlgorithm1BoundaryDetailed(
-        algorithm1CanvasRef.current,
-        currentStepData,
-        algorithm1VisualizationMode
-      );
-    }
-  }, [currentStepData, algorithm1VisualizationMode, drawAlgorithm1BoundaryDetailed]);
 
 
   // Draw Algorithm 1 boundary evolution
@@ -1055,9 +1055,9 @@ function App() {
                 Boundary Points: {params.nBoundaryPoints}
                 <input
                   type="range"
-                  min="12"
+                  min="6"
                   max="100"
-                  step="4"
+                  step="1"
                   value={params.nBoundaryPoints}
                   onChange={(e) => handleParamChange('nBoundaryPoints', e.target.value)}
                 />
