@@ -391,6 +391,20 @@ function App() {
 
       const details = JSON.parse(detailsJson);
 
+      if (details.diverged) {
+        console.warn("System diverged during iteration. Stopping simulation.");
+
+        setAlgorithm1Data(prev => ({
+          ...prev,
+          isDiverged: true,
+          currentIteration: details.iteration,
+          divergenceMessage: `Boundary diverged: ${details.points_lost} points lost, ${details.points_remaining} remaining`
+
+        }));
+
+        return;
+      }
+
       // Update step data for visualization
       setCurrentStepData(details);
 
@@ -986,7 +1000,7 @@ if (visualizationMode === 'projected' || visualizationMode === 'all') {
                 Parameter a: {params.a.toFixed(3)}
                 <input
                   type="range"
-                  min="1.0"
+                  min="0"
                   max="1.6"
                   step="0.01"
                   value={params.a}
@@ -1000,7 +1014,7 @@ if (visualizationMode === 'projected' || visualizationMode === 'all') {
                 <input
                   type="range"
                   min="0.1"
-                  max="0.5"
+                  max="0.55"
                   step="0.01"
                   value={params.b}
                   onChange={(e) => handleParamChange('b', e.target.value)}
@@ -1056,7 +1070,7 @@ if (visualizationMode === 'projected' || visualizationMode === 'all') {
                 <input
                   type="range"
                   min="6"
-                  max="100"
+                  max="1000"
                   step="1"
                   value={params.nBoundaryPoints}
                   onChange={(e) => handleParamChange('nBoundaryPoints', e.target.value)}
@@ -1086,7 +1100,7 @@ if (visualizationMode === 'projected' || visualizationMode === 'all') {
                 <input
                   type="range"
                   min="10"
-                  max="10000"
+                  max="1000"
                   step="10"
                   value={params.iterations}
                   onChange={(e) => handleParamChange('iterations', e.target.value)}
@@ -1120,7 +1134,7 @@ if (visualizationMode === 'projected' || visualizationMode === 'all') {
             <button
               className="button button-primary"
               onClick={stepAlgorithm1SimulationDetailed}
-              disabled={!wasmLoaded || isAlgorithm1Running}
+              disabled={!wasmLoaded || isAlgorithm1Running || algorithm1Data.isDiverged}
               style={{ width: '100%', marginBottom: '8px' }}
             >
               ⏭ Step Forward (Detailed)
@@ -1212,6 +1226,7 @@ if (visualizationMode === 'projected' || visualizationMode === 'all') {
                   stepData={currentStepData}
                   visualizationMode={algorithm1VisualizationMode}
                   showDetailedViz={currentStepData !== null}
+                  isDiverged={algorithm1Data.isDiverged}
                 />
               </div>
             )}

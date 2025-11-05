@@ -434,22 +434,14 @@ impl SetValuedSimulation {
             n_valid += 1;
             
             // Step (v-b): Transform normal using (J^(-1))^T (inverse transpose)
-            // For Hénon map: J = [[-2ax, 1], [b, 0]]
-            // det(J) = -b
-            // J^(-1) = (1/-b) * [[0, -1], [-b, -2ax]] = [[0, 1/b], [1, 2ax/b]]
-            // (J^(-1))^T = [[0, 1], [1/b, 2ax/b]]
-            // Normal vectors are covectors and transform with inverse transpose!
-
-            // Check for degenerate case where b ≈ 0
             if b.abs() < 1e-10 {
                 console_log!("⚠️ Warning: b ≈ 0, Jacobian is nearly singular");
                 continue;
             }
 
-            let nx_transformed = ny;  // First row: 0*nx + 1*ny
-            let ny_transformed = nx / b + (2.0 * a * x / b) * ny;  // Second row: (1/b)*nx + (2ax/b)*ny
+            let nx_transformed = ny;
+            let ny_transformed = nx / b + (2.0 * a * x / b) * ny;
 
-            // Safety check for transformed normal
             if !nx_transformed.is_finite() || !ny_transformed.is_finite() {
                 console_log!("⚠️ Warning: Non-finite transformed normal");
                 continue;
@@ -490,9 +482,16 @@ impl SetValuedSimulation {
             new_boundary_points.push(BoundaryPoint::new(new_x, new_y, nx_new, ny_new));
         }
 
+        // Check for complete divergence
         if new_boundary_points.is_empty() {
-            return Err(JsValue::from_str("All boundary points diverged"));
+            console_log!("❌ All boundary points diverged");
+            return Ok(String::from("{\"diverged\": true}"));
         }
+
+        // Calculate divergence metrics
+        let points_lost = n - new_boundary_points.len();
+        let points_remaining = new_boundary_points.len();
+        let diverged = points_remaining < n / 2;
 
         // Compute centroid
         if n_valid > 0 {
@@ -500,24 +499,61 @@ impl SetValuedSimulation {
             centroid_y /= n_valid as f64;
         }
 
+        // Update boundary
         self.boundary_points = new_boundary_points;
         self.iteration_count += 1;
 
-        // Create JSON with all visualization data
-        let result = format!(
-            r#"{{"iteration": {}, "mapped_points": {:?}, "projected_points": {:?}, "normals": {:?}, "epsilon": {}, "max_movement": {}, "centroid": [{}, {}]}}"#,
-            self.iteration_count,
-            mapped_points,
-            projected_points,
-            normals,
-            self.epsilon,
-            max_movement,
-            centroid_x,
-            centroid_y
-        );
+        // Build JSON string manually to avoid format! memory issues
+        let mut result = String::new();
+        result.push_str("{\"iteration\": ");
+        result.push_str(&self.iteration_count.to_string());
+        
+        result.push_str(", \"mapped_points\": [");
+        for (i, val) in mapped_points.iter().enumerate() {
+            if i > 0 { result.push_str(", "); }
+            result.push_str(&val.to_string());
+        }
+        result.push_str("]");
+        
+        result.push_str(", \"projected_points\": [");
+        for (i, val) in projected_points.iter().enumerate() {
+            if i > 0 { result.push_str(", "); }
+            result.push_str(&val.to_string());
+        }
+        result.push_str("]");
+        
+        result.push_str(", \"normals\": [");
+        for (i, val) in normals.iter().enumerate() {
+            if i > 0 { result.push_str(", "); }
+            result.push_str(&val.to_string());
+        }
+        result.push_str("]");
+        
+        result.push_str(", \"epsilon\": ");
+        result.push_str(&self.epsilon.to_string());
+        
+        result.push_str(", \"max_movement\": ");
+        result.push_str(&max_movement.to_string());
+        
+        result.push_str(", \"centroid\": [");
+        result.push_str(&centroid_x.to_string());
+        result.push_str(", ");
+        result.push_str(&centroid_y.to_string());
+        result.push_str("]");
+        
+        result.push_str(", \"diverged\": ");
+        result.push_str(if diverged { "true" } else { "false" });
+        
+        result.push_str(", \"points_lost\": ");
+        result.push_str(&points_lost.to_string());
+        
+        result.push_str(", \"points_remaining\": ");
+        result.push_str(&points_remaining.to_string());
+        
+        result.push_str("}");
 
         Ok(result)
-    }
+    } 
 
 
     /// Perform 1 iteration of Algorithm 1

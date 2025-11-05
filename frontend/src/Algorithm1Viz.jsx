@@ -1,16 +1,37 @@
 import React, { useRef, useEffect, useMemo } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Line, Text } from '@react-three/drei';
+import { Canvas, useThree } from '@react-three/fiber';
+import { OrbitControls, Line } from '@react-three/drei';
 import * as THREE from 'three';
+
+function AutoCamera({ bounds, enabled, resetTrigger = 0 }) {
+  const { camera, size } = useThree();
+  
+  useEffect(() => {
+    if (!enabled || !bounds) return;
+    
+    const { minX, maxX, minY, maxY } = bounds;
+    const rangeX = Math.max(maxX - minX, 0.1);
+    const rangeY = Math.max(maxY - minY, 0.1);
+    
+    // Calculate zoom to fit
+    const zoomX = size.width / rangeX;
+    const zoomY = size.height / rangeY;
+    const zoom = Math.min(zoomX, zoomY) * 0.7;
+    
+    camera.zoom = zoom;
+    camera.updateProjectionMatrix();
+  }, [bounds, camera, size, resetTrigger]);
+  
+  return null;
+}
 
 function DetailedStepVisualization({ stepData, visualizationMode, epsilon }) {
   if (!stepData) return null;
 
-  const { mapped_points, projected_points, normals } = stepData;
+  const { mapped_points, projected_points } = stepData;
 
-  // Convert mapped points to 3D
   const mappedPoints = useMemo(() => {
-    if (!mapped_points || mapped_points.length === 0) return [];
+    if (!mapped_points?.length) return [];
     const points = [];
     for (let i = 0; i < mapped_points.length; i += 2) {
       points.push(new THREE.Vector3(mapped_points[i], mapped_points[i + 1], 0));
@@ -18,9 +39,8 @@ function DetailedStepVisualization({ stepData, visualizationMode, epsilon }) {
     return points;
   }, [mapped_points]);
 
-  // Convert projected points to 3D
-  const projectedPointsArray = useMemo(() => {
-    if (!projected_points || projected_points.length === 0) return [];
+  const projectedPoints = useMemo(() => {
+    if (!projected_points?.length) return [];
     const points = [];
     for (let i = 0; i < projected_points.length; i += 2) {
       points.push(new THREE.Vector3(projected_points[i], projected_points[i + 1], 0));
@@ -28,65 +48,46 @@ function DetailedStepVisualization({ stepData, visualizationMode, epsilon }) {
     return points;
   }, [projected_points]);
 
-  // Create projected boundary line (close the loop)
-  const projectedBoundaryLine = useMemo(() => {
-    if (projectedPointsArray.length === 0) return [];
-    return [...projectedPointsArray, projectedPointsArray[0]];
-  }, [projectedPointsArray]);
+  const projectedBoundary = useMemo(() => {
+    if (!projectedPoints.length) return [];
+    return [...projectedPoints, projectedPoints[0]];
+  }, [projectedPoints]);
 
   const showMapped = visualizationMode === 'mapped' || visualizationMode === 'all';
   const showCircles = visualizationMode === 'circles' || visualizationMode === 'all';
   const showProjected = visualizationMode === 'projected' || visualizationMode === 'all';
-  const showNormals = visualizationMode === 'all' && normals && normals.length > 0;
+  const showNormals = visualizationMode === 'all';
 
   return (
     <>
-      {/* Step 1: Show mapped points f(zk) */}
+      {/* Mapped points */}
       {showMapped && mappedPoints.map((point, idx) => (
-        <mesh key={`mapped-${idx}`} position={point}>
+        <mesh key={`m-${idx}`} position={point}>
           <sphereGeometry args={[0.008, 16, 16]} />
           <meshBasicMaterial color="#00ffff" />
         </mesh>
       ))}
 
-      {/* Step 2: Show noise circles around each mapped point */}
+      {/* Noise circles */}
       {showCircles && mappedPoints.map((point, idx) => (
-        <group key={`circle-${idx}`}>
-          {/* Filled circle */}
-          <mesh position={point} rotation={[0, 0, 0]}>
+        <group key={`c-${idx}`}>
+          <mesh position={point}>
             <circleGeometry args={[epsilon, 64]} />
-            <meshBasicMaterial
-              color="#ffaa00"
-              transparent
-              opacity={0.15}
-              side={THREE.DoubleSide}
-            />
+            <meshBasicMaterial color="#ffaa00" transparent opacity={0.15} side={THREE.DoubleSide} />
           </mesh>
-          {/* Circle outline */}
-          <mesh position={point} rotation={[0, 0, 0]}>
+          <mesh position={point}>
             <ringGeometry args={[epsilon * 0.98, epsilon, 64]} />
-            <meshBasicMaterial
-              color="#ffaa00"
-              transparent
-              opacity={0.6}
-              side={THREE.DoubleSide}
-            />
+            <meshBasicMaterial color="#ffaa00" transparent opacity={0.6} side={THREE.DoubleSide} />
           </mesh>
         </group>
       ))}
 
-      {/* Step 3: Show the union/envelope (projected boundary) */}
-      {showProjected && projectedBoundaryLine.length > 0 && (
+      {/* Projected boundary */}
+      {showProjected && projectedBoundary.length > 0 && (
         <>
-          {/* Boundary line */}
-          <Line
-            points={projectedBoundaryLine}
-            color="#ff00ff"
-            lineWidth={3}
-          />
-          {/* Boundary points */}
-          {projectedPointsArray.map((point, idx) => (
-            <mesh key={`projected-${idx}`} position={point}>
+          <Line points={projectedBoundary} color="#ff00ff" lineWidth={3} />
+          {projectedPoints.map((point, idx) => (
+            <mesh key={`p-${idx}`} position={point}>
               <sphereGeometry args={[0.010, 16, 16]} />
               <meshBasicMaterial color="#ff00ff" />
             </mesh>
@@ -94,82 +95,52 @@ function DetailedStepVisualization({ stepData, visualizationMode, epsilon }) {
         </>
       )}
 
-      {/* Show normal vectors from mapped points to projected points */}
-      {showNormals && mappedPoints.map((point, idx) => {
-        if (idx >= projectedPointsArray.length) return null;
-        const projectedPoint = projectedPointsArray[idx];
+      {/* Normal vectors */}
+      {showNormals && mappedPoints.map((mPoint, idx) => {
+        if (idx >= projectedPoints.length) return null;
         return (
-          <Line
-            key={`normal-${idx}`}
-            points={[point, projectedPoint]}
-            color="#00ff00"
-            lineWidth={1.5}
-          />
+          <Line key={`n-${idx}`} points={[mPoint, projectedPoints[idx]]} color="#00ff00" lineWidth={1.5} />
         );
       })}
     </>
   );
 }
 
-function BoundaryEvolution({ boundaryHistory, currentIteration, epsilon }) {
-  const meshRefs = useRef([]);
-
-  // Create geometry for each iteration
-  const boundaryGeometries = useMemo(() => {
-    if (!boundaryHistory || boundaryHistory.length === 0) return [];
+function BoundaryEvolution({ boundaryHistory, epsilon }) {
+  const geometries = useMemo(() => {
+    if (!boundaryHistory?.length) return [];
 
     return boundaryHistory.map((boundary, iter) => {
-      if (!boundary || boundary.length === 0) return null;
+      if (!boundary?.length) return null;
 
-      // Convert flat array to 3D points (z = 0 for 2D visualization)
       const points = [];
       for (let i = 0; i < boundary.length; i += 2) {
         points.push(new THREE.Vector3(boundary[i], boundary[i + 1], 0));
       }
-      // Close the loop
-      if (points.length > 0) {
-        points.push(points[0].clone());
-      }
+      if (points.length > 0) points.push(points[0].clone());
 
-      // Color gradient: blue → cyan → green → yellow → red
-      const maxIterations = boundaryHistory.length;
-      const intensity = iter / Math.max(1, maxIterations - 1);
-      const r = Math.pow(intensity, 0.7);
-      const g = 1 - Math.abs(2 * intensity - 1);
-      const b = Math.pow(1 - intensity, 0.7);
+      const intensity = iter / Math.max(1, boundaryHistory.length - 1);
+      const color = new THREE.Color(
+        Math.pow(intensity, 0.7),
+        1 - Math.abs(2 * intensity - 1),
+        Math.pow(1 - intensity, 0.7)
+      );
       const alpha = 0.2 + 0.6 * intensity;
+      const isFinal = iter === boundaryHistory.length - 1;
 
-      return {
-        points,
-        color: new THREE.Color(r, g, b),
-        alpha,
-        isFinal: iter === boundaryHistory.length - 1
-      };
+      return { points, color, alpha, isFinal };
     }).filter(Boolean);
   }, [boundaryHistory]);
 
   return (
     <>
-      {boundaryGeometries.map((geo, idx) => (
+      {geometries.map((geo, idx) => (
         <group key={idx}>
-          {/* Boundary line */}
-          <Line
-            points={geo.points}
-            color={geo.color}
-            lineWidth={geo.isFinal ? 3 : 1.5}
-            transparent
-            opacity={geo.alpha}
-          />
-
-          {/* Boundary points */}
+          <Line points={geo.points} color={geo.color} lineWidth={geo.isFinal ? 3 : 1.5} transparent opacity={geo.alpha} />
           {geo.points.slice(0, -1).map((point, pidx) => (
             <mesh key={pidx} position={point}>
               <sphereGeometry args={[geo.isFinal ? 0.015 : 0.008, 8, 8]} />
-              <meshBasicMaterial
-                color={geo.isFinal ? '#ffffff' : geo.color}
-                transparent
-                opacity={geo.alpha}
-              />
+              <meshBasicMaterial color={geo.isFinal ? '#ffffff' : geo.color} transparent opacity={geo.alpha} />
             </mesh>
           ))}
         </group>
@@ -178,19 +149,13 @@ function BoundaryEvolution({ boundaryHistory, currentIteration, epsilon }) {
   );
 }
 
-function Scene({ boundaryHistory, currentIteration, stepData, visualizationMode, epsilon, showDetailedViz }) {
-  // Calculate bounds for camera positioning
+function Scene({ boundaryHistory, stepData, visualizationMode, epsilon, showDetailedViz }) {
   const bounds = useMemo(() => {
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 
-    if (showDetailedViz && stepData) {
-      // Use stepData for bounds
-      const { mapped_points, projected_points } = stepData;
-      const allPoints = [...(mapped_points || []), ...(projected_points || [])];
-
-      for (let i = 0; i < allPoints.length; i += 2) {
-        const x = allPoints[i];
-        const y = allPoints[i + 1];
+    const processPoints = (points) => {
+      for (let i = 0; i < points.length; i += 2) {
+        const x = points[i], y = points[i + 1];
         if (isFinite(x) && isFinite(y)) {
           minX = Math.min(minX, x);
           maxX = Math.max(maxX, x);
@@ -198,31 +163,20 @@ function Scene({ boundaryHistory, currentIteration, stepData, visualizationMode,
           maxY = Math.max(maxY, y);
         }
       }
+    };
 
-      // Add epsilon padding for circles
-      minX -= epsilon * 1.5;
-      maxX += epsilon * 1.5;
-      minY -= epsilon * 1.5;
-      maxY += epsilon * 1.5;
-    } else if (boundaryHistory && boundaryHistory.length > 0) {
-      // Use boundary history for bounds
-      for (const iteration of boundaryHistory) {
-        for (let i = 0; i < iteration.length; i += 2) {
-          const x = iteration[i];
-          const y = iteration[i + 1];
-          if (isFinite(x) && isFinite(y)) {
-            minX = Math.min(minX, x);
-            maxX = Math.max(maxX, x);
-            minY = Math.min(minY, y);
-            maxY = Math.max(maxY, y);
-          }
-        }
-      }
+    if (showDetailedViz && stepData) {
+      const { mapped_points, projected_points } = stepData;
+      if (mapped_points) processPoints(mapped_points);
+      if (projected_points) processPoints(projected_points);
+      // Add padding for circles
+      const pad = epsilon * 1.5;
+      minX -= pad; maxX += pad; minY -= pad; maxY += pad;
+    } else if (boundaryHistory?.length) {
+      boundaryHistory.forEach(processPoints);
     }
 
-    if (!isFinite(minX)) {
-      return { minX: -1, maxX: 1, minY: -1, maxY: 1 };
-    }
+    if (!isFinite(minX)) return { minX: -1, maxX: 1, minY: -1, maxY: 1 };
 
     const padding = 0.2;
     const rangeX = maxX - minX;
@@ -236,37 +190,29 @@ function Scene({ boundaryHistory, currentIteration, stepData, visualizationMode,
     };
   }, [boundaryHistory, stepData, showDetailedViz, epsilon]);
 
-  const centerX = (bounds.minX + bounds.maxX) / 2;
-  const centerY = (bounds.minY + bounds.maxY) / 2;
-
   return (
     <>
       <color attach="background" args={['#000000']} />
       <ambientLight intensity={0.5} />
       <pointLight position={[10, 10, 10]} />
 
-      {/* Main visualization */}
-      <group position={[-centerX, -centerY, 0]}>
-        {showDetailedViz && stepData ? (
-          <DetailedStepVisualization
-            stepData={stepData}
-            visualizationMode={visualizationMode}
-            epsilon={epsilon}
-          />
-        ) : (
-          <BoundaryEvolution
-            boundaryHistory={boundaryHistory}
-            currentIteration={currentIteration}
-            epsilon={epsilon}
-          />
-        )}
-      </group>
+      <AutoCamera bounds={bounds} enabled={true}/>
 
-      <OrbitControls
-        enableRotate={true}
-        enablePan={true}
+      {showDetailedViz && stepData ? (
+        <DetailedStepVisualization stepData={stepData} visualizationMode={visualizationMode} epsilon={epsilon} />
+      ) : (
+        <BoundaryEvolution boundaryHistory={boundaryHistory} epsilon={epsilon} />
+      )}
+
+      <OrbitControls 
+        enableRotate={false} 
+        enablePan={true} 
         enableZoom={true}
-        target={[0, 0, 0]}
+        mouseButtons={{
+          LEFT: THREE.MOUSE.PAN,
+          MIDDLE: THREE.MOUSE.DOLLY,
+          RIGHT: THREE.MOUSE.PAN
+        }}
       />
     </>
   );
@@ -280,48 +226,18 @@ export default function Algorithm1Viz({
   isConverged = false,
   stepData = null,
   visualizationMode = 'all',
+  isDiverged = false,
   showDetailedViz = false
 }) {
-  const canvasRef = useRef(null);
-
-  // Handle WebGL context loss - MOVED HERE
-  useEffect(() => {
-    const handleContextLost = (event) => {
-      event.preventDefault();
-      console.warn('WebGL context lost. Attempting to restore...');
-    };
-
-    const handleContextRestored = () => {
-      console.log('WebGL context restored');
-    };
-
-    const canvasElement = canvasRef.current?.querySelector('canvas');
-    if (canvasElement) {
-      canvasElement.addEventListener('webglcontextlost', handleContextLost);
-      canvasElement.addEventListener('webglcontextrestored', handleContextRestored);
-
-      return () => {
-        canvasElement.removeEventListener('webglcontextlost', handleContextLost);
-        canvasElement.removeEventListener('webglcontextrestored', handleContextRestored);
-      };
-    }
-  }, []);
-
   return (
-    <div ref={canvasRef} style={{ width: '100%', height: '100%', minHeight: '500px', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', minHeight: '500px', position: 'relative' }}>
       <Canvas
-        camera={{ position: [0, 0, 5], fov: 50 }}
-        style={{ background: '#000' }}
-        gl={{ 
-          preserveDrawingBuffer: true,
-          antialias: true,
-          alpha: false,
-          powerPreference: "high-performance"
-        }}
+        orthographic
+        camera={{ position: [0, 0, 5], zoom: 100 }}
+        gl={{ preserveDrawingBuffer: true, antialias: true, alpha: false, powerPreference: "high-performance" }}
       >
         <Scene
           boundaryHistory={boundaryHistory}
-          currentIteration={currentIteration}
           stepData={stepData}
           visualizationMode={visualizationMode}
           epsilon={epsilon}
@@ -329,18 +245,47 @@ export default function Algorithm1Viz({
         />
       </Canvas>
 
+      {/* Divergence overlay - shows on top of everything */}
+      {isDiverged && (
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          background: 'rgba(211, 47, 47, 0.95)',
+          color: 'white',
+          padding: '24px 32px',
+          borderRadius: '12px',
+          border: '3px solid #ff5252',
+          fontFamily: 'monospace',
+          fontSize: '16px',
+          textAlign: 'center',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+          zIndex: 1000,
+          maxWidth: '400px'
+        }}>
+          <div style={{ fontSize: '32px', marginBottom: '12px' }}>⚠️</div>
+          <div style={{ fontWeight: 'bold', fontSize: '18px', marginBottom: '12px' }}>
+            SYSTEM DIVERGED
+          </div>
+          {
+            <div style={{ fontSize: '13px', opacity: 0.9, marginBottom: '16px', lineHeight: '1.4' }}>
+              {"System diverged: all boundary points moved outside the defined domain."}
+            </div>
+          }
+          <div style={{ fontSize: '12px', opacity: 0.8, borderTop: '1px solid rgba(255,255,255,0.3)', paddingTop: '12px' }}>
+            Try: smaller ε, different initial conditions, or fewer iterations
+          </div>
+        </div>
+      )}
+
+
+
       {/* Info overlay */}
       <div style={{
-        position: 'absolute',
-        top: '10px',
-        left: '10px',
-        color: 'white',
-        fontFamily: 'Arial',
-        fontSize: '14px',
-        pointerEvents: 'none',
-        background: 'rgba(0,0,0,0.7)',
-        padding: '12px',
-        borderRadius: '6px'
+        position: 'absolute', top: '10px', left: '10px', color: 'white',
+        background: 'rgba(0,0,0,0.7)', padding: '12px', borderRadius: '6px',
+        fontFamily: 'monospace', fontSize: '14px', pointerEvents: 'none'
       }}>
         <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Algorithm 1: Boundary Evolution</div>
         <div>Iteration: {currentIteration}</div>
@@ -352,16 +297,9 @@ export default function Algorithm1Viz({
       {/* Legend */}
       {showDetailedViz && stepData && (
         <div style={{
-          position: 'absolute',
-          bottom: '10px',
-          left: '10px',
-          color: 'white',
-          fontFamily: 'Arial',
-          fontSize: '12px',
-          pointerEvents: 'none',
-          background: 'rgba(0,0,0,0.7)',
-          padding: '10px',
-          borderRadius: '6px'
+          position: 'absolute', bottom: '10px', left: '10px', color: 'white',
+          background: 'rgba(0,0,0,0.7)', padding: '10px', borderRadius: '6px',
+          fontFamily: 'monospace', fontSize: '12px', pointerEvents: 'none'
         }}>
           <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>Legend:</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
@@ -374,35 +312,21 @@ export default function Algorithm1Viz({
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <div style={{ width: '12px', height: '12px', background: '#ff00ff', borderRadius: '50%' }}></div>
-            <span>Projected boundary (envelope)</span>
+            <span>Projected boundary</span>
           </div>
         </div>
       )}
 
-      {/* Instructions */}
-      {showDetailedViz && stepData && (
-        <div style={{
-          position: 'absolute',
-          top: '10px',
-          right: '10px',
-          color: 'white',
-          fontFamily: 'Arial',
-          fontSize: '11px',
-          pointerEvents: 'none',
-          background: 'rgba(0,0,0,0.7)',
-          padding: '10px',
-          borderRadius: '6px',
-          maxWidth: '200px'
-        }}>
-          <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>Controls:</div>
-          <div>• Left-click + drag: Rotate</div>
-          <div>• Right-click + drag: Pan</div>
-          <div>• Scroll: Zoom</div>
-          <div style={{ marginTop: '8px', fontSize: '10px', opacity: '0.8' }}>
-            Use "Step Forward (Detailed)" to iterate
-          </div>
-        </div>
-      )}
+      {/* Controls */}
+      <div style={{
+        position: 'absolute', top: '10px', right: '10px', color: 'white',
+        background: 'rgba(0,0,0,0.7)', padding: '10px', borderRadius: '6px',
+        fontFamily: 'monospace', fontSize: '11px', pointerEvents: 'none', maxWidth: '200px'
+      }}>
+        <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>Controls:</div>
+        <div>• Left/Right drag: Pan</div>
+        <div>• Scroll: Zoom</div>
+      </div>
     </div>
   );
 }
