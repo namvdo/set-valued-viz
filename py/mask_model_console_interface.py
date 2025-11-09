@@ -27,7 +27,7 @@ class ModelConfiguration():
     autofill = False
     
     precision = 0.005
-    start_point = UserModifiablePoint(0,0)
+    start_point = Point2D(0,0)
     escape_distance = 10.
     # distance at which to consider them as escaped (prevents extreme array sizes)
     
@@ -52,8 +52,8 @@ class ModelConfiguration():
         br = np.add(self.image.shape, tl)
         self.topleft = tl*self.precision
         self.bottomright = br*self.precision
-        self.topleft = np.add(self.topleft, (self.start_point.x,-self.start_point.y))
-        self.bottomright = np.add(self.bottomright, (self.start_point.x,-self.start_point.y))
+        self.topleft = np.add(self.topleft, (self.start_point.x,self.start_point.y))
+        self.bottomright = np.add(self.bottomright, (self.start_point.x,self.start_point.y))
         #
         
         self.image_history = self.image.astype(np.uint16)
@@ -77,10 +77,10 @@ class ModelConfiguration():
         points += self.topleft
     
     def visualization(self):
-        axis_range = (self.topleft[0],self.bottomright[0],-self.bottomright[1],-self.topleft[1])
+        extent = (self.topleft[0],self.bottomright[0],self.topleft[1],self.bottomright[1])
         fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-        ax[0].imshow(self.image_history.swapaxes(0, 1), extent=axis_range)
-        ax[1].imshow(self.image.swapaxes(0, 1), extent=axis_range)
+        ax[0].imshow(self.image_history.swapaxes(0, 1)[::-1,:], extent=extent)
+        ax[1].imshow(self.image.swapaxes(0, 1)[::-1,:], extent=extent)
         ax[0].set_title(f"Cumulative Timesteps")
         ax[1].set_title(f"Timestep: {self.timestep}")
         plt.show()
@@ -93,7 +93,7 @@ class ConsoleInterface():
     def __init__(self):
         self.stats = ModelStatistics()
         self.config = ModelConfiguration()
-        self.function = UserModifiableMappingFunction()
+        self.function = MappingFunction2D()
 
     def _show_user_options(self, desc, options):
         desc = clean_text_box(desc)
@@ -203,7 +203,7 @@ class ConsoleInterface():
         if user_input:
             if t in [int, float]:
                 user_input = user_input.replace(",",".")
-                if RE_INT.match(user_input) or (t is float and RE_FLOAT.match(user_input)):
+                if re.match(RE_NUMBER, user_input):
                     user_input = t(user_input)
                     if user_input>0 or (negative_ok and user_input<0) or zero_ok:
                         setattr(target, attr_name, user_input)
@@ -218,7 +218,7 @@ class ConsoleInterface():
                 setattr(target, attr_name, user_input)
                 success = True
             elif t is UserModifiablePoint:
-                m = RE_2D_POINT.match(user_input)
+                m = re.match(rf"({RE_NUMBER}),({RE_NUMBER})", user_input)
                 if m:
                     new_point = UserModifiablePoint(float(m.group(1)), float(m.group(2)))
                     setattr(target, attr_name, new_point)
@@ -300,14 +300,14 @@ class ConsoleInterface():
             k = user_input
             user_input = self._depth_input(f"Redefine '{user_input}' as: ")
             user_input = user_input.replace(",",".")
-            if m:=RE_FLOAT.match(user_input): v = float(user_input)
-            elif m:=RE_INT.match(user_input): v = int(user_input)
+            if m:=re.match(RE_FLOAT, user_input): v = float(user_input)
+            elif m:=re.match(RE_INT, user_input): v = int(user_input)
         elif user_input in missing_constants:
             k = user_input
             user_input = self._depth_input(f"Define '{user_input}' as: ")
             user_input = user_input.replace(",",".")
-            if m:=RE_FLOAT.match(user_input): v = float(user_input)
-            elif m:=RE_INT.match(user_input): v = int(user_input)
+            if m:=re.match(RE_FLOAT, user_input): v = float(user_input)
+            elif m:=re.match(RE_INT, user_input): v = int(user_input)
         else:
             self._depth_print("Invalid constant")
         

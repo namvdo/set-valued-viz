@@ -79,7 +79,7 @@ function App() {
         console.log('Loading WebAssembly module...');
 
         // Import the generated WASM module
-        const wasm = await import('../pkg/set_valued_viz.js');
+        const wasm = await import('../../pkg/set_valued_viz.js'); // changed from '../pkg/set_valued_viz.js'
         await wasm.default(); // Initialize the WASM module
 
         wasmModule = wasm;

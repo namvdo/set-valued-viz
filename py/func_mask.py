@@ -1,4 +1,5 @@
 import numpy as np
+from func_vectors import *
 
 def circle_mask(r, inner=0, border=0):
     x = np.expand_dims(np.arange(-r, r+1), axis=1)
@@ -10,15 +11,6 @@ def circle_mask(r, inner=0, border=0):
     if inner>0: mask *= dist_from_center>inner
     elif inner<0: mask *= dist_from_center>r+inner
     return np.pad(mask, (border, border))
-
-def bounding_box(points):
-    topleft = np.zeros(2)
-    bottomright = np.zeros(2)
-    topleft[0] = points[:,0].min()
-    topleft[1] = points[:,1].min()
-    bottomright[0] = points[:,0].max()
-    bottomright[1] = points[:,1].max()
-    return topleft, bottomright
 
 def switch_mask_to_output_mask(toggle_mask):
     continuous = np.zeros_like(toggle_mask)

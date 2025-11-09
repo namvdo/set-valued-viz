@@ -1,7 +1,6 @@
 from _imports import *
 SAVE_DIR = os.path.join(WORKDIR, "funcstack_model_saves")
 
-
 class ModelConfiguration():
     def __init__(self):
         self.start_point = UserModifiablePoint(0,0)

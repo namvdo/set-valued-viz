@@ -156,7 +156,7 @@ class ConsoleInterface():
             if i!=0: string += "\n"
             string += str(i)+". "+x[0]
         
-        string = clean_text_box(string, l="* ", pad_t=0, pad_b=0)
+        string = clean_text_box(string, l="* ", pad_r=2, pad_t=0, pad_b=0)
         self._depth_print(desc+"\n"+string)
         
     def _process_user_input(self, options):
@@ -260,9 +260,6 @@ class ConsoleInterface():
             else: self._depth_print("Failed to load: '{f}'")
         else: self._depth_print(f"File not found: '{f}'")
 
-
-
-    
     def start(self, menu_constructor_name):
         menu_constructor = getattr(self, menu_constructor_name, None)
         while menu_constructor is not None:
@@ -270,7 +267,12 @@ class ConsoleInterface():
             self._show_user_options(desc, options)
             if self._process_user_input(options):
                 break
+
+
+class ConsoleInterface(ConsoleInterface):
+    # call with .start(<menu function>)
     
+    save_directory = ""
     def examplemenu(self) -> (str, list):
         desc = "An example description about the available options"
         options = [
