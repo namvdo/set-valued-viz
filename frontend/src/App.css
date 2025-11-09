@@ -72,7 +72,10 @@ body {
 }
 
 .controls-section {
+  background: rgba(255, 255, 255, 0.1);
   margin-bottom: 24px;
+  padding: 15px;
+  border-radius: 8px;
 }
 
 .controls-section h3 {
@@ -178,7 +181,6 @@ body {
 .canvas-container {
   background: rgba(255, 255, 255, 0.05);
   border-radius: 12px;
-  padding: 20px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   display: flex;
   flex-direction: column;

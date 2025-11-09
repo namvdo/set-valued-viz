@@ -324,7 +324,6 @@ export default function Algorithm1Viz({
         fontFamily: 'monospace', fontSize: '11px', pointerEvents: 'none', maxWidth: '200px'
       }}>
         <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>Controls:</div>
-        <div>• Left/Right drag: Pan</div>
         <div>• Scroll: Zoom</div>
       </div>
     </div>

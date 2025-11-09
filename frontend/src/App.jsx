@@ -54,7 +54,6 @@ function App() {
     area: 0
   });
   const [isAlgorithm1Running, setIsAlgorithm1Running] = useState(false);
-  const [showAlgorithm1Visualization, setShowAlgorithm1Visualization] = useState(true);
   const [showNormals, setShowNormals] = useState(false);
 
   // Incremental iteration state
@@ -683,41 +682,41 @@ function App() {
     }
 
     // Step 4: Draw projected boundary points
-if (visualizationMode === 'projected' || visualizationMode === 'all') {
-  // Connect with lines to form CLOSED curve
-  ctx.strokeStyle = '#ff00ff';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  
-  for (let i = 0; i < projected_points.length; i += 2) {
-    const x = scaleX(projected_points[i]);
-    const y = scaleY(projected_points[i + 1]);
-    
-    if (i === 0) {
-      ctx.moveTo(x, y);
-    } else {
-      ctx.lineTo(x, y);
+    if (visualizationMode === 'projected' || visualizationMode === 'all') {
+      // Connect with lines to form CLOSED curve
+      ctx.strokeStyle = '#ff00ff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+
+      for (let i = 0; i < projected_points.length; i += 2) {
+        const x = scaleX(projected_points[i]);
+        const y = scaleY(projected_points[i + 1]);
+
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+
+      ctx.closePath();
+      ctx.stroke();
+
+      // Optional: Fill the interior with semi-transparent color
+      ctx.fillStyle = 'rgba(255, 0, 255, 0.1)';
+      ctx.fill();
+
+      // Draw boundary points on top
+      ctx.fillStyle = '#ff00ff';
+      for (let i = 0; i < projected_points.length; i += 2) {
+        const x = scaleX(projected_points[i]);
+        const y = scaleY(projected_points[i + 1]);
+
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, 2 * Math.PI);
+        ctx.fill();
+      }
     }
-  }
-  
-  ctx.closePath();
-  ctx.stroke();
-  
-  // Optional: Fill the interior with semi-transparent color
-  ctx.fillStyle = 'rgba(255, 0, 255, 0.1)';
-  ctx.fill();
-  
-  // Draw boundary points on top
-  ctx.fillStyle = '#ff00ff';
-  for (let i = 0; i < projected_points.length; i += 2) {
-    const x = scaleX(projected_points[i]);
-    const y = scaleY(projected_points[i + 1]);
-    
-    ctx.beginPath();
-    ctx.arc(x, y, 4, 0, 2 * Math.PI);
-    ctx.fill();
-  }
-}
 
     // Draw labels
     ctx.fillStyle = '#ffffff';
@@ -911,14 +910,14 @@ if (visualizationMode === 'projected' || visualizationMode === 'all') {
 
   // Update Algorithm 1 visualization when data changes
   useEffect(() => {
-    if (algorithm1Data.boundaryHistory.length > 0 && showAlgorithm1Visualization) {
+    if (algorithm1Data.boundaryHistory.length > 0 ) {
       drawAlgorithm1Boundary(
         algorithm1CanvasRef.current,
         algorithm1Data.boundaryHistory,
         algorithm1Data.currentIteration
       );
     }
-  }, [algorithm1Data, drawAlgorithm1Boundary, showAlgorithm1Visualization]);
+  }, [algorithm1Data, drawAlgorithm1Boundary]);
 
   // Handle parameter changes
   const handleParamChange = (field, value) => {
@@ -1092,40 +1091,27 @@ if (visualizationMode === 'projected' || visualizationMode === 'all') {
             </div>
           </div>
 
-          <div className="controls-section">
-            <h3>Trajectory Generation</h3>
-            <div className="form-group">
-              <label>
-                Iterations: {params.iterations}
-                <input
-                  type="range"
-                  min="10"
-                  max="1000"
-                  step="10"
-                  value={params.iterations}
-                  onChange={(e) => handleParamChange('iterations', e.target.value)}
-                />
-              </label>
-            </div>
-            <button
-              className="button button-primary"
-              onClick={generateTrajectories}
-              disabled={!wasmLoaded || isRunning}
-              style={{ width: '100%', marginBottom: '12px' }}
-            >
-              {isRunning ? 'Generating...' : '🎯 Generate Trajectories'}
-            </button>
 
-            <div className="form-group">
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <input
-                  type="checkbox"
-                  checked={showNoiseCircles}
-                  onChange={(e) => setShowNoiseCircles(e.target.checked)}
+
+        </aside>
+
+        <main className="visualization-area">
+          <div className="canvas-container">
+              <div className="canvas-container" style={{ gridColumn: '1 / -1' }}>
+                <h3>Algorithm 1: Boundary Evolution</h3>
+                <Algorithm1Viz
+                  boundaryHistory={algorithm1Data.boundaryHistory}
+                  currentIteration={algorithm1Data.currentIteration}
+                  epsilon={params.algorithm1Epsilon}
+                  nBoundaryPoints={params.nBoundaryPoints}
+                  isConverged={algorithm1Data.isConverged}
+                  stepData={currentStepData}
+                  visualizationMode={algorithm1VisualizationMode}
+                  showDetailedViz={currentStepData !== null}
+                  isDiverged={algorithm1Data.isDiverged}
                 />
-                Show noise circles
-              </label>
-            </div>
+              </div>
+
           </div>
 
           <div className="controls-section">
@@ -1171,113 +1157,8 @@ if (visualizationMode === 'projected' || visualizationMode === 'all') {
                 <option value="projected">Step 3: Envelope Boundary</option>
               </select>
             </div>
-
-            <div className="form-group">
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <input
-                  type="checkbox"
-                  checked={showAlgorithm1Visualization}
-                  onChange={(e) => setShowAlgorithm1Visualization(e.target.checked)}
-                />
-                Show 3D visualization
-              </label>
-            </div>
-
-            <div style={{ fontSize: '11px', color: '#333', background: '#f5f5f5', padding: '8px', borderRadius: '4px' }}>
-              <div><strong>Algorithm 1 Status:</strong></div>
-              <div>Iteration: {algorithm1Data.currentIteration}</div>
-              <div>History: {algorithm1Data.boundaryHistory.length} steps</div>
-              <div>Status: {algorithm1Data.isConverged ? '✅ Converged' : '⏳ Running'}</div>
-            </div>
-          </div>
-        </aside>
-
-        <main className="visualization-area">
-          <div className="visualization-grid">
-            <div className="canvas-container">
-              <h3>Deterministic Hénon Map</h3>
-              <canvas
-                ref={deterministicCanvasRef}
-                width={600}
-                height={400}
-                style={{ width: '100%', height: 'auto' }}
-              />
-            </div>
-
-            <div className="canvas-container">
-              <h3>With Bounded Noise</h3>
-              <canvas
-                ref={noisyCanvasRef}
-                width={600}
-                height={400}
-                style={{ width: '100%', height: 'auto' }}
-              />
-            </div>
-
-            {showAlgorithm1Visualization && (
-              <div className="canvas-container" style={{ gridColumn: '1 / -1' }}>
-                <h3>Algorithm 1: Boundary Evolution (3D)</h3>
-                <Algorithm1Viz
-                  boundaryHistory={algorithm1Data.boundaryHistory}
-                  currentIteration={algorithm1Data.currentIteration}
-                  epsilon={params.algorithm1Epsilon}
-                  nBoundaryPoints={params.nBoundaryPoints}
-                  isConverged={algorithm1Data.isConverged}
-                  stepData={currentStepData}
-                  visualizationMode={algorithm1VisualizationMode}
-                  showDetailedViz={currentStepData !== null}
-                  isDiverged={algorithm1Data.isDiverged}
-                />
-              </div>
-            )}
-
           </div>
 
-          <div className="stats-panel">
-            <div className="stats-grid">
-              <div className="stat-item">
-                <div className="stat-value">{currentIteration.toLocaleString()}</div>
-                <div className="stat-label">Current Iterations</div>
-              </div>
-              <div className="stat-item">
-                <div className="stat-value">{performanceStats.iterationsPerSecond.toLocaleString()}</div>
-                <div className="stat-label">Iterations/sec</div>
-              </div>
-              <div className="stat-item">
-                <div className="stat-value">{performanceStats.lastRenderTime.toFixed(1)}ms</div>
-                <div className="stat-label">Render Time</div>
-              </div>
-              <div className="stat-item">
-                <div className="stat-value">{(trajectoryData.deterministic.length / 2).toLocaleString()}</div>
-                <div className="stat-label">Det. Points</div>
-              </div>
-              <div className="stat-item">
-                <div className="stat-value">{(trajectoryData.noisy.length / 2).toLocaleString()}</div>
-                <div className="stat-label">Noisy Points</div>
-              </div>
-              <div className="stat-item">
-                <div className="stat-value">{algorithm1Data.currentIteration}</div>
-                <div className="stat-label">Algorithm 1 Iterations</div>
-              </div>
-              <div className="stat-item">
-                <div className="stat-value">{algorithm1Data.boundaryHistory.length}</div>
-                <div className="stat-label">Boundary History</div>
-              </div>
-              <div className="stat-item">
-                <div className="stat-value">
-                  {(() => {
-                    try {
-                      return wasmModule?.Utils?.version() || 'N/A';
-                    } catch (error) {
-                      console.error('Error getting WASM version:', error);
-                      return 'Error';
-                    }
-                  })()}
-                </div>
-                <div className="stat-label">WASM Version</div>
-              </div>
-            </div>
-          </div>
         </main>
       </div>
     </div>
