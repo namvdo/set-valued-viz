@@ -1,30 +1,37 @@
-# Set-Valued Hénon Map Visualization
+# Visualization of Set-valued Dynamical System
+Iteractive web-based visualization tool for exploring set-valued dynamical systems with bounded noise, developed as part of the Advanced Computing Project (ACP2) research course at the University of Oulu.
+## Mathematical Bacground
+In classical analysis, a **single-valued function** (or simply a function) $f: X \to Y$ assigns each point $x \in X$ to exactly one point $y \in Y$, written $y = f(x)$. Traditional dynamical systems using single-valued maps to describe deterministic evolution: given initial state $x_0$, the trajectory is uniquuely determined as $x_1 = f(x_0), x_2 = f(x_1), x_3= f(x_2)$ and so forth.
 
-A **WebAssembly-powered** visualization tool for comparing deterministic and set-valued (noisy) Hénon map dynamics. This project demonstrates chaotic behavior in dynamical systems using high-performance Rust computation with an interactive React frontend.
+In contrast, a **set-valued function** (or **multivalued map**) $F: X \to \mathcal{(Y)}$ assigns to each point $x \in X$ a **subset** $F(x) \subseteq Y$ where $\mathcal{P}(Y)$ denotes the power set of $Y$. Rather than producing a single output, set-valued functions produce **a set of possible outputs**:
+
+$F(A) = \bigcup_{x \in A} F(x)$
+In our setting, we model bounded additive noise through set-valued map:
+$F(x) = B_\epsilon(f(x)) = \{f(x) + \xi : \|\xi\| \leq \epsilon\}$ where $f: \mathbb{R}^n \to \mathbb{R}^n$ is the underlying single-valued deterministic map (the Hénon map in our case), and $B_\epsilon(f(x))$ represent all possible perturbed states within distance $\epsilon$ of the deterministic image.
+
+Rather than tracking every possible point within the noise ball $B_\epsilon(f(x))$ which would too computationally expensive to compute as the noise balls grow, we instea adopt a **worse-case boundary approach**. Since the maximum uncertainty occurs at the boundary $\partial B_\epsilon(f(x))$ (points at distance exactly $\epsilon$ from the deterministic image), we focus exclusively on tracking how these boundary points evolve.
 
 
-**Project Overview**
 
-This application visualizes the **Hénon Map**, a discrete-time dynamical system that exhibits chaotic behavior:
+## Visualization tool
+## Features
 
-```
-x_{n+1} = 1 - ax_n² + y_n
-y_{n+1} = bx_n
-```
-Bounded-noise Henon-map:
-```
-x_{n+1} = 1 - a*x_n^2 + y + ξ
-y_{n+1} = b*x_n + η
-Where (ξ, η) ∈ B_ε(0) = {(u,v) : √(u² + v²) ≤ ε}
-```
+| Feature | Status | Description |
+|---------|--------|-------------|
+| **Algorithm 1 Implementation** | ✅ Done | Core boundary tracking with normal vector transformation |
+| **Interactive 2D Visualization** | ✅ Done | Real-time rendering with Three.js (mapped points, noise circles, boundaries) |
+| **Step-by-Step Execution** | ✅ Done | Detailed iteration-by-iteration inspection mode |
+| **Batch Execution** | ✅ Done | Automatic iteration until convergence ("Run Full" mode) |
+| **Divergence Detection** | ✅ Done | Monitors escaping points and halts when >50% diverge |
+| **Real-Time Parameter Control** | ✅ Done | Interactive sliders for $a$, $b$, $\epsilon$, $x_0$, $y_0$ |
+| **Multi-Mode Visualization** | ✅ Done | Toggle between all elements, mapped points only, noise circles only, etc. |
+| **Hausdorff Distance** | 🔄 Planned | Rigorous convergence assessment using $d_H(M_n, M_{n-1})$ |
+| **Bifurcation Visualization** | 🔄 Planned | Detect and visualize topological and boundary bifurcations |
+| **Color-Coded Orbits** | 🔄 Planned | Distinguish fixed points, periodic points, and singular points |
+| **Export Functionality** | 🔄 Planned | PNG screenshots, CSV data export, MP4 animations |
+| **Parameter Space Exploration** | 🔄 Planned | Visual indicators for bifurcation regions in $(a, b, \epsilon)$ space |
 
-**Key Features:**
-- **Deterministic Hénon Map**: Classic chaotic attractor visualization
-- **Set-Valued Hénon Map**: Bounded noise version showing uncertainty quantification
-- **Side-by-side comparison**: Real-time visualization of both systems
-- **Interactive parameters**: Adjust system parameters and noise levels
-- **High-performance rendering**: WebAssembly backend for fast computation
-
+![Set-valued dynamical system with additive bounded noise Visualization](./images/algo1_viz.png)
 ## **Getting Started**
 
 ### **1. Clone the Repository**
