@@ -67,33 +67,3 @@ cp -r ../pkg/* src/pkg/
 ```bash
 npm run dev
 ```
-
-## 🔧 **Development Workflow**
-
-### **Making Changes to Rust Code**
-
-1. **Edit Rust files** in `src/`
-2. **Rebuild WebAssembly**:
-   ```bash
-   wasm-pack build --target web --out-dir pkg
-   ```
-3. **Copy to frontend**:
-   ```bash
-   cd frontend
-   npm run build-wasm
-   ```
-4. **Frontend auto-reloads** (if dev server is running)
-
-### **Making Changes to Frontend**
-
-1. **Edit React files** in `frontend/src/`
-2. **Vite auto-reloads** the browser automatically
-
-### **Convenient Build Script**
-
-The frontend includes a convenient build script:
-
-```bash
-cd frontend
-npm run build-wasm  # Builds Rust → WASM → copies to frontend
-```
