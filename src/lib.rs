@@ -365,20 +365,21 @@ impl SetValuedSimulation {
 
     /// Get initial state for visualization (iteration 0)
     /// Returns JSON string with boundary points that haven't been iterated yet
+    /// Get initial state for visualization (iteration 0)
     #[wasm_bindgen]
     pub fn get_initial_state_details(&self) -> Result<String, JsValue> {
         if self.boundary_points.is_empty() {
             return Err(JsValue::from_str("No boundary points initialized"));
         }
 
-        // For initial state, the boundary_points ARE already the projected points
-        // (they were created as points on the circle boundary in the constructor)
         let mut projected_points = Vec::new();
         let mut normals = Vec::new();
 
-        // Compute centroid of current boundary
-        let mut centroid_x = 0.0;
-        let mut centroid_y = 0.0;
+        // Reconstruct the TRUE center by averaging back-projections
+        // Since projected_point = center + epsilon * normal,
+        // we have: center = projected_point - epsilon * normal
+        let mut center_x = 0.0;
+        let mut center_y = 0.0;
 
         for point in &self.boundary_points {
             let (x, y) = point.position;
@@ -389,32 +390,47 @@ impl SetValuedSimulation {
             normals.push(nx);
             normals.push(ny);
 
-            centroid_x += x;
-            centroid_y += y;
+            // Project back along negative normal to find center
+            center_x += x - self.epsilon * nx;
+            center_y += y - self.epsilon * ny;
         }
 
         let n = self.boundary_points.len() as f64;
-        centroid_x /= n;
-        centroid_y /= n;
+        center_x /= n;
+        center_y /= n;
 
-        // For initial state, mapped_points are at the centroid (the initial f(x0))
-        let mapped_points = vec![centroid_x, centroid_y];
+        // For iteration 0, all "mapped" points should be at the center
+        // (before the Henon map is applied to move them)
+        let mut mapped_points = Vec::new();
+        for _ in 0..self.boundary_points.len() {
+            mapped_points.push(center_x);
+            mapped_points.push(center_y);
+        }
 
+        #[derive(Serialize)]
+        struct InitialState {
+            iteration: u32,
+            mapped_points: Vec<f64>,
+            projected_points: Vec<f64>,
+            normals: Vec<f64>,
+            epsilon: f64,
+            max_movement: f64,
+            centroid: [f64; 2],
+        }
 
-        let iteration_state = IterationState {
+        let result = InitialState {
             iteration: 0,
             mapped_points,
             projected_points,
             normals,
             epsilon: self.epsilon,
             max_movement: 0.0,
-            centroid: [centroid_x, centroid_y]
+            centroid: [center_x, center_y],
         };
 
-        serde_json::to_string(&iteration_state)
+        serde_json::to_string(&result)
             .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
-
-    }
+    } 
 
     /// Perform 1 iteration and return detailed visualization data
     /// Returns JSON string with all intermediate steps
@@ -442,18 +458,9 @@ impl SetValuedSimulation {
             let (x, y) = old_point.position;
             let (nx, ny) = old_point.normal;
             
-            // Safety check
-            if !x.is_finite() || !y.is_finite() || x.abs() > 100.0 || y.abs() > 100.0 {
-                continue;
-            }
-            
             // Step (v-a): Compute f(zk)
             let f_x = 1.0 - a * x * x + y;
             let f_y = b * x;
-            
-            if !f_x.is_finite() || !f_y.is_finite() || f_x.abs() > 100.0 || f_y.abs() > 100.0 {
-                continue;
-            }
             
             mapped_points.push(f_x);
             mapped_points.push(f_y);
@@ -569,24 +576,11 @@ impl SetValuedSimulation {
             let (x, y) = old_point.position;
             let (nx, ny) = old_point.normal;
             
-            // Safety check: Skip diverged points
-            if !x.is_finite() || !y.is_finite() || x.abs() > 100.0 || y.abs() > 100.0 {
-                console_log!("Skipping diverged point: ({}, {})", x, y);
-                continue;
-            }
-            
             // Step (v-a): Compute f(zk) - Direct Hénon map calculation
             let a = self.henon_map.get_parameters().a();
             let b = self.henon_map.get_parameters().b();
             let f_x = 1.0 - a * x * x + y;
             let f_y = b * x;
-            
-            // Check if mapped point is valid
-            if !f_x.is_finite() || !f_y.is_finite() || f_x.abs() > 100.0 || f_y.abs() > 100.0 {
-                console_log!("Skipping point with invalid mapping: f({}, {}) = ({}, {})", 
-                            x, y, f_x, f_y);
-                continue;
-            }
             
             // Step (v-b): Transform normal using (J^(-1))^T (inverse transpose)
             // For Hénon map: J = [[-2ax, 1], [b, 0]]

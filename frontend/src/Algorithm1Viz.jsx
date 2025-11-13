@@ -110,10 +110,26 @@ const Algorithm1Viz = ({
     const plotWidth = width - marginLeft - marginRight;
     const plotHeight = height - marginTop - marginBottom;
 
-    // Coordinate transformation functions
-    const scaleX = (x) => marginLeft + ((x - minX) / finalRangeX) * plotWidth;
-    const scaleY = (y) => marginTop + plotHeight - ((y - minY) / finalRangeY) * plotHeight;
-    const scaleRadius = (r) => (r / finalRangeX) * plotWidth;
+    // CRITICAL: Apply EQUAL ASPECT RATIO
+    // Choose the scaling that fits both dimensions
+    const scaleFactorX = plotWidth / finalRangeX;
+    const scaleFactorY = plotHeight / finalRangeY;
+    
+    // Use the SMALLER scale factor to ensure everything fits
+    const scaleFactor = Math.min(scaleFactorX, scaleFactorY);
+    
+    // Calculate actual used dimensions
+    const usedWidth = finalRangeX * scaleFactor;
+    const usedHeight = finalRangeY * scaleFactor;
+    
+    // Center the plot in available space
+    const offsetX = marginLeft + (plotWidth - usedWidth) / 2;
+    const offsetY = marginTop + (plotHeight - usedHeight) / 2;
+
+    // Coordinate transformation functions with EQUAL scaling
+    const scaleX = (x) => offsetX + (x - minX) * scaleFactor;
+    const scaleY = (y) => offsetY + usedHeight - (y - minY) * scaleFactor;
+    const scaleRadius = (r) => r * scaleFactor;
 
     // Draw grid and axes
     drawGridAndAxes(ctx, width, height, minX, maxX, minY, maxY, 
@@ -255,30 +271,19 @@ function getNiceTickSpacing(range, targetTicks) {
 function drawDetailedStepVisualization(ctx, stepData, mode, epsilon, scaleX, scaleY, scaleRadius) {
   const { mapped_points, projected_points, normals } = stepData;
 
-  // Verify the mathematical relationship for debugging
-  // Each projected_point should be: mapped_point + epsilon * normal
-  
-  // Step 1: Draw noise circles (if mode includes)
+  // Step 1: Draw noise circles (true circles now with equal aspect ratio!)
   if (mode === 'circles' || mode === 'all') {
     ctx.strokeStyle = '#ffaa00';
     ctx.fillStyle = 'rgba(255, 170, 0, 0.1)';
     ctx.lineWidth = 1.5;
 
-    // For each mapped point, draw circle of radius epsilon in DATA SPACE
-    for (let i = 0; i < mapped_points.length; i += 2) {
-      const centerX = mapped_points[i];
-      const centerY = mapped_points[i + 1];
-      
-      // Transform center to screen space
-      const cx = scaleX(centerX);
-      const cy = scaleY(centerY);
+    // For each mapped point, draw circle of radius epsilon
+    // Since we have equal aspect ratio, we can use arc() directly
+    const radiusPixels = scaleRadius(epsilon);
 
-      // Calculate radius in screen space by transforming a point at distance epsilon
-      // We need to account for potential non-uniform scaling
-      const testX = centerX + epsilon;
-      const testY = centerY;
-      const testScreenX = scaleX(testX);
-      const radiusPixels = Math.abs(testScreenX - cx);
+    for (let i = 0; i < mapped_points.length; i += 2) {
+      const cx = scaleX(mapped_points[i]);
+      const cy = scaleY(mapped_points[i + 1]);
 
       ctx.beginPath();
       ctx.arc(cx, cy, radiusPixels, 0, 2 * Math.PI);
@@ -364,7 +369,7 @@ function drawDetailedStepVisualization(ctx, stepData, mode, epsilon, scaleX, sca
       ctx.fillStyle = 'rgba(255, 0, 255, 0.08)';
       ctx.fill();
 
-      // Draw boundary points - these MUST be on the circle boundary
+      // Draw boundary points - these are exactly on the circle boundary
       ctx.fillStyle = '#ff00ff';
       for (let i = 0; i < projected_points.length; i += 2) {
         const x = scaleX(projected_points[i]);
