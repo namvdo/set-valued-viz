@@ -342,7 +342,7 @@ def solve(equation, **input_values):
     
     values = {}
     equation, substitutions = create_substitutions(equation)
-    operations = list(order_of_operations(equation))
+##    operations = list()
     
     def get_value(key):
         if key not in values and key in substitutions:
@@ -425,16 +425,14 @@ def solve(equation, **input_values):
                 case _: print("unknown function prefix", prefix)
         values[inside] = x
         return inside
-
-##    print(operations)
-    for index,op in enumerate(operations):
-        op = join_equation(op, operations)
+    
+    results = []
+    for index,op in enumerate(order_of_operations(equation)):
+        op = join_equation(op, results)
         op_result = single(op, values, substitutions)
-##        print(index, "solving", op)
-##        print(op_result, "=", get_value(op_result))
-        operations[index] = op_result
-
-    result = operations[-1]
+        results.append(op_result)
+    result = results[-1]
+    
     if result in values: return values[result]
     result = float(result) # otherwise there were no variables used in solving
     if int(result)==result: return int(result)
@@ -672,31 +670,30 @@ def test_all():
 
 
 if __name__ == "__main__":
-##    test_all()
-
-
+    test_all()
+    
 ##    # mapping function test
-    mf = MappingFunction2D()
+##    mf = MappingFunction2D()
 ##    epsilon = 0.502
 ##    mf.constants["a"] = 0.06
 ##    mf.constants["b"] = 0.3
 ##
 
-    j = mf.jacobian()
-    tij = mf.transposed_inverse_jacobian()
-####    print(*order_of_operations(str(tij[0][0])))
-####    print(*order_of_operations(str(tij[0][1])))
-####    print(*order_of_operations(str(tij[1][0])))
-####    print(*order_of_operations(str(tij[1][1])))
-    print(j[0][0])
-    print(j[0][1])
-    print(j[1][0])
-    print(j[1][1])
-    print("")
-    print(tij[0][0])
-    print(tij[0][1])
-    print(tij[1][0])
-    print(tij[1][1])
+##    j = mf.jacobian()
+##    tij = mf.transposed_inverse_jacobian()
+######    print(*order_of_operations(str(tij[0][0])))
+######    print(*order_of_operations(str(tij[0][1])))
+######    print(*order_of_operations(str(tij[1][0])))
+######    print(*order_of_operations(str(tij[1][1])))
+##    print(j[0][0])
+##    print(j[0][1])
+##    print(j[1][0])
+##    print(j[1][1])
+##    print("")
+##    print(tij[0][0])
+##    print(tij[0][1])
+##    print(tij[1][0])
+##    print(tij[1][1])
 ##
 ##    # 
 ##    prev_normal = [-0.48191243, -0.14058595]#[-0.48191169, -0.14058848]

@@ -147,7 +147,7 @@ class ModelConfiguration():
         return points, prev_points, normals, prev_normals
 
     def _process(self, points, prev_points, normals, prev_normals, amount:int):
-        if points is self._points:
+        if points is self._points or self.tij is None:
             self.tij = self.function.transposed_inverse_jacobian()
         
         for i in range(amount):
@@ -157,10 +157,10 @@ class ModelConfiguration():
             # |[c, d]|
             x = points[:,0]
             y = points[:,1]
-            a = tij[0][0].solve(x=x, y=y, **self.function.constants)
-            b = tij[0][1].solve(x=x, y=y, **self.function.constants)
-            c = tij[1][0].solve(x=x, y=y, **self.function.constants)
-            d = tij[1][1].solve(x=x, y=y, **self.function.constants)
+            a = self.tij[0][0].solve(x=x, y=y, **self.function.constants)
+            b = self.tij[0][1].solve(x=x, y=y, **self.function.constants)
+            c = self.tij[1][0].solve(x=x, y=y, **self.function.constants)
+            d = self.tij[1][1].solve(x=x, y=y, **self.function.constants)
             
             a = np.nan_to_num(a, nan=0, posinf=1, neginf=-1)
             b = np.nan_to_num(b, nan=0, posinf=1, neginf=-1)
@@ -295,7 +295,7 @@ class ModelConfiguration():
         print("\ndrawing step", self._timestep, f"({resolution} px)")
         print("points ->", self._radians.shape[0])
         #
-        draw_prev_points = 1
+        draw_prev_points = 0
         draw_prev_normals = 0
         draw_boundary_lines = 1
         draw_outer_normals = 0
@@ -439,8 +439,8 @@ if __name__ == "__main__":
 ##    config.function.x.string = "x/2+(1-y)/3*x/4"
 ##    config.function.y.string = "y/3+x/3"  # 
     
-    config.function.x.string = "x/3+cos(y)**2"
-    config.function.y.string = "y/2+sin(x)**2"
+##    config.function.x.string = "x/3+cos(y)**2"
+##    config.function.y.string = "y/2+sin(x)**2"
     
 ##    config.function.x.string = "x/2-y/3"
 ##    config.function.y.string = "y/2+x/5"
@@ -458,12 +458,12 @@ if __name__ == "__main__":
     print(tij[1][1])
     print("")
 
-    resolution = 1000
+    resolution = 2000
     plots_x = 1
     plots_y = 1
-    timestep = 1
+    timestep = 22
     while 1:
-        fig,ax = plt.subplots(plots_y, plots_x, figsize=(7,7))
+        fig,ax = plt.subplots(plots_y, plots_x, figsize=(11,9))
         for i in range(plots_x):
             for j in range(plots_y):
                 config.process(timestep)
@@ -477,8 +477,8 @@ if __name__ == "__main__":
                 else: ax_target = ax
                 
                 ax_target.imshow(image, extent=extent)
-                ax_target.set_title(f"step: {timestep}\nshape: {image.shape}")
                 timestep += 1
+                ax_target.set_title(f"step: {timestep}, image: {image.shape}")
         plt.show()
 
 
