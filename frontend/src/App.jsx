@@ -28,7 +28,7 @@ function App() {
     iterations: 100,
     skipTransient: 0,
     algorithm1Epsilon: 0.1,
-    nBoundaryPoints: 8,
+    nBoundaryPoints: 5000,
     convergenceThreshold: 1e-6,
     maxAlgorithm1Iterations: 100
   });
@@ -544,9 +544,9 @@ function App() {
                 Boundary Points: {params.nBoundaryPoints}
                 <input
                   type="range"
-                  min="6"
-                  max="1000"
-                  step="1"
+                  min="5000"
+                  max="1000000"
+                  step="1000"
                   value={params.nBoundaryPoints}
                   onChange={(e) => handleParamChange('nBoundaryPoints', e.target.value)}
                 />
