@@ -230,7 +230,7 @@ export default function Algorithm1Viz({
   showDetailedViz = false
 }) {
   return (
-    <div style={{ width: '100%', height: '100%', minHeight: '500px', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', minHeight: '80vh', position: 'relative' }}>
       <Canvas
         orthographic
         camera={{ position: [0, 0, 5], zoom: 100 }}
