@@ -8,6 +8,7 @@
 // Supervisor: Dr. Kella Timperi, University of Oulu
 
 use core::f64;
+use std::iter;
 
 use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -289,6 +290,31 @@ pub struct SetValuedSimulation {
     convergence_threshold: f64
 }
 
+#[derive(Serialize)]
+struct IterationState {
+    iteration: u32,
+    mapped_points: Vec<f64>,
+    projected_points: Vec<f64>,
+    normals: Vec<f64>,
+    epsilon: f64,
+    max_movement: f64,
+    centroid: [f64; 2]
+}
+
+#[derive(Serialize)]
+struct IterationResult {
+    iteration: usize,
+    mapped_points: Vec<f64>,
+    projected_points: Vec<f64>,
+    normals: Vec<f64>,
+    epsilon: f64,
+    max_movement: f64,
+    centroid: [f64; 2],
+    diverged: bool,
+    points_lost: usize,
+    points_remaining: usize
+}
+
 #[wasm_bindgen]
 impl SetValuedSimulation {
     /// Initialize with circular initial set
@@ -374,17 +400,20 @@ impl SetValuedSimulation {
         // For initial state, mapped_points are at the centroid (the initial f(x0))
         let mapped_points = vec![centroid_x, centroid_y];
 
-        let result = format!(
-            r#"{{"iteration": 0, "mapped_points": {:?}, "projected_points": {:?}, "normals": {:?}, "epsilon": {}, "max_movement": 0.0, "centroid": [{}, {}]}}"#,
+
+        let iteration_state = IterationState {
+            iteration: 0,
             mapped_points,
             projected_points,
             normals,
-            self.epsilon,
-            centroid_x,
-            centroid_y
-        );
+            epsilon: self.epsilon,
+            max_movement: 0.0,
+            centroid: [centroid_x, centroid_y]
+        };
 
-        Ok(result)
+        serde_json::to_string(&iteration_state)
+            .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+
     }
 
     /// Perform 1 iteration and return detailed visualization data
@@ -435,7 +464,7 @@ impl SetValuedSimulation {
             
             // Step (v-b): Transform normal using (J^(-1))^T (inverse transpose)
             if b.abs() < 1e-10 {
-                console_log!("⚠️ Warning: b ≈ 0, Jacobian is nearly singular");
+                console_log!("Warning: b ≈ 0, Jacobian is nearly singular");
                 continue;
             }
 
@@ -443,7 +472,7 @@ impl SetValuedSimulation {
             let ny_transformed = nx / b + (2.0 * a * x / b) * ny;
 
             if !nx_transformed.is_finite() || !ny_transformed.is_finite() {
-                console_log!("⚠️ Warning: Non-finite transformed normal");
+                console_log!("Warning: Non-finite transformed normal");
                 continue;
             }
             
@@ -484,7 +513,7 @@ impl SetValuedSimulation {
 
         // Check for complete divergence
         if new_boundary_points.is_empty() {
-            console_log!("❌ All boundary points diverged");
+            console_log!("All boundary points diverged");
             return Ok(String::from("{\"diverged\": true}"));
         }
 
@@ -503,56 +532,23 @@ impl SetValuedSimulation {
         self.boundary_points = new_boundary_points;
         self.iteration_count += 1;
 
-        // Build JSON string manually to avoid format! memory issues
-        let mut result = String::new();
-        result.push_str("{\"iteration\": ");
-        result.push_str(&self.iteration_count.to_string());
-        
-        result.push_str(", \"mapped_points\": [");
-        for (i, val) in mapped_points.iter().enumerate() {
-            if i > 0 { result.push_str(", "); }
-            result.push_str(&val.to_string());
-        }
-        result.push_str("]");
-        
-        result.push_str(", \"projected_points\": [");
-        for (i, val) in projected_points.iter().enumerate() {
-            if i > 0 { result.push_str(", "); }
-            result.push_str(&val.to_string());
-        }
-        result.push_str("]");
-        
-        result.push_str(", \"normals\": [");
-        for (i, val) in normals.iter().enumerate() {
-            if i > 0 { result.push_str(", "); }
-            result.push_str(&val.to_string());
-        }
-        result.push_str("]");
-        
-        result.push_str(", \"epsilon\": ");
-        result.push_str(&self.epsilon.to_string());
-        
-        result.push_str(", \"max_movement\": ");
-        result.push_str(&max_movement.to_string());
-        
-        result.push_str(", \"centroid\": [");
-        result.push_str(&centroid_x.to_string());
-        result.push_str(", ");
-        result.push_str(&centroid_y.to_string());
-        result.push_str("]");
-        
-        result.push_str(", \"diverged\": ");
-        result.push_str(if diverged { "true" } else { "false" });
-        
-        result.push_str(", \"points_lost\": ");
-        result.push_str(&points_lost.to_string());
-        
-        result.push_str(", \"points_remaining\": ");
-        result.push_str(&points_remaining.to_string());
-        
-        result.push_str("}");
 
-        Ok(result)
+        let result = IterationResult{
+            iteration: self.get_iteration_count(),
+            mapped_points,
+            projected_points,
+            normals,
+            epsilon: self.epsilon,
+            max_movement,
+            centroid: [centroid_x, centroid_y],
+            diverged,
+            points_lost,
+            points_remaining
+        };
+
+        serde_json::to_string(&result)
+            .map_err(|e| JsValue::from_str(&format!("JSON serialization error: {}", e)))
+        
     } 
 
 
@@ -645,7 +641,7 @@ impl SetValuedSimulation {
         }
         
         if new_boundary_points.len() < n / 2 {
-            console_log!("⚠️  Lost {} boundary points (from {} to {})", 
+            console_log!("Lost {} boundary points (from {} to {})", 
                         n - new_boundary_points.len(), n, new_boundary_points.len());
         }
 
@@ -653,7 +649,7 @@ impl SetValuedSimulation {
         self.boundary_points = new_boundary_points;
         self.iteration_count += 1;
 
-        console_log!("✓ Iteration {}: {} points, max movement = {:.6e}", 
+        console_log!("Iteration {}: {} points, max movement = {:.6e}", 
                     self.iteration_count, self.boundary_points.len(), max_movement);
         Ok(max_movement)
         } 
