@@ -10,6 +10,7 @@ serde_json = "1.0.144"
 js-sys = "0.3"
 
 getrandom = { version = "0.2.16", features = ["js"]}
+regex = "1.12.2"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

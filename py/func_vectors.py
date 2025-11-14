@@ -48,10 +48,3 @@ def simple_normals_from_points(points):
     if cand0_area>cand1_area: return candidates0
     return candidates1
 
-
-class Point2D:
-    x = y = 0
-    def __init__(self, x, y):
-        self.x, self.y = x, y
-    def __str__(self):
-        return f"({self.x}, {self.y})"

@@ -461,7 +461,7 @@ if __name__ == "__main__":
     resolution = 2000
     plots_x = 1
     plots_y = 1
-    timestep = 22
+    timestep = 10
     while 1:
         fig,ax = plt.subplots(plots_y, plots_x, figsize=(11,9))
         for i in range(plots_x):

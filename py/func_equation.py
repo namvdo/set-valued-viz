@@ -56,8 +56,6 @@ RE_OPERABLE = rf"(?:({RE_NUMBER})|({RE_ALGSUB}|{RE_OPSUBS_NONCAP}))"
 RE_OPERABLE_NONCAP = rf"(?:{RE_NUMBER}|{RE_ALGSUB}|{RE_OPSUBS_NONCAP})"
 RE_OPERABLE_POS = rf"(?:({RE_NUMBER_POS})|({RE_ALGSUB_POS}|{RE_OPSUBS_NONCAP}))"
 RE_OPERABLE_NONCAP_POS = rf"(?:{RE_NUMBER_POS}|{RE_ALGSUB_POS}|{RE_OPSUBS_NONCAP})"
-RE_OPERABLE_NONCAP_NONNUM = rf"(?:{RE_ALGSUB}|{RE_OPSUBS_NONCAP})"
-RE_OPERABLE_NONCAP_NONNUM_POS = rf"(?:{RE_ALGSUB_POS}|{RE_OPSUBS_NONCAP})"
 
 POWER_PATTERN = rf"(({RE_OPERABLE_NONCAP_POS})(?:\*\*|\^)\-?({RE_OPERABLE_NONCAP_POS}))"
 DIVISION_PATTERN = rf"(({RE_OPERABLE_NONCAP_POS})/\-?({RE_OPERABLE_NONCAP_POS}))"
@@ -69,8 +67,9 @@ NEGATION_PATTERN = rf"((?:\-)({RE_OPERABLE_NONCAP_POS}))"
 RE_OPS = r"[\*/\+\-\^]+"
 RE_USELESS_PARENTHESIS = rf"(({RE_FUNC}|^)?\(({RE_NUM_ALGSUB_NONCAP})\))" # detect useless parenthesis
 
-algebraic_blacklist = {"sin","cos","tan","asin","acos","atan", "abs", "log", "ln"} # invalid variable names in equations
+ALGEBRAIC_BLACKLIST = {"sin","cos","tan","asin","acos","atan", "abs", "log", "ln"} # invalid variable names in equations
 
+RE_EQJOINABLE = rf"(?:.*|^)({RE_OPSUBS})(?:.*|$)"
 
 def create_substitutions(equation):
     i = 0
@@ -86,7 +85,7 @@ def create_substitutions(equation):
     
     string_index = 0
     for k in re.findall(RE_ALGEBRAIC_POS, equation):
-        if k not in algebraic_blacklist:
+        if k not in ALGEBRAIC_BLACKLIST:
             a = "{"+str(i)+"}"
             i += 1
             substitutions[a] = k
@@ -141,7 +140,6 @@ def order_of_operations(equation):
             index += 1
     yield equation
 
-RE_EQJOINABLE = rf"(?:.*|^)({RE_OPSUBS})(?:.*|$)"
 def join_equation(equation, parts):
     while m:=re.match(RE_EQJOINABLE, equation):
         equation = equation.replace(m.group(1), parts[int(m.group(2))])
@@ -149,25 +147,25 @@ def join_equation(equation, parts):
 
 
 def remove_useless_ones(eq): # "**1" & "/1"
-    for whole,target,end in re.findall(rf"(((?:\*\*|\*|/|\^)1)([\*/\)]|$|\D))", eq):
+    for whole,target,end in re.findall(r"(((?:\*\*|\*|/|\^)1)([\*/\)]|$|\D))", eq):
 ##        print("removing one", whole, "in", eq)
         i = eq.index(whole)
         eq = eq[:i]+eq[i:].replace(target, "", 1)
-    for whole,start,target in re.findall(rf"((\(|^|\*)(1\*)[^\*])", eq):
+    for whole,start,target in re.findall(r"((\(|^|\*)(1\*)[^\*])", eq):
 ##        print("removing one", whole, "in", eq)
         i = eq.index(whole)+len(start)
         eq = eq[:i]+eq[i:].replace(target, "", 1)
     return eq
 
 def remove_useless_zeros(eq):
-    for whole,target,end in re.findall(rf"((?:\(|^)(\-+0+)([\+\-\)]|$))", eq):
+    for whole,target,end in re.findall(r"((?:\(|^)(\-+0+)([\+\-\)]|$))", eq):
         i = eq.index(whole)
         eq = eq[:i]+eq[i:].replace(target, "0", 1)
-    while found:=re.findall(rf"(([\+\-]+0+)([\+\-\)]|$))", eq):
+    while found:=re.findall(r"(([\+\-]+0+)([\+\-\)]|$))", eq):
         for whole,target,end in found:
             i = eq.index(whole)
             eq = eq[:i]+eq[i:].replace(target, "", 1)
-    while found:=re.findall(rf"(([\+\-\(]|^)(0+[\+\-]+))", eq):
+    while found:=re.findall(r"(([\+\-\(]|^)(0+[\+\-]+))", eq):
         for whole,start,target in found:
             i = eq.index(whole)+len(start)
             eq = eq[:i]+eq[i:].replace(target, "-"*(target[-1]=="-" and start!="-"), 1)
@@ -342,7 +340,6 @@ def solve(equation, **input_values):
     
     values = {}
     equation, substitutions = create_substitutions(equation)
-##    operations = list()
     
     def get_value(key):
         if key not in values and key in substitutions:
@@ -521,98 +518,8 @@ def derivative(equation, target="x"):
 
 
 
-class EquationObject():
-    string = ""
-    
-    def __init__(self, string):
-        self.string = string
-    
-    def required_inputs(self): # return a set of variables needed to solve
-        return set(re.findall(RE_ALGEBRAIC_POS, self.string)) - algebraic_blacklist
 
-    def derivative(self, target_variable="x"):
-        return type(self)(derivative(self.string, target=target_variable))
-
-    def solve(self, **inputs):
-        return solve(self.string, **inputs)
-
-    def copy(self): return type(self)(self.string)
-    
-    def __str__(self): return self.string
-
-
-
-class MappingFunction2D:
-    def __init__(self):
-        self.x = EquationObject("1-a*x*x+y")
-        self.y = EquationObject("b*x")
-        self.constants = {"a":1.4, "b":0.3}
-        
-    def required_constants(self): # return a set of keyword arguments __call__ requires
-        need = self.x.required_inputs()
-        need |= self.y.required_inputs()
-        if "x" in need: need.remove("x")
-        if "y" in need: need.remove("y")
-        return need
-
-    def missing_constants(self):
-        return self.required_constants()-set(self.constants.keys())
-
-    def trim_excess_constants(self):
-        required = self.required_constants()
-        for k in list(self.constants.keys()):
-            if k not in required: del self.constants[k]
-
-    def copy(self):
-        new = type(self)()
-        new.constants = self.constants.copy()
-        new.x = self.x.copy()
-        new.y = self.y.copy()
-        return new
-    
-    def __str__(self):
-        x = str(self.x)
-        y = str(self.y)
-        for k,v in self.constants.items():
-            v = str(v)
-            x = x.replace(k, v)
-            y = y.replace(k, v)
-        missing = self.missing_constants()
-        return f"(x={x}, y={y})" + (str(" (has undefined constants)") if missing else "")
-
-    def __call__(self, x, y, **inputs):
-        return (self.x.solve(x=x, y=y, **self.constants|inputs),
-                self.y.solve(x=x, y=y, **self.constants|inputs))
-
-    def jacobian(self):
-        return [
-            [self.x.derivative("x"), self.x.derivative("y")],
-            [self.y.derivative("x"), self.y.derivative("y")],
-            ]
-
-    def transposed_inverse_jacobian(self): # T(L)^-1
-        jacobian = self.jacobian()
-        # transpose
-        jacobian[1][0], jacobian[0][1] = jacobian[0][1], jacobian[1][0]
-        
-        # determinant
-        det = f"({jacobian[0][0].string})*({jacobian[1][1].string})-({jacobian[0][1].string})*({jacobian[1][0].string})"
-        det = expand(shrink(det))
-        if det=="0":
-            print("non invertible matrix")
-            return None
-        
-        # inverse
-        jacobian[0][0], jacobian[1][1] = jacobian[1][1], jacobian[0][0]
-        jacobian[0][1].string = f"-({jacobian[0][1].string})"
-        jacobian[1][0].string = f"-({jacobian[1][0].string})"
-        for i in range(2):
-            for j in range(2):
-                o = jacobian[i][j]
-                o.string = f"({o.string})/({det})" # multiply with the determinant
-        return jacobian
-
-def test_all():
+if __name__ == "__main__":
     input_values = {
         "x": np.linspace(-1,1,11),
         "y": np.linspace(-1,1,11),
@@ -620,6 +527,7 @@ def test_all():
         "a": 1.4,
         "b": 0.1,
         }
+    
     def single(orig, deriv, target="x"):
         print("derivative of", orig)
         print("should be equal to", deriv)
@@ -665,40 +573,3 @@ def test_all():
         single(eq,deq)
     
     print(input_values)
-
-    
-
-
-if __name__ == "__main__":
-    test_all()
-    
-##    # mapping function test
-##    mf = MappingFunction2D()
-##    epsilon = 0.502
-##    mf.constants["a"] = 0.06
-##    mf.constants["b"] = 0.3
-##
-
-##    j = mf.jacobian()
-##    tij = mf.transposed_inverse_jacobian()
-######    print(*order_of_operations(str(tij[0][0])))
-######    print(*order_of_operations(str(tij[0][1])))
-######    print(*order_of_operations(str(tij[1][0])))
-######    print(*order_of_operations(str(tij[1][1])))
-##    print(j[0][0])
-##    print(j[0][1])
-##    print(j[1][0])
-##    print(j[1][1])
-##    print("")
-##    print(tij[0][0])
-##    print(tij[0][1])
-##    print(tij[1][0])
-##    print(tij[1][1])
-##
-##    # 
-##    prev_normal = [-0.48191243, -0.14058595]#[-0.48191169, -0.14058848]
-##    x = -1.#-6.98019456e-07 # 1.55550907e-06 # 
-##    y = 2.50311064e-01 # 2.50303340e-01 #
-##    print(solve("(-(1))/(-(b*x+b*x))", x=x, **mf.constants))
-
-
