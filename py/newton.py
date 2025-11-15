@@ -51,6 +51,8 @@ grad_f = gradient(k, point)
 
 print("Gradient of k at", point, "is", grad_f)
 
+# TODO: Implement Newton's method for multivariate functions start with those initial values
+(x0,y0) = (0.6381939926271558578, -0.2120300331658224337)
 
 
 
