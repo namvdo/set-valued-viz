@@ -347,25 +347,25 @@ class ModelConfiguration():
         image = np.zeros((width, height, 4))
         print("shape ->", image.shape)
         
-        line_masks = {}
+        masks = {}
         lines_drawn = [0]
         def draw_line_on_image(start, end, color):
             key = (int(start[0]-end[0]), int(start[1]-end[1]))
             alt_key = (-key[0], -key[1])
-            if key in line_masks: line_mask = line_masks[key]
-            elif alt_key in line_masks: line_mask = line_masks[alt_key]
+            if key in masks: mask = masks[key]
+            elif alt_key in masks: mask = masks[alt_key]
             else:
-                line_mask = mask_line(start, end)
-                if line_mask is None: return
-                line_mask = np.repeat(np.expand_dims(line_mask, axis=2), 4, axis=2)
-                line_masks[key] = line_mask
+                mask = line_mask(start, end)
+                if mask is None: return
+                mask = np.repeat(np.expand_dims(mask, axis=2), 4, axis=2)
+                masks[key] = mask
             
-            if line_mask is None: return False
+            if mask is None: return False
             tl = np.min([start,end], axis=0)
-            x_slice = slice(tl[0], tl[0]+line_mask.shape[0])
-            y_slice = slice(tl[1], tl[1]+line_mask.shape[1])
+            x_slice = slice(tl[0], tl[0]+mask.shape[0])
+            y_slice = slice(tl[1], tl[1]+mask.shape[1])
             valid = image[x_slice,y_slice]<color
-            image[x_slice, y_slice][valid] = (line_mask*color)[valid]
+            image[x_slice, y_slice][valid] = (mask*color)[valid]
             lines_drawn[0] += 1
             return True
         
@@ -402,7 +402,7 @@ class ModelConfiguration():
                 prev = pixel
             if draw_boundary_lines and prev is not None:
                 draw_line_on_image(prev, pixels[0], boundary_color)
-            print("lines ->", lines_drawn[0], "using", len(line_masks), "masks")
+            print("lines ->", lines_drawn[0], "using", len(masks), "masks")
         
         image[pixels[:,0],pixels[:,1]] = boundary_color
         
@@ -459,8 +459,8 @@ if __name__ == "__main__":
     print("")
 
     resolution = 2000
-    plots_x = 1
-    plots_y = 1
+    plots_x = 2
+    plots_y = 2
     timestep = 10
     while 1:
         fig,ax = plt.subplots(plots_y, plots_x, figsize=(11,9))
