@@ -1,13 +1,12 @@
 from _imports import *
 
-class ModelConfiguration():
+class ModelConfiguration(ModelBase):
     alt_visuals = False
     autofill = False
     
-    epsilon = 0.01
     precision = 0.005
     border_width = 1
-    escape_distance = 10. # distance at which to consider them as escaped (prevents extreme array sizes)
+    escape_distance = 10. # distance at which to consider points as escaped (prevents extreme array sizes)
     
     timestep = 0
     image_history = None
@@ -22,21 +21,9 @@ class ModelConfiguration():
     processed_points = 0
     processed_points_total = 0
     hausdorff_distance = 0
-    
-    def log_processed_points(self, n):
-        self.processed_points = n
-        self.processed_points_total += n
-        
-    def log_escaped_points(self, n):
-        self.escaped_points = n
-        self.escaped_points_total += n
-
-    def log_hausdorff(self, dist):
-        self.hausdorff_distance = dist
 
     def __init__(self):
-        self.start_point = Point2D(0,0)
-        self.function = MappingFunction2D()
+        super().__init__()
         
         self.padding_error = np.zeros(2)
         
@@ -54,6 +41,17 @@ class ModelConfiguration():
         self.image_history = self.image.astype(np.uint16)
         self.topleft_old = self.topleft.copy()
         self.timestep = 0
+    
+    def log_processed_points(self, n):
+        self.processed_points = n
+        self.processed_points_total += n
+        
+    def log_escaped_points(self, n):
+        self.escaped_points = n
+        self.escaped_points_total += n
+
+    def log_hausdorff(self, dist):
+        self.hausdorff_distance = dist
 
     def epsilon_circle(self):
         return circle_mask(int(self.epsilon/self.precision), border=self.border_width)
@@ -79,7 +77,6 @@ class ModelConfiguration():
         ax[0].set_title(f"Cumulative Timesteps")
         ax[1].set_title(f"Timestep: {self.timestep}")
         plt.show()
-
 
     def nextstep(self):
         self.topleft_old[:] = self.topleft
@@ -198,9 +195,22 @@ class ModelConfiguration():
 
 
 if __name__ == "__main__":
-    pass
-    
+    config = ModelConfiguration()
+    config.start_point.x = 0
+    config.start_point.y = 0
+    config.epsilon = 0.0625
+    config.function.set_constants(a=0.6, b=0.3)
 
+    config.precision = 0.0025
+    
+    timestep = 10
+    for _ in range(timestep): config.nextstep()
+    for ax_target in test_plotting_grid(2, 2, timestep):
+        config.nextstep()
+        image, tl, br = config.image, config.topleft, config.bottomright
+        image = image.swapaxes(0, 1)[::-1,:]
+        ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
+        
 
 
 

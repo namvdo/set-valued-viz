@@ -17,8 +17,6 @@ class Point2D:
         return f"({self.x}, {self.y})"
 
 class EquationObject():
-    string = ""
-    
     def __init__(self, string):
         self.string = string
     
@@ -30,21 +28,24 @@ class EquationObject():
 
     def solve(self, **inputs):
         return solve(self.string, **inputs)
-
+    
     def copy(self): return type(self)(self.string)
     
     def __str__(self): return self.string
 
 
 class MappingFunction2D:
-    def __init__(self):
-        self.x = EquationObject("1-a*x*x+y")
-        self.y = EquationObject("b*x")
-        self.constants = {"a":1.4, "b":0.3}
+    def __init__(self, fx:str, fy:str):
+        self.fx = EquationObject(fx)
+        self.fy = EquationObject(fy)
+        self.constants = {}
+
+    def set_constants(self, **values):
+        self.constants.update(values)
         
     def required_constants(self): # return a set of keyword arguments __call__ requires
-        need = self.x.required_inputs()
-        need |= self.y.required_inputs()
+        need = self.fx.required_inputs()
+        need |= self.fy.required_inputs()
         if "x" in need: need.remove("x")
         if "y" in need: need.remove("y")
         return need
@@ -60,13 +61,13 @@ class MappingFunction2D:
     def copy(self):
         new = type(self)()
         new.constants = self.constants.copy()
-        new.x = self.x.copy()
-        new.y = self.y.copy()
+        new.fx = self.fx.copy()
+        new.fy = self.fy.copy()
         return new
     
     def __str__(self):
-        x = str(self.x)
-        y = str(self.y)
+        x = self.fx.string
+        y = self.fy.string
         for k,v in self.constants.items():
             v = str(v)
             x = x.replace(k, v)
@@ -75,13 +76,13 @@ class MappingFunction2D:
         return f"(x={x}, y={y})" + (str(" (has undefined constants)") if missing else "")
 
     def __call__(self, x, y, **inputs):
-        return (self.x.solve(x=x, y=y, **self.constants|inputs),
-                self.y.solve(x=x, y=y, **self.constants|inputs))
+        return (self.fx.solve(x=x, y=y, **self.constants|inputs),
+                self.fy.solve(x=x, y=y, **self.constants|inputs))
 
     def jacobian(self):
         return [
-            [self.x.derivative("x"), self.x.derivative("y")],
-            [self.y.derivative("x"), self.y.derivative("y")],
+            [self.fx.derivative("x"), self.fx.derivative("y")],
+            [self.fy.derivative("x"), self.fy.derivative("y")],
             ]
 
     def transposed_inverse_jacobian(self): # T(L)^-1
@@ -105,3 +106,34 @@ class MappingFunction2D:
                 o = jacobian[i][j]
                 o.string = f"({o.string})/({det})" # divide with the determinant
         return jacobian
+
+
+class ModelBase():
+    epsilon = 0.01
+    
+    def __init__(self):
+        self.start_point = Point2D(0,0)
+        self.function = MappingFunction2D("1-a*x*x+y", "b*x")
+        self.function.set_constants(a=1.4, b=0.3)
+
+    def copy(self):
+        new = type(self)()
+        new.epsilon = epsilon
+        new.start_point = self.start_point.copy()
+        new.function = self.function.copy()
+        return new
+
+
+def test_plotting_grid(width=1, height=1, timestep=0, figsize=(9,9)):
+    while 1:
+        fig,ax = plt.subplots(height, width, figsize=figsize)
+        for i in range(width):
+            for j in range(height):
+                if width>1 and height>1: ax_target = ax[i][j]
+                elif width*height>1: ax_target = ax[i*width+j]
+                else: ax_target = ax
+                ax_target.set_title(f"step: {timestep}")
+                timestep += 1
+                yield ax_target
+        plt.show()
+

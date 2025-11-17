@@ -132,6 +132,24 @@ def hausdorff_distance(source_mask, target_mask):
 
 
 
+def image_shape(resolution, max_x, max_y):
+    # resolution -> length of the longest side
+    aspect = max_x/max_y
+    width = int(resolution*min(aspect, 1))
+    height = int(resolution*min(1/aspect, 1))
+    if width>height: height += 1
+    elif width<height: width += 1
+    return width, height
+
+def pixelize_points(points, topleft, bottomright, resolution):
+    pixels = points-topleft
+    pixels /= (bottomright-topleft).max()
+    pixels *= resolution-1
+    pixels += .5
+    return pixels.astype(np.int32)
+
+
+
 def circle_mask(r, inner=0, border=0):
     x = np.expand_dims(np.arange(-r, r+1), axis=1)
     y = np.expand_dims(np.arange(-r, r+1), axis=0)
@@ -155,8 +173,6 @@ def line_mask(start, end): # mask_line
     return mask
 
 def polygon_mask(points, resolution:int, fill=False):
-    # resolution == longest side
-    
     # calculate the bounding box
     topleft, bottomright = bounding_box(points)
     # translate points to pixels
@@ -204,12 +220,16 @@ def center_rotate_points(points, rotation):
 
 
 if __name__ == "__main__":
-    mask = np.ones(10, dtype=np.bool_)
-    mask[8] = False
-##    mask[4] = True
-##    mask[5] = True
-    print(mask)
-    new_mask = repeat_mask_ones_until_divisible(mask, 2)
-    print(new_mask)
+##    mask = np.ones(10, dtype=np.bool_)
+##    mask[8] = False
+####    mask[4] = True
+####    mask[5] = True
+##    print(mask)
+##    new_mask = repeat_mask_ones_until_divisible(mask, 2)
+##    print(new_mask)
+##    print(line_mask((0,0), (-1,0.1)))
 
-    print(mask_line((0,0), (-1,0.1)))
+    print(circle_mask(5))
+##    points = np.zeros((10,2))
+##    points[1:] += 1
+##    polygon_mask(points, 512)

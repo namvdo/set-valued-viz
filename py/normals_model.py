@@ -1,35 +1,16 @@
 from _imports import *
 
-def image_shape(resolution, max_x, max_y):
-    aspect = max_x/max_y
-    width = int(resolution*min(aspect, 1))
-    height = int(resolution*min(1/aspect, 1))
-    if width>height: height += 1
-    elif width<height: width += 1
-    return width, height
-
-def pixelize_points(points, topleft, bottomright, resolution):
-    pixels = points-topleft
-    pixels /= (bottomright-topleft).max()
-    pixels *= resolution-1
-    pixels += .5
-    return pixels.astype(np.int32)
-
-class ModelConfiguration():
-    epsilon = 0.01
-
-    largest_allowed_pixel_gap = 3
+class ModelConfiguration(ModelBase):
+##    largest_allowed_pixel_gap = 3
     precision_increase_attempts = 10
     precision_decrease_attempts = 10
     
     def __init__(self):
-        self.start_point = Point2D(0,0)
-        self.function = MappingFunction2D()
-        self.tij = None
-        
+        super().__init__()
         self._reset()
 
     def _reset(self):
+        self.tij = None
         self._timestep = None
         self._radians = np.zeros(0)
         self._points = np.zeros((0,2))
@@ -61,19 +42,19 @@ class ModelConfiguration():
 
 
     
-    def _gap_mask_pixel(self, resolution):
-        topleft, bottomright = bounding_box(self._points)
-        pixels = pixelize_points(self._points, topleft, bottomright, resolution)
-        pixel_dist = np.linalg.norm(np.diff(pixels, axis=0, append=pixels[:1]), axis=1)
-        return pixel_dist>self.largest_allowed_pixel_gap
+##    def _gap_mask_pixel(self, resolution):
+##        topleft, bottomright = bounding_box(self._points)
+##        pixels = pixelize_points(self._points, topleft, bottomright, resolution)
+##        pixel_dist = np.linalg.norm(np.diff(pixels, axis=0, append=pixels[:1]), axis=1)
+##        return pixel_dist>self.largest_allowed_pixel_gap
 
     def _gap_mask(self):
         dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
-        return dist>self.epsilon/8#np.quantile(dist, .6)
+        return dist>self.epsilon/8
 
     def _nogap_mask(self):
         dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
-        mask = dist<self.epsilon/16#np.quantile(dist, .4)
+        mask = dist<self.epsilon/16
         mask = repeat_mask_ones_until_divisible(mask, 2)
         mask[1::2] = False
         return mask
@@ -82,7 +63,6 @@ class ModelConfiguration():
         mask = np.zeros(self._points.shape[0], dtype=np.bool_)
         for i,x in enumerate(self._points-self._normals):
             mask |= np.linalg.norm(x-self._points, axis=1)<self.epsilon*.95
-##        mask[0] = False
         return mask
     
     def _increase_precision(self, gap_mask):
@@ -212,7 +192,7 @@ class ModelConfiguration():
 
                 inside = self._points_inside_the_boundary_mask()
                 if not inside.all() and inside.any():
-                    # this can and will gaps in the radian array
+                    # this can and will make gaps in the radian array
                     # -> create radian deadzones
                     connect = np.diff(inside.astype(np.int8)) # 1 == left point, -1 == right point
                     indexes = np.arange(len(inside))
@@ -433,23 +413,22 @@ if __name__ == "__main__":
     config.start_point.x = 0
     config.start_point.y = 0
     config.epsilon = 0.0625
-    config.function.constants["a"] = 0.6
-    config.function.constants["b"] = 0.3
+    config.function.set_constants(a=0.6, b=0.3)
     
-##    config.function.x.string = "x/2+(1-y)/3*x/4"
-##    config.function.y.string = "y/3+x/3"  # 
+##    config.function.fx.string = "x/2+(1-y)/3*x/4"
+##    config.function.fy.string = "y/3+x/3"  # 
     
-##    config.function.x.string = "x/3+cos(y)**2"
-##    config.function.y.string = "y/2+sin(x)**2"
+##    config.function.fx.string = "x/3+cos(y)**2"
+##    config.function.fy.string = "y/2+sin(x)**2"
     
-##    config.function.x.string = "x/2-y/3"
-##    config.function.y.string = "y/2+x/5"
+##    config.function.fx.string = "x/2-y/3"
+##    config.function.fy.string = "y/2+x/5"
     
-##    config.function.x.string = "x/2-y/3"
-##    config.function.y.string = "y/2+x/3"
+##    config.function.fx.string = "x/2-y/3"
+##    config.function.fy.string = "y/2+x/3"
     
-##    config.function.x.string = "x/2+1/(y**2+1)"
-##    config.function.y.string = "y/(x**2+1)"
+##    config.function.fx.string = "x/2+1/(y**2+1)"
+##    config.function.fy.string = "y/(x**2+1)"
 
     tij = config.function.transposed_inverse_jacobian()
     print(tij[0][0])
@@ -458,28 +437,17 @@ if __name__ == "__main__":
     print(tij[1][1])
     print("")
 
+    
     resolution = 2000
-    plots_x = 2
-    plots_y = 2
     timestep = 10
-    while 1:
-        fig,ax = plt.subplots(plots_y, plots_x, figsize=(11,9))
-        for i in range(plots_x):
-            for j in range(plots_y):
-                config.process(timestep)
-                image,tl,br = config.draw(resolution)
-                
-                extent = (tl[0],br[0],tl[1],br[1])
-                image = image.swapaxes(0, 1)[::-1,:]
-                
-                if plots_x>1 and plots_y>1: ax_target = ax[i][j]
-                elif plots_x*plots_y>1: ax_target = ax[i*plots_x+j]
-                else: ax_target = ax
-                
-                ax_target.imshow(image, extent=extent)
-                timestep += 1
-                ax_target.set_title(f"step: {timestep}, image: {image.shape}")
-        plt.show()
+    for ax_target in test_plotting_grid(2, 2, timestep):
+        config.process(timestep)
+        image,tl,br = config.draw(resolution)
+        
+        image = image.swapaxes(0, 1)[::-1,:]
+        ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
+        
+        timestep += 1
 
 
 
