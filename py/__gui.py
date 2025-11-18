@@ -12,12 +12,6 @@ def apply_font(obj, fontname=None, fontsize=None):
         obj.configure(font=(fontname, fontsize))
 
 def create_window(title):
-    global window
-    window = tk.Tk()
-    window.wm_title(title)
-    return window
-
-def create_window2(title):
     window = tk.Tk()
     window.wm_title(title)
     return window
@@ -108,14 +102,6 @@ def clear_field(field):
 def write_field(field, content):
     field.insert(0, content)
 
-def create_horiz_separator(frame, margin=2):
-    separator = Separator(frame, orient="horizontal")
-    separator.pack(side=tk.TOP, fill=tk.BOTH, pady=margin)
-
-def create_vert_separator(frame, margin=2):
-    separator = Separator(frame, orient="vertical")
-    separator.pack(side=tk.TOP, fill=tk.BOTH, pady=margin)
-
 def open_msg_window(title, message, error=False):
     if error: messagebox.showerror(title, message)
     else: messagebox.showinfo(title, message)
@@ -147,17 +133,5 @@ def show_subwindow(sub, title=None):
 def hide_subwindow(sub):
     sub.withdraw()
 
-def start():
-    window.mainloop()
 
-def quit():
-    window.destroy()
-
-
-def create_vertical_separator(frame, padx=0, pady=0):
-    separator = Separator(frame, orient="vertical")
-    separator.pack(side=tk.LEFT, fill=tk.BOTH, padx=padx, pady=pady)
-def create_horizontal_separator(frame, padx=0, pady=0):
-    separator = Separator(frame, orient="horizontal")
-    separator.pack(side=tk.TOP, fill=tk.BOTH, padx=padx, pady=pady)
 

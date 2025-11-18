@@ -8,7 +8,6 @@ from __vectors import *
 
 WORKDIR, FILENAME = os.path.abspath(sys.argv[0]).rsplit(os.path.sep, 1)
 
-
 class Point2D:
     x = y = 0
     def __init__(self, x, y):
@@ -72,8 +71,8 @@ class MappingFunction2D:
             x = x.replace(k, v)
             y = y.replace(k, v)
         missing = self.missing_constants()
-        return f"(x={x}, y={y})" + (str(" (has undefined constants)") if missing else "")
-
+        return f"({x}, {y})" + (str(" (has undefined constants)") if missing else "")
+    
     def __call__(self, x, y, **inputs):
         return (self.fx.solve(x=x, y=y, **self.constants|inputs),
                 self.fy.solve(x=x, y=y, **self.constants|inputs))
