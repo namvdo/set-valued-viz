@@ -1,5 +1,5 @@
 import numpy as np
-from func_vectors import *
+from __vectors import *
 
 # 0100000100 -> 0111111100
 # 0110010000 -> 0110011111

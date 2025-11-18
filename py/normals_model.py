@@ -1,5 +1,6 @@
 from _imports import *
 
+
 class ModelConfiguration(ModelBase):
 ##    largest_allowed_pixel_gap = 3
     precision_increase_attempts = 10
@@ -270,6 +271,8 @@ class ModelConfiguration(ModelBase):
         print("\nprocessing step", self._timestep, "to", to_timestep)
         if self._timestep is None or self._timestep>to_timestep: self._start(to_timestep)
         else: self._continue(to_timestep)
+
+    def can_draw(self): return self._points.size!=0
     
     def draw(self, resolution:int):
         print("\ndrawing step", self._timestep, f"({resolution} px)")
@@ -303,6 +306,7 @@ class ModelConfiguration(ModelBase):
         
         # translate points to pixels
         pixels = pixelize_points(self._points, topleft, bottomright, resolution)
+        prev_pixels = prev_normal_pixels = outer_normal_pixels = inner_normal_pixels = None
         if draw_prev_points:
             prev_pixels = pixelize_points(self._prev_points, topleft, bottomright, resolution)
             if draw_prev_normals:
@@ -311,18 +315,17 @@ class ModelConfiguration(ModelBase):
             outer_normal_pixels = pixelize_points(outer_normal_points, topleft, bottomright, resolution)
         if draw_inner_normals:
             inner_normal_pixels = pixelize_points(inner_normal_points, topleft, bottomright, resolution)
-        
-        # find pixel limits
-        limits = np.max(pixels, axis=0)
-        if draw_prev_points:
-            limits = np.max([np.max(prev_pixels, axis=0), limits], axis=0)
-            if draw_prev_normals:
-                limits = np.max([np.max(prev_normal_pixels, axis=0), limits], axis=0)
-        if draw_outer_normals:
-            limits = np.max([np.max(outer_normal_pixels, axis=0), limits], axis=0)
-        if draw_inner_normals:
-            limits = np.max([np.max(inner_normal_pixels, axis=0), limits], axis=0)
 
+        
+        def find_pixel_limits(pixel_array, *pixel_arrays):
+            limits = np.max(pixel_array, axis=0)
+            for pixels in pixel_arrays:
+                if pixels is None: continue
+                limits = np.max([np.max(pixels, axis=0), limits], axis=0)
+            return limits
+        limits = find_pixel_limits(pixels, prev_pixels, prev_normal_pixels, outer_normal_pixels, inner_normal_pixels)
+
+        
         width, height = image_shape(resolution, *limits)
         image = np.zeros((width, height, 4))
         print("shape ->", image.shape)
@@ -402,8 +405,6 @@ class ModelConfiguration(ModelBase):
             image *= 255
         
         return image.astype(np.uint8), topleft, bottomright
-
-
 
 
 

@@ -1,5 +1,5 @@
 from _imports import *
-from func_tkinter import *
+from __gui import *
 import PIL
 
 from normals_model import ModelConfiguration as NormalsModel
@@ -32,13 +32,20 @@ def create_labeled_field(frame, label, width, update_handler=None):
     return field
 
 class Interface():
+    instances_created = 0
+    class SubInstance():
+        key = None
+        step = 0
+        model = None
+        image = None
+        
     def __init__(self):
-        self.start_point = Point2D(0,0)
-        self.function = MappingFunction2D()
-        self.window = create_window2("main")
-        self._setup_main_window()
+        self.normals_model = NormalsModel()
+        self.subinstances = {}
+        self._init_main_window()
 
-    def _setup_main_window(self):
+    def _init_main_window(self):
+        self.window = create_window2("main")
         win_frame0 = create_frame(self.window)
         create_vertical_separator(win_frame0, 4, 4)
         
@@ -56,26 +63,26 @@ class Interface():
         
         field_width = 14
         create_label(win_frame1, "function")
-        def _update_fx(string): self.function.x.string = string
-        def _update_fy(string): self.function.y.string = string
+        def _update_fx(string): self.normals_model.function.fx.string = string
+        def _update_fy(string): self.normals_model.function.fy.string = string
         field_fx = create_labeled_field(win_frame1, "fx", field_width, _update_fx)
         field_fy = create_labeled_field(win_frame1, "fy", field_width, _update_fy)
-        field_fx.insert(0, self.function.x.string)
-        field_fy.insert(0, self.function.y.string)
+        field_fx.insert(0, self.normals_model.function.fx.string)
+        field_fy.insert(0, self.normals_model.function.fy.string)
         
         create_horizontal_separator(win_frame1, 0, 6)
         
         label = create_label(win_frame1, "starting point")
         def _update_x(string):
-            self.start_point.x = float(string)
-            label.configure(text=str(self.start_point))
+            self.normals_model.start_point.x = float(string)
+            label.configure(text=str(self.normals_model.start_point))
         def _update_y(string):
-            self.start_point.y = float(string)
-            label.configure(text=str(self.start_point))
+            self.normals_model.start_point.y = float(string)
+            label.configure(text=str(self.normals_model.start_point))
         field_start_x = create_labeled_field(win_frame1, " x", field_width, _update_x)
         field_start_y = create_labeled_field(win_frame1, " y", field_width, _update_y)
-        field_start_x.insert(0, str(self.start_point.x))
-        field_start_y.insert(0, str(self.start_point.y))
+        field_start_x.insert(0, str(self.normals_model.start_point.x))
+        field_start_y.insert(0, str(self.normals_model.start_point.y))
         
         create_horizontal_separator(win_frame1, 0, 4)
         
@@ -85,10 +92,12 @@ class Interface():
         write_to_textbox(self._logbox, f"ERROR: {string}")
 
     def start_model_instance(self):
-        normals_model = NormalsModel()
-        normals_model.start_point.x = self.start_point.x
-        normals_model.start_point.y = self.start_point.y
-        normals_model.function = self.function.copy()
+        instance = self.SubInstance()
+        instance.model = self.normals_model.copy()
+        
+        instance.key = self.instances_created
+        self.instances_created += 1
+        self.subinstances[instance.key] = instance
         
         win = create_window2("model")
         win_frame0 = create_frame(win, tk.LEFT)
@@ -100,18 +109,22 @@ class Interface():
         canvas.pack()
         
         create_horizontal_separator(win_frame1, 0, 4)
-        create_label(win_frame1, str(normals_model.function))
+        create_label(win_frame1, str(instance.model.function))
         create_horizontal_separator(win_frame1, 0, 6)
-        b = nice_button(win_frame1, "Next", None)
+        
+        def _next():
+            instance.step += 1
+            instance.model.process(instance.step)
+        b = nice_button(win_frame1, "Next", _next)
         create_horizontal_separator(win_frame1, 0, 6)
-        self.img = None
+        
         def _draw():
-            normals_model.process(2)
-            array, tl, br = normals_model.draw(512)
-            self.img = PIL.ImageTk.PhotoImage(PIL.Image.fromarray(array.swapaxes(0, 1)[::-1]), master=win_frame0)
-            shape = (self.img.width()+10, self.img.height()+10)
+            if not instance.model.can_draw(): instance.model.process(instance.step)
+            array, tl, br = instance.model.draw(512)
+            instance.image = PIL.ImageTk.PhotoImage(PIL.Image.fromarray(array.swapaxes(0, 1)[::-1]), master=win_frame0)
+            shape = (instance.image.width()+10, instance.image.height()+10)
             canvas.configure(width=shape[0], height=shape[1])
-            canvas.create_image(10,10, anchor="nw", image=self.img)
+            canvas.create_image(10,10, anchor="nw", image=instance.image)
             
         b = nice_button(win_frame1, "Draw", _draw)
         create_horizontal_separator(win_frame1, 0, 4)

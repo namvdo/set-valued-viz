@@ -272,10 +272,14 @@ class ConsoleInterface():
 class ConsoleInterface(ConsoleInterface):
     # call with .start(<menu function>)
     
+    def deeper_examplemenu(self):
+        self.start("examplemenu")
+    
     save_directory = ""
     def examplemenu(self) -> (str, list):
         desc = "An example description about the available options"
         options = [
+            ("Deeper", self.deeper_examplemenu),
             ("Exit", self._quit),
             ]
         return desc, options

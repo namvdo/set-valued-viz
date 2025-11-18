@@ -1,10 +1,10 @@
 import os, sys
 import matplotlib.pyplot as plt
 
-from func_equation import *
-from func_mask import *
-from func_system import *
-from func_vectors import *
+from __equation import *
+from __mask import *
+from __system import *
+from __vectors import *
 
 WORKDIR, FILENAME = os.path.abspath(sys.argv[0]).rsplit(os.path.sep, 1)
 
@@ -13,6 +13,7 @@ class Point2D:
     x = y = 0
     def __init__(self, x, y):
         self.x, self.y = x, y
+    def copy(self): return type(self)(self.x, self.y)
     def __str__(self):
         return f"({self.x}, {self.y})"
 
@@ -59,10 +60,8 @@ class MappingFunction2D:
             if k not in required: del self.constants[k]
 
     def copy(self):
-        new = type(self)()
+        new = type(self)(self.fx.string, self.fy.string)
         new.constants = self.constants.copy()
-        new.fx = self.fx.copy()
-        new.fy = self.fy.copy()
         return new
     
     def __str__(self):
@@ -118,7 +117,7 @@ class ModelBase():
 
     def copy(self):
         new = type(self)()
-        new.epsilon = epsilon
+        new.epsilon = self.epsilon
         new.start_point = self.start_point.copy()
         new.function = self.function.copy()
         return new
