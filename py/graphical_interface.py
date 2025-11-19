@@ -4,7 +4,7 @@ import PIL
 
 from normals_model import ModelConfiguration as NormalsModel
 
-save_directory = os.path.join(WORKDIR, "saves")
+SAVEDIR = os.path.join(WORKDIR, "saves")
 
 DEFAULT_PADDING_WIDTH = 8
 DEFAULT_PADDING_HEIGHT = 8
@@ -61,19 +61,17 @@ def nice_window(title, configure_handler=None, on_destroy=None):
         win.protocol("WM_DELETE_WINDOW", _destroy)
     win.resizable(False, False)
     set_passive_colors(win)
-    set_padding(win)
     return win
 
 def nice_frame(root, *args, side=tk.LEFT, **kwargs):
     frame = tk.Frame(root)
     frame.pack(*args, side=side, **kwargs)
     set_passive_colors(frame)
-    set_padding(frame)
     return frame
 
-def nice_canvas(frame, width, height):
+def nice_canvas(frame, width, height, side=tk.LEFT, fill=tk.BOTH):
     canvas = tk.Canvas(frame, width=width, height=height)
-    canvas.pack(side=tk.LEFT, fill=tk.BOTH)
+    canvas.pack(side=side, fill=fill)
     set_active_colors_inverse(canvas)
     return canvas
 
@@ -131,6 +129,86 @@ class Interface():
         model = None
         image = None
         resolution = 512
+        def __init__(self, on_destroy, **kwargs):
+            for k,v in kwargs.items():
+                if hasattr(self, k): setattr(self, k, v)
+            
+            win = nice_window(f"model_{self.key}", on_destroy=on_destroy)
+            set_padding(win)
+            
+            left_frame = nice_frame(win, anchor="nw")
+            set_padding(left_frame)
+
+            info_label = None # tk label obj
+            def _update_info_label():
+                text = f"step = {self.step}"
+                text += f"\nfunc = {self.model.function}"
+                info_label.configure(text=text)
+            
+            right_frame = nice_frame(win, anchor="nw")
+            info_label = nice_label(right_frame, text="", side=tk.TOP, anchor="nw", justify="left")
+            _update_info_label()
+            
+            canvas = nice_canvas(right_frame, 0, 0, side=tk.TOP)
+            canvas.pack_forget()
+            
+            # buttons
+            f = left_frame
+            def _next():
+                self.step += 1
+                self.model.process(self.step)
+                _update_info_label()
+            b = nice_button(f, text="Next Step", command=_next)
+            
+            def _draw():
+                if not self.model.can_draw(): self.model.process(self.step)
+                array, tl, br = self.model.draw(self.resolution)
+                self.image = array_to_image(win, array)
+                shape = (self.image.width(), self.image.height())
+                canvas.configure(width=shape[0], height=shape[1])
+                canvas.create_image(2,2, anchor="nw", image=self.image)
+                canvas.pack()
+            b = nice_button(f, text="Draw Image", command=_draw)
+            #
+            
+            f = nice_frame(left_frame, side=tk.TOP)
+            set_padding(f)
+            def _update(labeltext, string):
+                value = read_number_from_string(string)
+                if value is not None:
+                    self.resolution = max(int(value), 2)
+            field = nice_labeled_field(f, "draw resolution", width=6, update_handler=_update)
+            field.insert(0, str(self.resolution))
+            
+            
+            f = nice_frame(left_frame, side=tk.TOP)
+            set_padding(f)
+            nice_label(f, text="CONFIGURATION", side=tk.TOP, anchor="n", justify="center")
+            text = f"fx = {self.model.function.fx}"
+            text += f"\nfy = {self.model.function.fy}"
+            text += f"\nstart = {self.model.start_point}"
+            nice_label(f, text=text, side=tk.TOP, anchor="nw", justify="left")
+            
+            def _update(labeltext, string):
+                value = read_number_from_string(string)
+                if value is not None and value>=0:
+                    self.model.epsilon = value
+            field = nice_labeled_field(f, "epsilon", width=8, update_handler=_update)
+            field.insert(0, str(self.model.epsilon))
+        
+            f = nice_frame(left_frame, side=tk.TOP)
+            set_padding(f)
+            adjusable_parameters = self.model.function.required_constants()
+            nice_label(f, text="PARAMETERS", side=tk.TOP, anchor="n", justify="center")
+            for k in sorted(adjusable_parameters):
+                def _update(labeltext, string):
+                    value = read_number_from_string(string)
+                    if value is not None:
+                        self.model.function.constants[labeltext] = value
+                        _update_info_label()
+                field = nice_labeled_field(f, k, update_handler=_update)
+                v = self.model.function.constants.get(k)
+                if v is not None: field.insert(0, str(v))
         
     def __init__(self):
         self.normals_model = NormalsModel()
@@ -139,32 +217,37 @@ class Interface():
 
     def _init_main_window(self):
         self.window = nice_window("main")
-        left_frame = nice_frame(self.window)
-        right_frame = nice_frame(self.window)
+        set_padding(self.window)
+        
+        left_frame = nice_frame(self.window, anchor="nw")
+        set_padding(left_frame)
+        right_frame = nice_frame(self.window, anchor="nw")
         self._logbox = create_textbox(right_frame, 48, 12)
         set_active_colors(self._logbox)
         
         # main window content
         b1 = nice_button(left_frame, text="Start", command=self.start_model_instance)
         
-        
-        nice_label(left_frame, text="\nfunction", side=tk.TOP, anchor="sw")
+        f = nice_frame(left_frame, side=tk.TOP)
+        set_padding(f)
+        nice_label(f, text="function", side=tk.TOP, anchor="sw")
         def _update(labeltext, string): getattr(self.normals_model.function, labeltext).string = string
-        field_fx = nice_labeled_field(left_frame, "fx", update_handler=_update)
-        field_fy = nice_labeled_field(left_frame, "fy", update_handler=_update)
+        field_fx = nice_labeled_field(f, "fx", update_handler=_update)
+        field_fy = nice_labeled_field(f, "fy", update_handler=_update)
         field_fx.insert(0, self.normals_model.function.fx.string)
         field_fy.insert(0, self.normals_model.function.fy.string)
         
-        
-        label = nice_label(left_frame, text="\nstarting point", side=tk.TOP, anchor="sw")
+        f = nice_frame(left_frame, side=tk.TOP)
+        set_padding(f)
+        label = nice_label(f, text="starting point", side=tk.TOP, anchor="sw")
         def _update_x(labeltext, string):
             value = read_number_from_string(string)
             if value is not None: self.normals_model.start_point.x = value
         def _update_y(labeltext, string):
             value = read_number_from_string(string)
             if value is not None: self.normals_model.start_point.y = value
-        field_start_x = nice_labeled_field(left_frame, "x", update_handler=_update_x)
-        field_start_y = nice_labeled_field(left_frame, "y", update_handler=_update_y)
+        field_start_x = nice_labeled_field(f, "x", update_handler=_update_x)
+        field_start_y = nice_labeled_field(f, "y", update_handler=_update_y)
         field_start_x.insert(0, str(self.normals_model.start_point.x))
         field_start_y.insert(0, str(self.normals_model.start_point.y))
         
@@ -175,63 +258,15 @@ class Interface():
         write_to_textbox(self._logbox, f"ERROR: {string}")
 
     def start_model_instance(self):
-        instance = self.SubInstance()
-        instance.model = self.normals_model.copy()
-        
-        instance.key = self.instances_created
+        key = self.instances_created
+        def on_destroy():
+            del self.subinstances[key]
+            self.log(f"destroyed instance {key}")
+        instance = self.SubInstance(on_destroy, model=self.normals_model.copy(), key=key)
+        self.subinstances[key] = instance
         self.instances_created += 1
-        self.subinstances[instance.key] = instance
-
-        log_id = f"MODEL_{instance.key}"
-        def _destroy():
-            del self.subinstances[instance.key]
-        win = nice_window(log_id, on_destroy=_destroy)
+        self.log(f"started instance {key}")
         
-        left_frame = nice_frame(win)
-        right_frame = nice_frame(win)
-        canvas = nice_canvas(right_frame, 0, 0)
-        
-        nice_label(left_frame, text="CONFIGURATION", side=tk.TOP, anchor="n", justify="center")
-        nice_label(left_frame, text=f"fx = {instance.model.function.fx}", side=tk.TOP, anchor="nw", justify="left")
-        nice_label(left_frame, text=f"fy = {instance.model.function.fy}", side=tk.TOP, anchor="nw", justify="left")
-        nice_label(left_frame, text=f"s. point = {instance.model.start_point}", side=tk.TOP, anchor="nw", justify="left")
-        
-        # parameters
-        adjusable_parameters = instance.model.function.required_constants()
-        nice_label(left_frame, text="\nPARAMETERS", side=tk.TOP, anchor="n", justify="center")
-        for k in sorted(adjusable_parameters):
-            def _update(labeltext, string):
-                value = read_number_from_string(string)
-                if value is not None:
-                    instance.model.function.constants[labeltext] = value
-##                    label.configure(text=str(instance.model.function))
-            field = nice_labeled_field(left_frame, k, update_handler=_update)
-            v = instance.model.function.constants.get(k)
-            if v is not None: field.insert(0, str(v))
-        
-        def _update(labeltext, string):
-            value = read_number_from_string(string)
-            if value is not None:
-                instance.resolution = max(int(value), 2)
-##        nice_label(left_frame, text="\n", side=tk.TOP, anchor="sw", justify="left")
-        field = nice_labeled_field(left_frame, "resolution", width=6, update_handler=_update)
-        field.insert(0, str(instance.resolution))
-        
-        def _draw():
-            if not instance.model.can_draw(): instance.model.process(instance.step)
-            array, tl, br = instance.model.draw(instance.resolution)
-            instance.image = array_to_image(right_frame, array)
-            shape = (instance.image.width(), instance.image.height())
-            canvas.configure(width=shape[0], height=shape[1])
-            canvas.create_image(2,2, anchor="nw", image=instance.image)
-            self.log(f"{log_id} draw: {shape}")
-        b = nice_button(left_frame, text="Draw", command=_draw)
-        
-        def _next():
-            instance.step += 1
-            instance.model.process(instance.step)
-            self.log(f"{log_id} step: {instance.step}")
-        b = nice_button(left_frame, text="Next Step", command=_next)
         
     def start(self):
         self.window.mainloop()
