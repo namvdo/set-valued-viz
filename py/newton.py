@@ -343,6 +343,8 @@ def plot_periodic_orbits(
     
     
 def main():
+    import warnings 
+    warnings.filterwarnings('ignore')
     print("\n" + "="*60)
     print("HÉNON MAP PERIODIC ORBIT FINDER")
     print("="*60)
