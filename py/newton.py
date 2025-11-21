@@ -148,13 +148,37 @@ def verify_periodic_orbit(
     b: float = B, 
     tol: float = VERIFICATION_TOLERANCE
 ) -> bool:  
-    x0, y0 = x, y
+    """
+    Verify that (x, y) is a periodic point of the given period.
+    Also checks that it's not a lower-period orbit.
+    """
+    x_orig, y_orig = x, y
+    
+    # Check that it's NOT a fixed point (period-1) if we're looking for higher periods
+    if period > 1:
+        x_test, y_test = henon(x, y, a, b)
+        dist_1 = np.sqrt((x_test - x_orig)**2 + (y_test - y_orig)**2)
+        if dist_1 < tol:
+            # It's actually a period-1 fixed point
+            return False
+    
+    # Check that it's NOT a period-2 orbit if we're looking for period > 2
+    if period > 2:
+        x_test, y_test = x, y
+        for _ in range(2):
+            x_test, y_test = henon(x_test, y_test, a, b)
+        dist_2 = np.sqrt((x_test - x_orig)**2 + (y_test - y_orig)**2)
+        if dist_2 < tol:
+            # It's actually a period-2 orbit
+            return False
+    
+    # Now check if it's actually period-n
+    x_test, y_test = x, y
     for _ in range(period):
-        x, y = henon(x, y, a, b)
-    dist = np.sqrt((x - x0)**2 + (y - y0)**2)
-    return dist < tol 
-
-
+        x_test, y_test = henon(x_test, y_test, a, b)
+    
+    dist = np.sqrt((x_test - x_orig)**2 + (y_test - y_orig)**2)
+    return dist < tol
 
 def classify_periodic_orbit(
     x: float,
@@ -263,13 +287,12 @@ def analyze_orbit(
     print(f"  λ₁ = {lambda1:.6f}, |λ₁| = {abs(lambda1):.6f}")
     print(f"  λ₂ = {lambda2:.6f}, |λ₂| = {abs(lambda2):.6f}")
 
-    print(f"\nFull orbits (all {period} points)")
+    print(f"\nFull orbit (all {period} points):")
     x_cur, y_cur = x, y
     for i in range(period): 
-        print(f"Point: {i}: ({x_cur:.10f}, {y_cur:.10f})")
-        x_cur, y_cur = henon(x_cur, y_cur, a, b)
-    print(f"{'='*60}")
-    
+        print(f"  Point {i}: ({x_cur:.10f}, {y_cur:.10f})")
+        x_cur, y_cur = henon(x_cur, y_cur, a, b) 
+    print(f"{'='*60}\n")   
     
     
 def plot_periodic_orbits(
@@ -368,6 +391,20 @@ def main():
         print(f"\nAnalyzing first period-3 orbit:")
         analyze_orbit(period3_orbits[0][0], period3_orbits[0][1], 3)
     
+    # Example 3: Find period-3 orbits
+    print("\n" + "─"*60)
+    print("EXAMPLE 4: Finding period-4 orbits")
+    print("─"*60)
+    
+    period4_orbits = find_periodic_orbits_grid(
+        period=4,
+        grid_size=50,
+    )
+    
+    if period4_orbits:
+        print(f"\nAnalyzing first period-3 orbit:")
+        analyze_orbit(period4_orbits[0][0], period4_orbits[0][1], 4)
+    
     # Visualization
     print("\n" + "─"*60)
     print("VISUALIZATION")
@@ -384,6 +421,8 @@ def main():
     if period3_orbits:
         print("Plotting period-3 orbits...")
         plot_periodic_orbits(period3_orbits, 3)
+    if period4_orbits:
+        plot_periodic_orbits(period4_orbits, 4)
     
     print("\n" + "="*60)
     print("DEMONSTRATION COMPLETE")
