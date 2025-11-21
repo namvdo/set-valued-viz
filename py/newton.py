@@ -300,49 +300,60 @@ def analyze_orbit(
 def plot_periodic_orbits(
     orbits: List[Tuple[float, float]],
     period: int,
-    a: float =A,
-    b: float =B,
+    a: float = A,
+    b: float = B,
     show_attractor: bool = True
 ) -> None:
-    fig, ax = plt.subplots(figsize=(10,8))
+    fig, ax = plt.subplots(figsize=(10, 8))
     
     if show_attractor:
         x, y = 0.1, 0.1
         xs, ys = [], []
         for _ in range(10000):
-           x, y = henon(x, y, a, b)
-           if _ > 100:
-               xs.append(x)
-               ys.append(y)
-        ax.scatter(xs, ys, s=0.1,c='lightgray',alpha=0.5,label='Attractor')
-        
+            x, y = henon(x, y, a, b)
+            if _ > 100:
+                xs.append(x)
+                ys.append(y)
+        ax.scatter(xs, ys, s=0.1, c='lightgray', alpha=0.5, label='Attractor')
+    
     colors = plt.cm.rainbow(np.linspace(0, 1, len(orbits)))
     
     for idx, (x0, y0) in enumerate(orbits):
-        xs, ys = [x0], [y0]
+        # Compute all points in the periodic orbit
+        xs, ys = [], []
         x, y = x0, y0
-        for _ in range(period-1):
-            x, y = henon(x, y, a,b)
+        for i in range(period):
             xs.append(x)
             ys.append(y)
-        # Plot orbit
-        ax.plot(xs, ys, 'o-', color=colors[idx], markersize=8, 
-                linewidth=2, label=f'Orbit {idx+1}')
+            x, y = henon(x, y, a, b)
         
-        # Mark starting point
+        ax.scatter(xs, ys, s=100, c=[colors[idx]], marker='o', 
+                  edgecolors='black', linewidths=2, 
+                  label=f'Orbit {idx+1}', zorder=5)
+        
+        xs_cycle = xs + [xs[0]]  # Close the loop
+        ys_cycle = ys + [ys[0]]
+        ax.plot(xs_cycle, ys_cycle, 'o-', color=colors[idx], 
+               linewidth=2, markersize=8, alpha=0.7)
+        
         ax.plot(x0, y0, 's', color=colors[idx], markersize=12, 
-                markeredgecolor='black', markeredgewidth=2)
+               markeredgecolor='black', markeredgewidth=2, zorder=6)
+        
+        for i, (px, py) in enumerate(zip(xs, ys)):
+            ax.annotate(f'{i}', (px, py), 
+                       xytext=(5, 5), textcoords='offset points',
+                       fontsize=8, fontweight='bold')
+    
     ax.set_xlabel('x', fontsize=12)
     ax.set_ylabel('y', fontsize=12)
     ax.set_title(f'Period-{period} Orbits of Hénon Map (a={a}, b={b})', 
-                 fontsize=14, fontweight='bold')
+                fontsize=14, fontweight='bold')
     ax.grid(True, alpha=0.3)
     ax.legend(loc='best')
     ax.set_aspect('equal', adjustable='box')
     
     plt.tight_layout()
-    plt.show()
-    
+    plt.show()   
     
 def main():
     import warnings 
