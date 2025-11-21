@@ -222,43 +222,44 @@ def find_periodic_orbits_grid(
     dup_tol: float = DUPLICATE_TOL,
 ) -> List[Tuple[float, float]]:
     """
-    Search for periodic orbits using a grid of initial guesses
+    Search for periodic orbits using a grid of initial guesses.
+    Returns one representative point per orbit (not all points in each orbit).
     """
     found_orbits = []
-    attempts = 0
-    success = 0  
     
     x_min, x_max = x_range
     y_min, y_max = y_range
 
     for i in range(grid_size):
         for j in range(grid_size):
-            attempts += 1
             x0 = x_min + (x_max - x_min) * i / (grid_size - 1)
             y0 = y_min + (y_max - y_min) * j / (grid_size - 1)
             
-            # try newton's method from this point 
             x, y, converged, iters = newton_periodic_orbit(x0, y0, period, a, b) 
             if not converged:
                 continue
             
             if not verify_periodic_orbit(x, y, period, a, b):
                 continue
-                
-            # check if this is a new orbit, not a duplicate
-            is_new = True
+            
+            is_new_orbit = True
+            
             for (x_old, y_old) in found_orbits:
-                dist = np.sqrt((x - x_old)**2 + (y - y_old)**2)
-                if dist < dup_tol:
-                    is_new = False
-                    break
-                    
-            if is_new:
-                found_orbits.append((x, y))
-                success += 1
+                x_test, y_test = x_old, y_old
+                for k in range(period):
+                    dist = np.sqrt((x - x_test)**2 + (y - y_test)**2)
+                    if dist < dup_tol:
+                        is_new_orbit = False
+                        break
+                    x_test, y_test = henon(x_test, y_test, a, b)
                 
-    return found_orbits        
-
+                if not is_new_orbit:
+                    break
+            
+            if is_new_orbit:
+                found_orbits.append((x, y))
+                
+    return found_orbits
 
 def analyze_orbit(
     x: float,
