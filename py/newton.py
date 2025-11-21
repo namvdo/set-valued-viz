@@ -265,11 +265,11 @@ def find_periodic_orbits_grid(
     return found_orbits
 
 def analyze_orbit(
-    x:float,
-    y:float,
-    period:int,
-    a:float=A,
-    b:float=B
+    x: float,
+    y: float,
+    period: int,
+    a: float = A,
+    b: float = B
 ) -> None:
     print(f"\n{'='*60}")
     print(f"PERIODIC ORBIT ANALYSIS")
@@ -291,8 +291,14 @@ def analyze_orbit(
     x_cur, y_cur = x, y
     for i in range(period): 
         print(f"  Point {i}: ({x_cur:.10f}, {y_cur:.10f})")
-        x_cur, y_cur = henon(x_cur, y_cur, a, b) 
-    print(f"{'='*60}\n")   
+        x_cur, y_cur = henon(x_cur, y_cur, a, b)
+    
+    print(f"  Point {period} (returns to start): ({x_cur:.10f}, {y_cur:.10f})")
+    
+    dist = np.sqrt((x_cur - x)**2 + (y_cur - y)**2)
+    print(f"  Distance from Point 0: {dist:.2e}")
+    
+    print(f"{'='*60}\n")
     
     
 def plot_periodic_orbits(
