@@ -1,7 +1,7 @@
 from typing import Tuple, List, Optional
 import numpy as np 
 from scipy.linalg import solve, norm
-import matplotlib as plt
+import matplotlib.pyplot as plt
 
 # TODO: Implement Newton's method for multivariate functions start with those initial values
 (x0,y0) = (0.6381939926271558578, -0.2120300331658224337)
@@ -95,12 +95,17 @@ def newton_periodic_orbit(
     x, y = x0, y0
     for iteration in range(max_iter):
         # Compute f^n(x, y)
+        if not np.isfinite(x) or not np.isfinite(y):
+            return None, None, False, iteration
         fx, fy = compute_n_iterate(x, y, period, a, b)
         
         # Compute F(x, y) = f^n(x, y) - (x, y)
         Fx = fx - x 
         Fy = fy - y 
         F = np.array([Fx, Fy])
+        
+        if not np.all(np.isfinite(F)):
+            return None, None, False, iteration
         
         # Check if we are already at the solution 
         residual = norm(F) 
@@ -109,6 +114,10 @@ def newton_periodic_orbit(
             return x, y, True, iteration
         
         J_fn = compute_jaccobian_n_iterate(x, y, period, a, b)
+
+        if not np.all(np.isfinite(J_fn)):
+            return None, None, False, iteration
+        
         
         # Compute Jaccobian of F(x, y) = f^n(x, y) - (x, y)
         # J_F = J_f^(n) - I 
@@ -120,7 +129,8 @@ def newton_periodic_orbit(
             delta = solve(J_F, -F)
         except np.linalg.LinAlgError:
             return None, None, False, iteration
-
+        if not np.all(np.isfinite(delta)):
+            return None, None, False, iteration
         x += delta[0]
         y += delta[1]
         
