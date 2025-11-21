@@ -1,6 +1,7 @@
 from typing import Tuple, List, Optional
 import numpy as np 
 from scipy.linalg import solve, norm
+import matplotlib as plt
 
 # TODO: Implement Newton's method for multivariate functions start with those initial values
 (x0,y0) = (0.6381939926271558578, -0.2120300331658224337)
@@ -259,6 +260,58 @@ def analyze_orbit(
         x_cur, y_cur = henon(x_cur, y_cur, a, b)
     print(f"{'='*60}")
     
+    
+    
+def plot_periodic_orbits(
+    orbits: List[Tuple[float, float]],
+    period: int,
+    a: float =A,
+    b: float =B,
+    show_attractor: bool = True
+) -> None:
+    fig, ax = plt.subplots(figsize=(10,8))
+    
+    if show_attractor:
+        x, y = 0.1, 0.1
+        xs, ys = [], []
+        for _ in range(10000):
+           x, y = henon(x, y, a, b)
+           if _ > 100:
+               xs.append(x)
+               ys.append(y)
+        ax.scatter(xs, ys, s=0.1,c='lightgray',alpha=0.5,label='Attractor')
+        
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(orbits)))
+    
+    for idx, (x0, y0) in enumerate(orbits):
+        xs, ys = [x0], [y0]
+        x, y = x0, y0
+        for _ in range(period-1):
+            x, y = henon(x, y, a,b)
+            xs.append(x)
+            ys.append(y)
+        # Plot orbit
+        ax.plot(xs, ys, 'o-', color=colors[idx], markersize=8, 
+                linewidth=2, label=f'Orbit {idx+1}')
+        
+        # Mark starting point
+        ax.plot(x0, y0, 's', color=colors[idx], markersize=12, 
+                markeredgecolor='black', markeredgewidth=2)
+    ax.set_xlabel('x', fontsize=12)
+    ax.set_ylabel('y', fontsize=12)
+    ax.set_title(f'Period-{period} Orbits of Hénon Map (a={a}, b={b})', 
+                 fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc='best')
+    ax.set_aspect('equal', adjustable='box')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    
+        
+               
+            
         
 
     
