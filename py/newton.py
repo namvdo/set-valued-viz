@@ -212,7 +212,6 @@ def classify_periodic_orbit(
         classification = "Center (marginally stable)"
     return classification, lambda1, lambda2
     
-        
 def find_periodic_orbits_grid(
     period: int,
     a: float = A,
@@ -227,7 +226,7 @@ def find_periodic_orbits_grid(
     """
     found_orbits = []
     attempts = 0
-    successs = 0
+    success = 0  
     
     x_min, x_max = x_range
     y_min, y_max = y_range
@@ -235,7 +234,7 @@ def find_periodic_orbits_grid(
     for i in range(grid_size):
         for j in range(grid_size):
             attempts += 1
-            x0 = x_min + (x_max - x_min) * i / (grid_size - 1) # (grid-1) is the gap size
+            x0 = x_min + (x_max - x_min) * i / (grid_size - 1)
             y0 = y_min + (y_max - y_min) * j / (grid_size - 1)
             
             # try newton's method from this point 
@@ -243,19 +242,23 @@ def find_periodic_orbits_grid(
             if not converged:
                 continue
             
-            if not verify_periodic_orbit(x,y,period, a,b):
+            if not verify_periodic_orbit(x, y, period, a, b):
                 continue
+                
             # check if this is a new orbit, not a duplicate
             is_new = True
-
             for (x_old, y_old) in found_orbits:
                 dist = np.sqrt((x - x_old)**2 + (y - y_old)**2)
                 if dist < dup_tol:
                     is_new = False
                     break
+                    
             if is_new:
                 found_orbits.append((x, y))
-    return found_orbits
+                success += 1
+                
+    return found_orbits        
+
 
 def analyze_orbit(
     x: float,
