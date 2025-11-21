@@ -139,8 +139,46 @@ def verify_periodic_orbit(
     dist = np.sqrt((x - x0)**2 + (y - y0)**2)
     return dist < tol 
 
+
+
+def classify_periodic_orbit(
+    x: float,
+    y: float,
+    period: int,
+    a: float = A,
+    b: float = B
+) -> Tuple[str, complex, complex]:
+    """
+    Classify the stabability of the periodic orbit using eigenvalues
+    For a periodic orbit, stability is determined by eigenvalues of J_f^n:
+    - Stable: |lambda1|, |lambda2| < 1
+    - Unstable: |lambda1|, |lambda2| > 1
+    - Saddle: One lambda < 1 and one lambda > 1
+    """
+    J = compute_jaccobian_n_iterate(x, y, period, a, b)
     
+    eigenvalues = np.linalg.eigvals(J)
+    lambda1, lambda2 = eigenvalues[0], eigenvalues[1]
     
+    # compute magnitudes 
+    mag1 = abs(lambda1)
+    mag2 = abs(lambda2)
+    
+    if mag1 < 1 and mag2 < 1:
+        if np.isreal(lambda1) and np.isreal(lambda2):
+            classfication = "Stable node"
+        else:
+            classification = "Stable spiral"
+    elif (mag1 < 1 and mag2) > 1 or (mag1 > 1 and mag2 < 1):
+        classification = "Saddle"
+    elif mag1 > 1 and mag2 > 1:
+        if np.isreal(mag1) and np.isreal(mag2):
+            classfication = "Unstable Node"
+        else:
+            classification = "Unstable spiral"
+    else: 
+        classification = "Center (marginally stable)"
+    return classification, lambda1, lambda2
     
         
     
