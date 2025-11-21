@@ -12,6 +12,10 @@ B = 0.3
 MAX_ITER = 100
 TOLERANCE = 1e-7
 VERIFICATION_TOLERANCE = 1e-8
+GRID_SIZE = 50
+X_MIN, X_MAX = -2.0, 2.0
+Y_MIN, Y_MAX = -2.0, 2.0
+DUPLICATE_TOL = 1e-6
 
 
 def henon(x: float, y: float, a: float = A, b: float = B) -> Tuple[float, float]:
@@ -181,8 +185,86 @@ def classify_periodic_orbit(
     return classification, lambda1, lambda2
     
         
+def find_periodic_orbits_grid(
+    period: int,
+    a: float = A,
+    b: float = B,
+    grid_size: int = GRID_SIZE,
+    x_range: Tuple[float, float] = (X_MIN, X_MAX),
+    y_range: Tuple[float, float] = (Y_MIN, Y_MAX),
+    dup_tol: float = DUPLICATE_TOL,
+) -> List[Tuple[float, float]]:
+    """
+    Search for periodic orbits using a grid of initial guesses
+    """
+    found_orbits = []
+    attempts = 0
+    successs = 0
+    
+    x_min, x_max = x_range
+    y_min, y_max = y_range
+
+    for i in range(grid_size):
+        for j in range(grid_size):
+            attempts += 1
+            x0 = x_min + (x_max - x_min) * i / (grid_size - 1) # (grid-1) is the gap size
+            y0 = y_min + (y_max - y_min) * j / (grid_size - 1)
+            
+            # try newton's method from this point 
+            x, y, converged, iters = newton_periodic_orbit(x0, y0, period, a, b) 
+            if not converged:
+                continue
+            
+            if not verify_periodic_orbit(x,y,period, a,b):
+                continue
+            # check if this is a new orbit, not a duplicate
+            is_new = True
+
+            for (x_old, y_old) in found_orbits:
+                dist = np.sqrt((x - x_old)**2 + (y - y_old)**2)
+                if dist < dup_tol:
+                    is_new = False
+                    break
+            if is_new:
+                found_orbits.append((x, y))
+    return found_orbits
+
+def analyze_orbit(
+    x:float,
+    y:float,
+    period:int,
+    a:float=A,
+    b:float=B
+) -> None:
+    print(f"\n{'='*60}")
+    print(f"PERIODIC ORBIT ANALYSIS")
+    print(f"{'='*60}")
+    print(f"Period: {period}")
+    print(f"Point: ({x:.10f}, {y:.10f})")
+
+    is_periodic = verify_periodic_orbit(x, y, period, a, b)
+    print(f"Verified: {is_periodic}")
+
+    # classify stability 
+    classification, lambda1, lambda2 = classify_periodic_orbit(x, y, period, a, b)
+    print(f"\nStability: {classification}")
+    print(f"Eigenvalues:")
+    print(f"  λ₁ = {lambda1:.6f}, |λ₁| = {abs(lambda1):.6f}")
+    print(f"  λ₂ = {lambda2:.6f}, |λ₂| = {abs(lambda2):.6f}")
+
+    print(f"\nFull orbits (all {period} points)")
+    x_cur, y_cur = x, y
+    for i in range(period): 
+        print(f"Point: {i}: ({x_cur:.10f}, {y_cur:.10f})")
+        x_cur, y_cur = henon(x_cur, y_cur, a, b)
+    print(f"{'='*60}")
+    
+        
+
+    
     
 
+            
 
 
 
