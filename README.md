@@ -32,8 +32,10 @@ Rather than tracking every possible point within the noise ball $B_\epsilon(f(x)
 | **Parameter Space Exploration** | 🔄 Planned | Visual indicators for bifurcation regions in $(a, b, \epsilon)$ space |
 
 ![Set-valued dynamical system with additive bounded noise Visualization](./images/algo1_viz.png)
-## **Getting Started**
 
+### An example of a 4-periodic point found with A = 1.4 and B = 0.3
+![4-periodic point](./images/4_periodic_point.png)
+## **Getting Started**
 ### **1. Clone the Repository**
 
 ```bash
