@@ -309,12 +309,80 @@ def plot_periodic_orbits(
     plt.show()
     
     
-        
-               
-            
-        
-
+def main():
+    print("\n" + "="*60)
+    print("HÉNON MAP PERIODIC ORBIT FINDER")
+    print("="*60)
+    print(f"Parameters: a = {A}, b = {B}")
+    print("="*60 + "\n")
     
+    # Example 1: Find period-1 orbits (fixed points)
+    print("\n" + "─"*60)
+    print("EXAMPLE 1: Finding period-1 orbits (fixed points)")
+    print("─"*60)
+    
+    period1_orbits = find_periodic_orbits_grid(
+        period=1, 
+        grid_size=30,
+    )
+    
+    if period1_orbits:
+        print(f"\nAnalyzing first period-1 orbit:")
+        analyze_orbit(period1_orbits[0][0], period1_orbits[0][1], 1)
+    
+    # Example 2: Find period-2 orbits
+    print("\n" + "─"*60)
+    print("EXAMPLE 2: Finding period-2 orbits")
+    print("─"*60)
+    
+    period2_orbits = find_periodic_orbits_grid(
+        period=2,
+        grid_size=40,
+    )
+    
+    if period2_orbits:
+        print(f"\nAnalyzing first period-2 orbit:")
+        analyze_orbit(period2_orbits[0][0], period2_orbits[0][1], 2)
+    
+    # Example 3: Find period-3 orbits
+    print("\n" + "─"*60)
+    print("EXAMPLE 3: Finding period-3 orbits")
+    print("─"*60)
+    
+    period3_orbits = find_periodic_orbits_grid(
+        period=3,
+        grid_size=50,
+    )
+    
+    if period3_orbits:
+        print(f"\nAnalyzing first period-3 orbit:")
+        analyze_orbit(period3_orbits[0][0], period3_orbits[0][1], 3)
+    
+    # Visualization
+    print("\n" + "─"*60)
+    print("VISUALIZATION")
+    print("─"*60)
+    
+    if period1_orbits:
+        print("Plotting period-1 orbits...")
+        plot_periodic_orbits(period1_orbits, 1)
+    
+    if period2_orbits:
+        print("Plotting period-2 orbits...")
+        plot_periodic_orbits(period2_orbits, 2)
+    
+    if period3_orbits:
+        print("Plotting period-3 orbits...")
+        plot_periodic_orbits(period3_orbits, 3)
+    
+    print("\n" + "="*60)
+    print("DEMONSTRATION COMPLETE")
+    print("="*60 + "\n")
+
+
+if __name__ == '__main__':
+    main()
+     
     
 
             
