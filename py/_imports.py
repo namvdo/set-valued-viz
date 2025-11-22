@@ -146,7 +146,7 @@ class ImageDrawing:
         self.objects.clear()
         self.colors.clear()
 
-    def _update_tl_br(self, tl, br):
+    def update_tl_br(self, tl, br):
         if self.tl is None: self.tl = tl
         else: self.tl = np.min([tl,self.tl], axis=0)
         if self.br is None: self.br = br
@@ -154,7 +154,7 @@ class ImageDrawing:
         
     def points(self, points, color):
         points = np.asarray(points)
-        self._update_tl_br(*bounding_box(points))
+        self.update_tl_br(*bounding_box(points))
         self.objects.append(points)
         self.colors.append(color)
     
@@ -162,8 +162,8 @@ class ImageDrawing:
         obj = self.LinesObj()
         obj.starts = np.asarray(starts)
         obj.ends = np.asarray(ends)
-        self._update_tl_br(*bounding_box(obj.starts))
-        self._update_tl_br(*bounding_box(obj.ends))
+        self.update_tl_br(*bounding_box(obj.starts))
+        self.update_tl_br(*bounding_box(obj.ends))
         self.objects.append(obj)
         self.colors.append(color)
 
@@ -172,7 +172,7 @@ class ImageDrawing:
         obj.center = np.asarray(center)
         obj.radius = radius
         obj.inside = inside
-        self._update_tl_br(obj.center-radius, obj.center+radius)
+        self.update_tl_br(obj.center-radius, obj.center+radius)
         self.objects.append(obj)
         self.colors.append(color)
 
@@ -243,20 +243,14 @@ class ImageDrawing:
                         draw_circle_on_image(x[1], x[2], color)
                     case 2: # grid
                         grid_lines_n = int(np.divide(self.br-self.tl, x[2]).max())+1
+                        offset = np.divide(x[1]-self.tl, x[2]).astype(np.int32)
                         for i in range(grid_lines_n):
-                            target = (x[1]%x[2])+x[2]*i+self.tl
+                            i -= offset
+                            target = x[2]*i
                             target = pixelize_points(target, self.tl, self.br, resolution)
                             target = np.clip(target, a_min=0, a_max=np.subtract(image.shape[:2], 1))
                             image[target[0],:] = color
                             image[:,target[1]] = color
-                        
-##                        grid_lines_n = int(np.divide(image.shape, x[2]).max())
-##                        for i in range(grid_lines_n+1):
-##                            i = i-x[1]//x[2]
-##                            target = np.clip(x[1]+x[2]*i, a_min=0, a_max=np.subtract(image.shape[:2], 1))
-##                            image[target[0],:] = color
-##                            image[:,target[1]] = color
-                            
             else: # points
                 image[x[:,0],x[:,1]] = color
         
