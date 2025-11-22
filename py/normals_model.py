@@ -99,16 +99,14 @@ class ModelConfiguration(ModelBase):
 
     def _gap_detection_loops(self):
         for i in range(self.precision_increase_attempts):
-            nogaps = self._too_dense_mask()
-            if nogaps.any(): self._remove_items_with_mask(nogaps)
             gaps = self._too_sparse_mask()
             if gaps.any(): self._increase_precision(gaps)
-            elif not nogaps.any(): break
+            else: break
         
-##        for i in range(self.precision_decrease_attempts):
-##            nogaps = self._too_dense_mask()
-##            if nogaps.any(): self._remove_items_with_mask(nogaps)
-##            else: break
+        for i in range(self.precision_decrease_attempts):
+            nogaps = self._too_dense_mask()
+            if nogaps.any(): self._remove_items_with_mask(nogaps)
+            else: break
 
         inside = self._points_inside_the_boundary_mask()
         if not inside.all() and inside.any():
@@ -284,40 +282,40 @@ class ModelConfiguration(ModelBase):
             print("\ndrawing step", self._timestep, f"({resolution} px)")
             print("points ->", self._radians.shape[0])
 
+        
         #
+        black = np.array([0.,0.,0.,1.])
+        red = np.array([1.,0.,0.,1.])
+        green = np.array([0.,1.,0.,1.])
+        blue = np.array([0.,0.,1.,1.])
+        
         draw_prev_points = 0
         draw_prev_normals = 0
         draw_boundary_lines = 1
         draw_outer_normals = 0
         draw_inner_normals = 1
         
-        radian_bar_height = 10
         #
         
-        drawing = ImageDrawing()
-        
-        black = np.array([0.,0.,0.,1.])
-        red = np.array([1.,0.,0.,1.])
-        green = np.array([0.,1.,0.,1.])
-        blue = np.array([0.,0.,1.,1.])
+        drawing = ImageDrawing(*np.ones(4))
 
-        drawing.circle((0,0), 1, red)
-        drawing.grid((0,.31), .25, black)
+        drawing.circle((0,0), 1, *red)
+        drawing.grid((0,.31), .25, *black)
         
         if draw_boundary_lines:
-            drawing.lines(*self.get_boundary_lines(), green)
+            drawing.lines(*self.get_boundary_lines(), *green)
         
         if draw_inner_normals:
-            drawing.lines(*self.get_inner_normals(), black)
+            drawing.lines(*self.get_inner_normals(), *black)
         if draw_outer_normals:
-            drawing.lines(*self.get_outer_normals(), black)
+            drawing.lines(*self.get_outer_normals(), *black)
         
         if draw_prev_points:
-            drawing.points(self._prev_points, blue)
+            drawing.points(self._prev_points, *blue)
             if draw_prev_normals:
-                drawing.lines(*self.get_prev_inner_normals(), black)
+                drawing.lines(*self.get_prev_inner_normals(), *black)
         
-        drawing.points(self._points, red)
+        drawing.points(self._points, *red)
         
         image = drawing.draw(resolution)
         return image, drawing.tl, drawing.br
@@ -328,12 +326,14 @@ if __name__ == "__main__":
     config.start_point.y = 0
     config.epsilon = 0.0625
     config.function.set_constants(a=0.6, b=0.3)
+
+    print(config.function)
     
 ##    config.function.fx.string = "x/2+(1-y)/3*x/4"
 ##    config.function.fy.string = "y/3+x/3"  # 
     
-    config.function.fx.string = "x/3+cos(y)**2"
-    config.function.fy.string = "y/2+sin(x)**2"
+##    config.function.fx.string = "x/3+cos(y)**2"
+##    config.function.fy.string = "y/2+sin(x)**2"
     
 ##    config.function.fx.string = "x/2-y/3"
 ##    config.function.fy.string = "y/2+x/5"

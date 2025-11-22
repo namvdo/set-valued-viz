@@ -139,7 +139,7 @@ def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, 
     subframe = nice_frame(frame, side=side)
     if text:
         label = nice_label(subframe, text=text, width=len(text), anchor="w") # 
-    field = nice_field(subframe, width=width, update_handler=update_handler)
+    field = nice_field(subframe, text=text, width=width, update_handler=update_handler)
     return field
 
 def nice_RGB_selector(frame, color, on_update=None):
@@ -241,14 +241,17 @@ class ModelInstance():
         text += f"\nfy = {self.model.function.fy}"
         text += f"\nstart = {self.model.start_point}"
         nice_label(f, text=text, side=tk.TOP, anchor="nw", justify="left")
-        
-        self.__init_parameters_frame(frame, on_update=None)
+
+        def _update():
+            print(self.model.function)
+        self.__init_parameters_frame(frame, on_update=_update)
         
         f = nice_frame(frame, anchor="nw", side=tk.TOP)
         set_padding(f)
         def _update(labeltext, string):
             value = read_number_from_string(string)
-            if value is not None: self.model.epsilon = abs(value)
+            if value is not None:
+                self.model.epsilon = abs(value)
         field = nice_labeled_field(f, "epsilon", width=8, update_handler=_update)
         field.insert(0, str(self.model.epsilon))
         
@@ -341,7 +344,7 @@ class ModelInstance():
                     if value is not None:
                         self.model.function.constants[labeltext] = value
                         if on_update is not None: on_update()
-                field = nice_labeled_field(f, k, update_handler=_update)
+                field = nice_labeled_field(f, f"{k}", update_handler=_update)
                 v = self.model.function.constants.get(k)
                 if v is not None: field.insert(0, str(v))
 
