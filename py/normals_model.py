@@ -40,11 +40,11 @@ class ModelConfiguration(ModelBase):
             self._process(self._points, self._prev_points, self._normals, self._prev_normals, catch_up_amount)
 
     
-    def _gap_mask(self):
+    def _too_sparse_mask(self):
         dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
         return dist>self.epsilon/8
 
-    def _nogap_mask(self):
+    def _too_dense_mask(self):
         dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
         mask = dist<self.epsilon/16
         mask = repeat_mask_ones_until_divisible(mask, 2)
@@ -99,16 +99,16 @@ class ModelConfiguration(ModelBase):
 
     def _gap_detection_loops(self):
         for i in range(self.precision_increase_attempts):
-            gaps = self._gap_mask()
-            if gaps.any():
-                self._increase_precision(gaps)
-            else: break
+            nogaps = self._too_dense_mask()
+            if nogaps.any(): self._remove_items_with_mask(nogaps)
+            gaps = self._too_sparse_mask()
+            if gaps.any(): self._increase_precision(gaps)
+            elif not nogaps.any(): break
         
-        for i in range(self.precision_decrease_attempts):
-            nogaps = self._nogap_mask()
-            if nogaps.any():
-                self._remove_items_with_mask(nogaps)
-            else: break
+##        for i in range(self.precision_decrease_attempts):
+##            nogaps = self._too_dense_mask()
+##            if nogaps.any(): self._remove_items_with_mask(nogaps)
+##            else: break
 
         inside = self._points_inside_the_boundary_mask()
         if not inside.all() and inside.any():

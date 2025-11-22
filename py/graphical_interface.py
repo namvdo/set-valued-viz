@@ -1,6 +1,6 @@
 from _imports import *
 from __gui import *
-##import PIL
+import PIL
 
 from normals_model import ModelConfiguration as NormalsModel
 
@@ -19,7 +19,7 @@ def color_as_hex(color):
     return "#"+"".join([hex(i%256)[2:].rjust(2, "0") for i in color[:3]])
 ##print(color_as_hex([12, 200, 255]))
 
-##def array_to_image(frame, array):
+##def array_to_imagetk(frame, array):
 ##    return PIL.ImageTk.PhotoImage(PIL.Image.fromarray(array.swapaxes(0, 1)[::-1]), master=frame)
 
 def read_number_from_string(string):
@@ -62,11 +62,12 @@ def set_passive_colors(obj):
 def set_passive_colors_inverted(obj):
     set_colors(obj, PASSIVE_BG_COLOR, PASSIVE_FG_COLOR)
 
-def set_hover_colors(obj, on_enter=set_active_colors, on_leave=set_passive_colors, inverted_direction=False):
+def set_hover_colors(obj, on_enter=set_active_colors, on_leave=set_passive_colors):
     def _enter(event): on_enter(event.widget)
     def _leave(event): on_leave(event.widget)
-    obj.bind("<Enter>", _leave if inverted_direction else _enter)
-    obj.bind("<Leave>", _enter if inverted_direction else _leave)
+    obj.bind("<Enter>", _enter)
+    obj.bind("<Leave>", _leave)
+    on_leave(obj)
 
 def nice_window(title, configure_handler=None, on_destroy=None):
     win = tk.Tk()
@@ -123,7 +124,6 @@ def nice_field(*args, text="", side=tk.LEFT, update_handler=None, **kwargs):
     if update_handler is not None:
         def _event_handle(event): update_handler(text, field.get())
         field.bind("<KeyRelease>", _event_handle)
-    set_active_colors(field)
     set_hover_colors(field, set_active_colors_inverted, set_active_colors)
     return field
 
@@ -131,7 +131,6 @@ def nice_field(*args, text="", side=tk.LEFT, update_handler=None, **kwargs):
 def nice_button(frame, *args, side=tk.TOP, **kwargs):
     but = tk.Button(frame, *args, **kwargs)
     but.pack(side=tk.TOP, fill=tk.BOTH)
-    set_passive_colors(but)
     set_hover_colors(but)
     return but
     
@@ -318,7 +317,9 @@ class ModelInstance():
         f = nice_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
         set_padding(f)
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        b = nice_button(ff, text="Matplotlib Figure", command=self.draw)
+        b = nice_button(ff, text="Matplotlib Figure", command=self.refresh_figure)
+        ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
+        b = nice_button(ff, text="Save PNG", command=self.save_png)
         #
 
         # color selector test
@@ -344,12 +345,12 @@ class ModelInstance():
                 v = self.model.function.constants.get(k)
                 if v is not None: field.insert(0, str(v))
 
-
     def draw(self):
         if not self.model.can_draw(): self.model.process(self.step)
         
         #
         transparent = np.zeros(4)
+        white = np.ones(4)
         black = np.array([0.,0.,0.,1.])
         red = np.array([1.,0.,0.,1.])
         green = np.array([0.,1.,0.,1.])
@@ -362,38 +363,47 @@ class ModelInstance():
         draw_inner_normals = 1
         #
         
-        drawing = ImageDrawing()
+        drawing = ImageDrawing(*white)
         
 ##        drawing.circle((0,0), 1, red)
-        drawing.grid((0,0), .25, black/2)
+        drawing.grid((0,0), .1, *((green+blue)/2))
         
         if draw_boundary_lines:
-            drawing.lines(*self.model.get_boundary_lines(), green)
+            drawing.lines(*self.model.get_boundary_lines(), *green)
         
         if draw_inner_normals:
-            drawing.lines(*self.model.get_inner_normals(), black)
+            drawing.lines(*self.model.get_inner_normals(), *(black/2))
         if draw_outer_normals:
-            drawing.lines(*self.model.get_outer_normals(), black)
+            drawing.lines(*self.model.get_outer_normals(), *(black/2))
         
         if draw_prev_points:
-            drawing.points(self.model._prev_points, blue)
+            drawing.points(self.model._prev_points, *blue)
             if draw_prev_normals:
-                drawing.lines(*self.model.get_prev_inner_normals(), black)
+                drawing.lines(*self.model.get_prev_inner_normals(), *black)
         
-        drawing.points(self.model._points, red)
-
+        drawing.points(self.model._points, *red)
+        
+        
         if self.min_x is not None: drawing.tl[0] = min(drawing.tl[0], self.min_x)
         if self.max_x is not None: drawing.br[0] = max(drawing.br[0], self.max_x)
         if self.min_y is not None: drawing.tl[1] = min(drawing.tl[1], self.min_y)
         if self.max_y is not None: drawing.br[1] = max(drawing.br[1], self.max_y)
         
         image = drawing.draw(self.resolution)
-        shape = image.shape
-        image = np.flip(image.swapaxes(0, 1), axis=0)
+        return np.flip(image.swapaxes(0, 1), axis=0), drawing.tl, drawing.br
+        
+    def save_png(self):
+        path = os.path.join(SAVEDIR, "test.png")
+        makedirs(path)
+        image, _, _ = self.draw()
+        PIL.Image.fromarray(image).save(path, optimize=True)
+        
+    def refresh_figure(self):
+        image, tl, br = self.draw()
         
         self.subplot.clear()
-        self.subplot.imshow(image, extent=(drawing.tl[0], drawing.br[0], drawing.tl[1], drawing.br[1]))
-        self.subplot.set_title(f"step: {self.step}, shape: {shape}")
+        self.subplot.imshow(image, extent=(tl[0], br[0], tl[1], br[1]))
+        self.subplot.set_title(f"step: {self.step}, shape: {image.shape}")
         self.canvas.draw()
 
 class Interface():

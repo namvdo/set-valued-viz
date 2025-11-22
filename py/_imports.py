@@ -136,10 +136,13 @@ class ImageDrawing:
     tl = None
     br = None
     
-    def __init__(self, channels=4):
-        self.channels = channels
+    def __init__(self, *args, **kwargs):
+        self.background = self._color_check(*args, **kwargs)
         self.objects = []
-        self.colors = []
+        self.colors = [] # list of RGBA color arrays
+
+    def _color_check(self, r=0, g=0, b=0, a=1, **kwargs):
+        return np.asarray([r,g,b,a])
 
     def clear(self):
         self.tl = self.br = None
@@ -152,36 +155,36 @@ class ImageDrawing:
         if self.br is None: self.br = br
         else: self.br = np.max([br,self.br], axis=0)
         
-    def points(self, points, color):
+    def points(self, points, *args, **kwargs):
         points = np.asarray(points)
         self.update_tl_br(*bounding_box(points))
         self.objects.append(points)
-        self.colors.append(color)
+        self.colors.append(self._color_check(*args, **kwargs))
     
-    def lines(self, starts, ends, color):
+    def lines(self, starts, ends, *args, **kwargs):
         obj = self.LinesObj()
         obj.starts = np.asarray(starts)
         obj.ends = np.asarray(ends)
         self.update_tl_br(*bounding_box(obj.starts))
         self.update_tl_br(*bounding_box(obj.ends))
         self.objects.append(obj)
-        self.colors.append(color)
+        self.colors.append(self._color_check(*args, **kwargs))
 
-    def circle(self, center, radius, color, inside=0):
+    def circle(self, center, radius, *args, inside=0, **kwargs):
         obj = self.CircleObj()
         obj.center = np.asarray(center)
         obj.radius = radius
         obj.inside = inside
         self.update_tl_br(obj.center-radius, obj.center+radius)
         self.objects.append(obj)
-        self.colors.append(color)
+        self.colors.append(self._color_check(*args, **kwargs))
 
-    def grid(self, center, size, color):
+    def grid(self, center, size, *args, **kwargs):
         obj = self.GridObj()
         obj.center = np.asarray(center)
         obj.size = size
         self.objects.append(obj)
-        self.colors.append(color)
+        self.colors.append(self._color_check(*args, **kwargs))
 
     def draw(self, resolution:int):
         pixels = []
@@ -198,8 +201,8 @@ class ImageDrawing:
                 pixels.append((1, c, m))
 
             elif isinstance(x, self.GridObj):
-                c = x.center#pixelize_points(x.center, self.tl, self.br, resolution)
-                s = x.size#pixelize_distances(x.size, self.tl, self.br, resolution)
+                c = x.center
+                s = x.size
                 pixels.append((2, c, s))
                 
             elif type(x)==np.ndarray:
@@ -207,7 +210,14 @@ class ImageDrawing:
         
         limits = pixelize_points(self.br, self.tl, self.br, resolution)
         
-        image = np.zeros((*image_shape(resolution, *limits), self.channels))
+        image = np.zeros((*image_shape(resolution, *limits), len(self.background)))
+        image[:,:] = self.background
+
+        def color_blend_on_array(array, color):
+            array[:,:3] = color[:3]*color[3] + array[:,:3]*array[:,3:4]*(1-color[3])
+            array[:,3] = 1-(1-array[:,3])*(1-color[3])
+            array[:,:3] /= array[:,3:4]
+            return array
         
         masks = {}
         def draw_line_on_image(start, end, color):
@@ -223,14 +233,15 @@ class ImageDrawing:
             tl = np.min([start,end], axis=0)
             x_slice = slice(tl[0], tl[0]+mask.shape[0])
             y_slice = slice(tl[1], tl[1]+mask.shape[1])
-            image[x_slice, y_slice][mask] = color
+            
+            image[x_slice, y_slice][mask] = color_blend_on_array(image[x_slice, y_slice][mask], color)
             return True
 
         def draw_circle_on_image(center, mask, color):
             r = mask.shape[0]//2
             x_slice = slice(center[0]-r, center[0]+r+1)
             y_slice = slice(center[1]-r, center[1]+r+1)
-            image[x_slice, y_slice][mask] = color
+            image[x_slice, y_slice][mask] = color_blend_on_array(image[x_slice, y_slice][mask], color)
         
         for index,x in enumerate(pixels):
             color = self.colors[index]
@@ -242,18 +253,20 @@ class ImageDrawing:
                     case 1: # circle
                         draw_circle_on_image(x[1], x[2], color)
                     case 2: # grid
-                        grid_lines_n = int(np.divide(self.br-self.tl, x[2]).max())+1
+                        grid_lines_n = int(np.divide(self.br-self.tl, x[2]).max())+2
                         offset = np.divide(x[1]-self.tl, x[2]).astype(np.int32)
                         for i in range(grid_lines_n):
                             i -= offset
                             target = x[2]*i
                             target = pixelize_points(target, self.tl, self.br, resolution)
                             target = np.clip(target, a_min=0, a_max=np.subtract(image.shape[:2], 1))
-                            image[target[0],:] = color
-                            image[:,target[1]] = color
+
+                            color_blend_on_array(image[target[0],:], color)
+                            color_blend_on_array(image[:,target[1]], color)
             else: # points
-                image[x[:,0],x[:,1]] = color
-        
+                image[x[:,0],x[:,1]] = color_blend_on_array(image[x[:,0],x[:,1]], color)
+
+##        print(image.min(), image.max())
         if image.any():
             image /= image.max()
             image *= 255
