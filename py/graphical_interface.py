@@ -1,6 +1,6 @@
 from _imports import *
 from __gui import *
-import PIL
+##import PIL
 
 from normals_model import ModelConfiguration as NormalsModel
 
@@ -15,8 +15,12 @@ ACTIVE_BG_COLOR = "#000000"
 PASSIVE_FG_COLOR = "#CCCCCC"
 PASSIVE_BG_COLOR = "#262626"
 
-def array_to_image(frame, array):
-    return PIL.ImageTk.PhotoImage(PIL.Image.fromarray(array.swapaxes(0, 1)[::-1]), master=frame)
+def color_as_hex(color):
+    return "#"+"".join([hex(i%256)[2:].rjust(2, "0") for i in color[:3]])
+##print(color_as_hex([12, 200, 255]))
+
+##def array_to_image(frame, array):
+##    return PIL.ImageTk.PhotoImage(PIL.Image.fromarray(array.swapaxes(0, 1)[::-1]), master=frame)
 
 def read_number_from_string(string):
     if m:=re.match(RE_NUMBER, string):
@@ -139,6 +143,60 @@ def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, 
     field = nice_field(subframe, width=width, update_handler=update_handler)
     return field
 
+def nice_RGB_selector(frame, color, on_update=None):
+    f = nice_frame(frame)
+    
+    l = nice_label(f, text=" ")
+    def _update_preview_color():
+        hexcolor = color_as_hex(color)
+        set_colors(l, hexcolor, hexcolor)
+    _update_preview_color()
+    
+    def _update(labeltext, string):
+        value = read_number_from_string(string)
+        if value is not None: color[0] = int(value)%256
+        else: color[0] = 0
+        if on_update is not None: on_update()
+        _update_preview_color()
+    
+    field = nice_field(f, text="R", width=3, update_handler=_update)
+    field.insert(0, str(color[0]))
+    
+    def _update(labeltext, string):
+        value = read_number_from_string(string)
+        if value is not None: color[1] = int(value)%256
+        else: color[1] = 0
+        if on_update is not None: on_update()
+        _update_preview_color()
+        
+    field = nice_field(f, text="G", width=3, update_handler=_update)
+    field.insert(0, str(color[1]))
+    
+    def _update(labeltext, string):
+        value = read_number_from_string(string)
+        if value is not None: color[2] = int(value)%256
+        else: color[2] = 0
+        if on_update is not None: on_update()
+        _update_preview_color()
+        
+    field = nice_field(f, text="B", width=3, update_handler=_update)
+    field.insert(0, str(color[2]))
+    
+    return f
+
+def nice_RGBA_selector(frame, color, on_update=None):
+    f = nice_RGB_selector(frame, color, on_update)
+    
+    def _update(labeltext, string):
+        value = read_number_from_string(string)
+        if value is not None: color[3] = int(value)%256
+        else: color[3] = 0
+        if on_update is not None: on_update()
+    field = nice_field(f, text="A", width=3, update_handler=_update)
+    field.insert(0, str(color[3]))
+    
+    return color
+
 
 class ModelInstance():
     key = None
@@ -208,6 +266,7 @@ class ModelInstance():
     def __init_figure_drawing_panel(self, win):
         frame = nice_frame(win, anchor="nw")
         #
+        
         nice_label(frame, text="domain limits", anchor="c", side=tk.TOP)
         f = nice_frame(frame, anchor="c", side=tk.TOP)
         set_padding(f)
@@ -221,7 +280,7 @@ class ModelInstance():
             else: self.min_x = None
         field = nice_field(ff, side=tk.LEFT, width=5, update_handler=_update)
         
-        nice_label(ff, text="...", side=tk.LEFT)
+        nice_label(ff, text=" ... ", side=tk.LEFT)
         
         def _update(labeltext, string):
             value = read_number_from_string(string)
@@ -238,7 +297,7 @@ class ModelInstance():
             else: self.min_y = None
         field = nice_field(ff, side=tk.LEFT, width=5, update_handler=_update)
         
-        nice_label(ff, text="...", side=tk.LEFT)
+        nice_label(ff, text=" ... ", side=tk.LEFT)
         
         def _update(labeltext, string):
             value = read_number_from_string(string)
@@ -260,6 +319,13 @@ class ModelInstance():
         set_padding(f)
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
         b = nice_button(ff, text="Matplotlib Figure", command=self.draw)
+        #
+
+        # color selector test
+        color = [255,0,0,0]
+        f = nice_frame(frame, side=tk.TOP)
+        nice_label(f, text="test", side=tk.LEFT)
+        nice_RGBA_selector(f, color)
         #
 
     def __init_parameters_frame(self, frame, on_update=None):
@@ -322,10 +388,12 @@ class ModelInstance():
         if self.max_y is not None: drawing.br[1] = max(drawing.br[1], self.max_y)
         
         image = drawing.draw(self.resolution)
+        shape = image.shape
         image = np.flip(image.swapaxes(0, 1), axis=0)
         
         self.subplot.clear()
         self.subplot.imshow(image, extent=(drawing.tl[0], drawing.br[0], drawing.tl[1], drawing.br[1]))
+        self.subplot.set_title(f"step: {self.step}, shape: {shape}")
         self.canvas.draw()
 
 class Interface():
