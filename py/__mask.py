@@ -148,6 +148,10 @@ def pixelize_points(points, topleft, bottomright, resolution):
     pixels += .5
     return pixels.astype(np.int32)
 
+def pixelize_distances(values, topleft, bottomright, resolution):
+    pixels = np.divide(values, (bottomright-topleft).max())
+    pixels *= resolution-1
+    return pixels.astype(np.int32)
 
 
 def circle_mask(r, inner=0, border=0):

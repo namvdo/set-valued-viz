@@ -113,13 +113,157 @@ class ModelBase():
         self.start_point = Point2D(0,0)
         self.function = MappingFunction2D("1-a*x*x+y", "b*x")
         self.function.set_constants(a=1.4, b=0.3)
-
+    
     def copy(self):
         new = type(self)()
         new.epsilon = self.epsilon
         new.start_point = self.start_point.copy()
         new.function = self.function.copy()
         return new
+
+class ImageDrawing:
+    class LinesObj:
+        starts = None
+        ends = None
+    class CircleObj:
+        center = (0,0)
+        radius = 1
+        inside = 0
+    class GridObj:
+        center = (0,0)
+        size = .1
+    
+    tl = None
+    br = None
+    
+    def __init__(self, channels=4):
+        self.channels = channels
+        self.objects = []
+        self.colors = []
+
+    def clear(self):
+        self.tl = self.br = None
+        self.objects.clear()
+        self.colors.clear()
+
+    def _update_tl_br(self, tl, br):
+        if self.tl is None: self.tl = tl
+        else: self.tl = np.min([tl,self.tl], axis=0)
+        if self.br is None: self.br = br
+        else: self.br = np.max([br,self.br], axis=0)
+        
+    def points(self, points, color):
+        points = np.asarray(points)
+        self._update_tl_br(*bounding_box(points))
+        self.objects.append(points)
+        self.colors.append(color)
+    
+    def lines(self, starts, ends, color):
+        obj = self.LinesObj()
+        obj.starts = np.asarray(starts)
+        obj.ends = np.asarray(ends)
+        self._update_tl_br(*bounding_box(obj.starts))
+        self._update_tl_br(*bounding_box(obj.ends))
+        self.objects.append(obj)
+        self.colors.append(color)
+
+    def circle(self, center, radius, color, inside=0):
+        obj = self.CircleObj()
+        obj.center = np.asarray(center)
+        obj.radius = radius
+        obj.inside = inside
+        self._update_tl_br(obj.center-radius, obj.center+radius)
+        self.objects.append(obj)
+        self.colors.append(color)
+
+    def grid(self, center, size, color):
+        obj = self.GridObj()
+        obj.center = np.asarray(center)
+        obj.size = size
+        self.objects.append(obj)
+        self.colors.append(color)
+
+    def draw(self, resolution:int):
+        pixels = []
+        for x in self.objects:
+            if isinstance(x, self.LinesObj):
+                s = pixelize_points(x.starts, self.tl, self.br, resolution)
+                e = pixelize_points(x.ends, self.tl, self.br, resolution)
+                pixels.append((0, s, e))
+                
+            elif isinstance(x, self.CircleObj):
+                c = pixelize_points(x.center, self.tl, self.br, resolution)
+                radii = pixelize_distances([x.radius, x.inside], self.tl, self.br, resolution)
+                m = circle_mask(*radii)
+                pixels.append((1, c, m))
+
+            elif isinstance(x, self.GridObj):
+                c = x.center#pixelize_points(x.center, self.tl, self.br, resolution)
+                s = x.size#pixelize_distances(x.size, self.tl, self.br, resolution)
+                pixels.append((2, c, s))
+                
+            elif type(x)==np.ndarray:
+                pixels.append(pixelize_points(x, self.tl, self.br, resolution))
+        
+        limits = pixelize_points(self.br, self.tl, self.br, resolution)
+        
+        image = np.zeros((*image_shape(resolution, *limits), self.channels))
+        
+        masks = {}
+        def draw_line_on_image(start, end, color):
+            key = (int(start[0]-end[0]), int(start[1]-end[1]))
+            alt_key = (-key[0], -key[1])
+            if key in masks: mask = masks[key]
+            elif alt_key in masks: mask = masks[alt_key]
+            else:
+                mask = line_mask(start, end)
+                masks[key] = mask
+            
+            if mask is None: return False
+            tl = np.min([start,end], axis=0)
+            x_slice = slice(tl[0], tl[0]+mask.shape[0])
+            y_slice = slice(tl[1], tl[1]+mask.shape[1])
+            image[x_slice, y_slice][mask] = color
+            return True
+
+        def draw_circle_on_image(center, mask, color):
+            r = mask.shape[0]//2
+            x_slice = slice(center[0]-r, center[0]+r+1)
+            y_slice = slice(center[1]-r, center[1]+r+1)
+            image[x_slice, y_slice][mask] = color
+        
+        for index,x in enumerate(pixels):
+            color = self.colors[index]
+            if type(x)==tuple:
+                match x[0]:
+                    case 0: # lines
+                        for i,s in enumerate(x[1]):
+                            draw_line_on_image(s, x[2][i], color)
+                    case 1: # circle
+                        draw_circle_on_image(x[1], x[2], color)
+                    case 2: # grid
+                        grid_lines_n = int(np.divide(self.br-self.tl, x[2]).max())+1
+                        for i in range(grid_lines_n):
+                            target = (x[1]%x[2])+x[2]*i+self.tl
+                            target = pixelize_points(target, self.tl, self.br, resolution)
+                            target = np.clip(target, a_min=0, a_max=np.subtract(image.shape[:2], 1))
+                            image[target[0],:] = color
+                            image[:,target[1]] = color
+                        
+##                        grid_lines_n = int(np.divide(image.shape, x[2]).max())
+##                        for i in range(grid_lines_n+1):
+##                            i = i-x[1]//x[2]
+##                            target = np.clip(x[1]+x[2]*i, a_min=0, a_max=np.subtract(image.shape[:2], 1))
+##                            image[target[0],:] = color
+##                            image[:,target[1]] = color
+                            
+            else: # points
+                image[x[:,0],x[:,1]] = color
+        
+        if image.any():
+            image /= image.max()
+            image *= 255
+        return image.astype(np.uint8)
 
 
 def test_plotting_grid(width=1, height=1, timestep=0, figsize=(9,9)):

@@ -7,9 +7,9 @@ from matplotlib.figure import Figure
 import matplotlib
 matplotlib.use("TkAgg")
 
-def apply_font(obj, fontname=None, fontsize=None):
-    if fontname is not None or fontsize is not None:
-        obj.configure(font=(fontname, fontsize))
+##def apply_font(obj, fontname=None, fontsize=None):
+##    if fontname is not None or fontsize is not None:
+##        obj.configure(font=(fontname, fontsize))
 
 def create_window(title):
     window = tk.Tk()

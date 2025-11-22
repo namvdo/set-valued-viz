@@ -25,8 +25,10 @@ def read_number_from_string(string):
         return value
 
 def set_colors(obj, fg, bg):
-    if isinstance(obj, tk.Frame) or isinstance(obj, tk.Tk) or isinstance(obj, tk.Canvas):
+    if isinstance(obj, tk.Frame) or isinstance(obj, tk.Tk) or isinstance(obj, tk.Scrollbar):
         obj.config(bg=bg)
+    elif isinstance(obj, tk.Canvas):
+        obj.config(bg=fg, highlightbackground=bg)
     elif isinstance(obj, tk.Entry):
         obj.config(fg=fg, bg=bg, insertbackground=PASSIVE_FG_COLOR)
     else:
@@ -69,10 +71,23 @@ def nice_frame(root, *args, side=tk.LEFT, **kwargs):
     set_passive_colors(frame)
     return frame
 
+def nice_textbox(frame, width=80, height=20):
+    boxframe = create_frame(frame, tk.TOP)
+    scrollbar = tk.Scrollbar(boxframe)
+    box = tk.Text(boxframe, height=height, width=width, yscrollcommand=scrollbar.set)
+    box.configure(state="disabled")
+    box.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    scrollbar.configure(command=box.yview)
+    set_passive_colors(boxframe)
+##    set_active_colors(scrollbar)
+    set_active_colors(box)
+    return box
+
 def nice_canvas(frame, width, height, side=tk.LEFT, fill=tk.BOTH):
     canvas = tk.Canvas(frame, width=width, height=height)
     canvas.pack(side=side, fill=fill)
-    set_active_colors_inverse(canvas)
+    set_active_colors(canvas)
     return canvas
 
 def nice_separator(frame, padx=DEFAULT_PADDING_WIDTH, pady=DEFAULT_PADDING_HEIGHT, vertical=False):
@@ -123,7 +138,6 @@ class ModelInstance():
     key = None
     step = 0
     model = None
-    image = None
     resolution = 512
     
     def __init__(self, on_destroy, **kwargs):
@@ -146,9 +160,6 @@ class ModelInstance():
         info_label = nice_label(right_frame, text="", side=tk.TOP, anchor="nw", justify="left")
         _update_info_label()
         
-        canvas = nice_canvas(right_frame, 0, 0, side=tk.TOP)
-        canvas.pack_forget()
-        
         # buttons
         f = left_frame
         def _next():
@@ -157,26 +168,26 @@ class ModelInstance():
             _update_info_label()
         b = nice_button(f, text="Next Step", command=_next)
         
-        def _draw():
+        ####
+        def _mouse_handler(event):
+            print(event)
+            pass
+        canvas, self.fig, subplot = create_figure(right_frame, _mouse_handler, 512, 512)
+        def _draw_with_matplotlib():
             if not self.model.can_draw(): self.model.process(self.step)
             array, tl, br = self.model.draw(self.resolution)
-            self.image = array_to_image(win, array)
-            shape = (self.image.width(), self.image.height())
-            canvas.configure(width=shape[0], height=shape[1])
-            canvas.create_image(2,2, anchor="nw", image=self.image)
-            canvas.pack()
-        b = nice_button(f, text="Draw Image", command=_draw)
-        #
+            array = np.flip(array.swapaxes(0, 1), axis=0)
+            subplot.clear()
+            subplot.imshow(array, extent=(tl[0], br[0], tl[1], br[1]))
+            canvas.draw()
+        b = nice_button(f, text="Matplotlib Figure", command=_draw_with_matplotlib)
         
-        f = nice_frame(left_frame, side=tk.TOP)
-        set_padding(f)
         def _update(labeltext, string):
             value = read_number_from_string(string)
-            if value is not None:
-                self.resolution = max(int(value), 2)
-        field = nice_labeled_field(f, "draw resolution", width=6, update_handler=_update)
+            if value is not None: self.resolution = max(int(value), 2)
+        field = nice_labeled_field(f, "resolution", width=8, update_handler=_update)
         field.insert(0, str(self.resolution))
-        
+        ####
         
         f = nice_frame(left_frame, side=tk.TOP)
         set_padding(f)
@@ -193,19 +204,20 @@ class ModelInstance():
         field = nice_labeled_field(f, "epsilon", width=8, update_handler=_update)
         field.insert(0, str(self.model.epsilon))
     
-        f = nice_frame(left_frame, side=tk.TOP)
-        set_padding(f)
         adjusable_parameters = self.model.function.required_constants()
-        nice_label(f, text="PARAMETERS", side=tk.TOP, anchor="n", justify="center")
-        for k in sorted(adjusable_parameters):
-            def _update(labeltext, string):
-                value = read_number_from_string(string)
-                if value is not None:
-                    self.model.function.constants[labeltext] = value
-                    _update_info_label()
-            field = nice_labeled_field(f, k, update_handler=_update)
-            v = self.model.function.constants.get(k)
-            if v is not None: field.insert(0, str(v))
+        if len(adjusable_parameters)>0:
+            f = nice_frame(left_frame, side=tk.TOP)
+            set_padding(f)
+            nice_label(f, text="PARAMETERS", side=tk.TOP, anchor="n", justify="center")
+            for k in sorted(adjusable_parameters):
+                def _update(labeltext, string):
+                    value = read_number_from_string(string)
+                    if value is not None:
+                        self.model.function.constants[labeltext] = value
+                        _update_info_label()
+                field = nice_labeled_field(f, k, update_handler=_update)
+                v = self.model.function.constants.get(k)
+                if v is not None: field.insert(0, str(v))
     
 
 class Interface():
@@ -223,11 +235,10 @@ class Interface():
         left_frame = nice_frame(self.window, anchor="nw")
         set_padding(left_frame)
         right_frame = nice_frame(self.window, anchor="nw")
-        self._logbox = create_textbox(right_frame, 48, 12)
-        set_active_colors(self._logbox)
+        self._logbox = nice_textbox(right_frame, 36, 12)
         
         # main window content
-        b1 = nice_button(left_frame, text="Start", command=self.start_model_instance)
+        b1 = nice_button(left_frame, text="New Instance", command=self.start_model_instance)
         
         f = nice_frame(left_frame, side=tk.TOP)
         set_padding(f)
@@ -268,7 +279,7 @@ class Interface():
         instance = ModelInstance(on_destroy, model=self.normals_model.copy(), key=key)
         self.model_instances[key] = instance
         self.instances_created += 1
-        self.log(f"started instance {key}")
+        self.log(f"created instance {key}")
         
         
     def start(self):

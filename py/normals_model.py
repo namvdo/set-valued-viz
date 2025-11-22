@@ -2,7 +2,8 @@ from _imports import *
 
 
 class ModelConfiguration(ModelBase):
-##    largest_allowed_pixel_gap = 3
+    printing = True
+    
     precision_increase_attempts = 10
     precision_decrease_attempts = 10
     
@@ -38,17 +39,7 @@ class ModelConfiguration(ModelBase):
         if catch_up_amount>0:
             self._process(self._points, self._prev_points, self._normals, self._prev_normals, catch_up_amount)
 
-
-
-
-
     
-##    def _gap_mask_pixel(self, resolution):
-##        topleft, bottomright = bounding_box(self._points)
-##        pixels = pixelize_points(self._points, topleft, bottomright, resolution)
-##        pixel_dist = np.linalg.norm(np.diff(pixels, axis=0, append=pixels[:1]), axis=1)
-##        return pixel_dist>self.largest_allowed_pixel_gap
-
     def _gap_mask(self):
         dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
         return dist>self.epsilon/8
@@ -85,11 +76,11 @@ class ModelConfiguration(ModelBase):
             radians_to[to_under_max*to_over_min] = deadzone[0]
         #
         
-        #more_radians = np.linspace(radians_from, radians_to, loop*2+3)[1:-1].flatten()
         more_radians = (radians_from+radians_to)/2
         more_radians = more_radians[valid]
         
-        print("increasing precision by", more_radians.size)
+        if self.printing:
+            print("increasing precision by", more_radians.size)
         
         more_points, more_prev_points, more_normals, more_prev_normals = self._process_firststep(more_radians, to_timestep=self._timestep)
         self._radians = np.append(self._radians, more_radians)
@@ -104,6 +95,63 @@ class ModelConfiguration(ModelBase):
         self._normals = self._normals[sorting]
         self._prev_points = self._prev_points[sorting]
         self._prev_normals = self._prev_normals[sorting]
+
+
+    def _gap_detection_loops(self):
+        for i in range(self.precision_increase_attempts):
+            gaps = self._gap_mask()
+            if gaps.any():
+                self._increase_precision(gaps)
+            else: break
+        
+        for i in range(self.precision_decrease_attempts):
+            nogaps = self._nogap_mask()
+            if nogaps.any():
+                self._remove_items_with_mask(nogaps)
+            else: break
+
+        inside = self._points_inside_the_boundary_mask()
+        if not inside.all() and inside.any():
+            # this can and will make gaps in the radian array
+            # -> create radian deadzones
+            connect = np.diff(inside.astype(np.int8)) # 1 == left point, -1 == right point
+            indexes = np.arange(len(inside))
+            left_indexes = indexes[:-1][connect==1]
+            right_indexes = indexes[1:][connect==-1]
+            if len(left_indexes)>len(right_indexes):
+                right_indexes = np.append(right_indexes, [len(indexes)-1])
+            elif len(left_indexes)<len(right_indexes):
+                left_indexes = np.append(left_indexes, [0])
+            deadzones = np.stack([self._radians[left_indexes],self._radians[right_indexes]], axis=1)
+            
+            if self._radian_deadzones.size:
+                was_used = np.zeros(deadzones.shape[0], dtype=np.bool_)
+                for i,dz in enumerate(deadzones):
+                    over_max_limit = dz[1]>=self._radian_deadzones[:,1]
+                    under_min_limit = dz[0]<=self._radian_deadzones[:,0]
+                    full_replace = over_max_limit*under_min_limit
+                    
+                    self._radian_deadzones[over_max_limit*under_min_limit] = dz # fully replace
+                    
+                    extend_lower_bound = dz[1]==self._radian_deadzones[:,0]
+                    self._radian_deadzones[extend_lower_bound,0] = dz[0]
+                    
+                    extend_higher_bound = dz[0]==self._radian_deadzones[:,1]
+                    self._radian_deadzones[extend_higher_bound,1] = dz[1]
+                    
+                    was_used[i] = (extend_lower_bound|extend_higher_bound|full_replace).any()
+                    
+                deadzones = deadzones[~was_used]
+                
+            self._radian_deadzones = np.append(self._radian_deadzones, deadzones, axis=0)
+            ##
+            
+            self._remove_items_with_mask(inside)
+
+
+
+
+
         
     def _process_firststep(self, radians, to_timestep:int):
         points = np.repeat([(self.start_point.x,self.start_point.y)], radians.size, axis=0).astype(np.float64)
@@ -126,6 +174,7 @@ class ModelConfiguration(ModelBase):
         
         self._process(points, prev_points, normals, prev_normals, to_timestep)
         return points, prev_points, normals, prev_normals
+
 
     def _process(self, points, prev_points, normals, prev_normals, amount:int):
         if points is self._points or self.tij is None:
@@ -169,72 +218,15 @@ class ModelConfiguration(ModelBase):
             if points is self._points: # every point is being processed
                 self._timestep += 1 # increase early so that precision increase can catch up to correct step
                 
-                for i in range(self.precision_increase_attempts):
-                    gaps = self._gap_mask()
-                    if gaps.any():
-                        self._increase_precision(gaps)
-                        # array size changed -> reload
-                        points = self._points
-                        prev_points = self._prev_points
-                        normals = self._normals
-                        prev_normals = self._prev_normals
-                    else: break
-                
-                for i in range(self.precision_decrease_attempts):
-                    nogaps = self._nogap_mask()
-                    if nogaps.any():
-                        self._remove_items_with_mask(nogaps)
-                        # array size changed -> reload
-                        points = self._points
-                        prev_points = self._prev_points
-                        normals = self._normals
-                        prev_normals = self._prev_normals
-                    else: break
-
-                inside = self._points_inside_the_boundary_mask()
-                if not inside.all() and inside.any():
-                    # this can and will make gaps in the radian array
-                    # -> create radian deadzones
-                    connect = np.diff(inside.astype(np.int8)) # 1 == left point, -1 == right point
-                    indexes = np.arange(len(inside))
-                    left_indexes = indexes[:-1][connect==1]
-                    right_indexes = indexes[1:][connect==-1]
-                    if len(left_indexes)>len(right_indexes):
-                        right_indexes = np.append(right_indexes, [len(indexes)-1])
-                        
-                    deadzones = np.stack([self._radians[left_indexes],self._radians[right_indexes]], axis=1)
+                self._gap_detection_loops()
+                # array size changed -> reload
+                points = self._points
+                prev_points = self._prev_points
+                normals = self._normals
+                prev_normals = self._prev_normals
                     
-                    if self._radian_deadzones.size:
-                        was_used = np.zeros(deadzones.shape[0], dtype=np.bool_)
-                        for i,dz in enumerate(deadzones):
-                            over_max_limit = dz[1]>=self._radian_deadzones[:,1]
-                            under_min_limit = dz[0]<=self._radian_deadzones[:,0]
-                            full_replace = over_max_limit*under_min_limit
-                            
-                            self._radian_deadzones[over_max_limit*under_min_limit] = dz # fully replace
-                            
-                            extend_lower_bound = dz[1]==self._radian_deadzones[:,0]
-                            self._radian_deadzones[extend_lower_bound,0] = dz[0]
-                            
-                            extend_higher_bound = dz[0]==self._radian_deadzones[:,1]
-                            self._radian_deadzones[extend_higher_bound,1] = dz[1]
-                            
-                            was_used[i] = (extend_lower_bound|extend_higher_bound|full_replace).any()
-                            
-                        deadzones = deadzones[~was_used]
-                        
-                    self._radian_deadzones = np.append(self._radian_deadzones, deadzones, axis=0)
-                    ##
-                    
-                    self._remove_items_with_mask(inside)
-                    
-                    # array size changed -> reload
-                    points = self._points
-                    prev_points = self._prev_points
-                    normals = self._normals
-                    prev_normals = self._prev_normals
-                
-                print("reached step", self._timestep)
+                if self.printing:
+                    print("reached step", self._timestep)
 
         
 
@@ -268,15 +260,19 @@ class ModelConfiguration(ModelBase):
 ##            return mask
 
     def process(self, to_timestep:int):
-        print("\nprocessing step", self._timestep, "to", to_timestep)
+        if self.printing:
+            print("\nprocessing step", self._timestep, "to", to_timestep)
         if self._timestep is None or self._timestep>to_timestep: self._start(to_timestep)
         else: self._continue(to_timestep)
-
+    
     def can_draw(self): return self._points.size!=0
     
     def draw(self, resolution:int):
-        print("\ndrawing step", self._timestep, f"({resolution} px)")
-        print("points ->", self._radians.shape[0])
+        if self.printing:
+            print("\ndrawing step", self._timestep, f"({resolution} px)")
+            print("points ->", self._radians.shape[0])
+
+        drawing = ImageDrawing()
         #
         draw_prev_points = 0
         draw_prev_normals = 0
@@ -285,128 +281,127 @@ class ModelConfiguration(ModelBase):
         draw_inner_normals = 1
         
         radian_bar_height = 10
-        highlighted_index = 0
         #
         
-##        cohesion_breaks = self._check_normal_cohesion()
-        
-        # calculate the bounding box
-        topleft, bottomright = bounding_box(self._points)
-        if draw_prev_points:
-            topleft, bottomright = bounding_box(np.stack([topleft, bottomright, *bounding_box(self._prev_points)]))
-            if draw_prev_normals:
-                inner_prev_normal_points = self._prev_points-self._prev_normals
-                topleft, bottomright = bounding_box(np.stack([topleft, bottomright, *bounding_box(inner_prev_normal_points)]))
-        if draw_outer_normals:
-            outer_normal_points = self._points+self._normals
-            topleft, bottomright = bounding_box(np.stack([topleft, bottomright, *bounding_box(outer_normal_points)]))
-        if draw_inner_normals:
-            inner_normal_points = self._points-self._normals
-            topleft, bottomright = bounding_box(np.stack([topleft, bottomright, *bounding_box(inner_normal_points)]))
-        
-        # translate points to pixels
-        pixels = pixelize_points(self._points, topleft, bottomright, resolution)
-        prev_pixels = prev_normal_pixels = outer_normal_pixels = inner_normal_pixels = None
-        if draw_prev_points:
-            prev_pixels = pixelize_points(self._prev_points, topleft, bottomright, resolution)
-            if draw_prev_normals:
-                prev_normal_pixels = pixelize_points(inner_prev_normal_points, topleft, bottomright, resolution)
-        if draw_outer_normals:
-            outer_normal_pixels = pixelize_points(outer_normal_points, topleft, bottomright, resolution)
-        if draw_inner_normals:
-            inner_normal_pixels = pixelize_points(inner_normal_points, topleft, bottomright, resolution)
+        black = np.array([0.,0.,0.,1.])
+        red = np.array([1.,0.,0.,1.])
+        green = np.array([0.,1.,0.,1.])
+        blue = np.array([0.,0.,1.,1.])
 
+        drawing.circle((0,0), 1, red)
+        drawing.grid((0,.31), .25, black)
         
-        def find_pixel_limits(pixel_array, *pixel_arrays):
-            limits = np.max(pixel_array, axis=0)
-            for pixels in pixel_arrays:
-                if pixels is None: continue
-                limits = np.max([np.max(pixels, axis=0), limits], axis=0)
-            return limits
-        limits = find_pixel_limits(pixels, prev_pixels, prev_normal_pixels, outer_normal_pixels, inner_normal_pixels)
-
+        if draw_boundary_lines:
+            drawing.lines(self._points[:-1], self._points[1:], green)
         
-        width, height = image_shape(resolution, *limits)
-        image = np.zeros((width, height, 4))
-        print("shape ->", image.shape)
+        if draw_inner_normals:
+            drawing.lines(self._points, self._points-self._normals, black)
+        if draw_outer_normals:
+            drawing.lines(self._points, self._points+self._normals, black)
         
-        masks = {}
-        lines_drawn = [0]
-        def draw_line_on_image(start, end, color):
-            key = (int(start[0]-end[0]), int(start[1]-end[1]))
-            alt_key = (-key[0], -key[1])
-            if key in masks: mask = masks[key]
-            elif alt_key in masks: mask = masks[alt_key]
-            else:
-                mask = line_mask(start, end)
-                if mask is None: return
-                mask = np.repeat(np.expand_dims(mask, axis=2), 4, axis=2)
-                masks[key] = mask
+        if draw_prev_points:
+            drawing.points(self._prev_points, blue)
+            if draw_prev_normals:
+                drawing.lines(self._prev_points, self._prev_points-self._prev_normals, black)
             
-            if mask is None: return False
-            tl = np.min([start,end], axis=0)
-            x_slice = slice(tl[0], tl[0]+mask.shape[0])
-            y_slice = slice(tl[1], tl[1]+mask.shape[1])
-            valid = image[x_slice,y_slice]<color
-            image[x_slice, y_slice][valid] = (mask*color)[valid]
-            lines_drawn[0] += 1
-            return True
+        drawing.points(self._points, red)
         
-        # draw
-        boundary_color = np.array([1.,0.,0.,1.])
-        prev_boundary_color = np.array([.0,.0,1.,1])
-        lines_color_max = np.array([0.5,.5,.5,1])
-        lines_color_min = np.array([.0,.0,.0,1])
-        lines_color_series = np.linspace(lines_color_min, lines_color_max, 10)
+        image = drawing.draw(resolution)
+        return image, drawing.tl, drawing.br
         
-        if draw_prev_points:
-            image[prev_pixels[:,0],prev_pixels[:,1]] = prev_boundary_color
-            if draw_prev_normals:
-                for index,pixel in enumerate(prev_pixels):
-                    if index==highlighted_index: color = prev_boundary_color
-                    else: color = lines_color_series[index%len(lines_color_series)]
-                    
-                    draw_line_on_image(pixel, prev_normal_pixels[index], color=color)
-        
-        if draw_boundary_lines or draw_inner_normals or draw_outer_normals:
-            prev = None
-            for index,pixel in enumerate(pixels):
-##                highlight = value0*mult*(index==highlighted_index)
-##                value = index%value0
-                if index==highlighted_index: color = boundary_color
-                else: color = lines_color_series[index%len(lines_color_series)]
-                
-                if draw_boundary_lines and prev is not None:
-                    draw_line_on_image(prev, pixel, boundary_color)
-                if draw_inner_normals:
-                    draw_line_on_image(pixel, inner_normal_pixels[index], color=color)
-                if draw_outer_normals:
-                    draw_line_on_image(pixel, outer_normal_pixels[index], color=color)
-                prev = pixel
-            if draw_boundary_lines and prev is not None:
-                draw_line_on_image(prev, pixels[0], boundary_color)
-            print("lines ->", lines_drawn[0], "using", len(masks), "masks")
-        
-        image[pixels[:,0],pixels[:,1]] = boundary_color
-        
-##        if cohesion_breaks is not None and draw_inner_normals:
-##            for index in np.arange(pixels.shape[0]-1)[cohesion_breaks]:
-##                draw_line_on_image(pixels[index], inner_normal_pixels[index], value=value0*value_mult)
-        
+##        # translate points to pixels
+##        pixels = pixelize_points(self._points, topleft, bottomright, resolution)
+##        prev_pixels = prev_normal_pixels = outer_normal_pixels = inner_normal_pixels = None
+##        if draw_prev_points:
+##            prev_pixels = pixelize_points(self._prev_points, topleft, bottomright, resolution)
+##            if draw_prev_normals:
+##                prev_normal_pixels = pixelize_points(inner_prev_normal_points, topleft, bottomright, resolution)
+##        if draw_outer_normals:
+##            outer_normal_pixels = pixelize_points(outer_normal_points, topleft, bottomright, resolution)
+##        if draw_inner_normals:
+##            inner_normal_pixels = pixelize_points(inner_normal_points, topleft, bottomright, resolution)
+##
+##        limits = pixelize_points([bottomright], topleft, bottomright, resolution)[0]
+##        
+##        width, height = image_shape(resolution, *limits)
+##        image = np.zeros((width, height, 4))
+##        if self.printing:
+##            print("shape ->", image.shape)
+##        
+##        masks = {}
+##        lines_drawn = [0]
+##        def draw_line_on_image(start, end, color):
+##            key = (int(start[0]-end[0]), int(start[1]-end[1]))
+##            alt_key = (-key[0], -key[1])
+##            if key in masks: mask = masks[key]
+##            elif alt_key in masks: mask = masks[alt_key]
+##            else:
+##                mask = line_mask(start, end)
+##                if mask is None: return
+##                mask = np.repeat(np.expand_dims(mask, axis=2), 4, axis=2)
+##                masks[key] = mask
+##            
+##            if mask is None: return False
+##            tl = np.min([start,end], axis=0)
+##            x_slice = slice(tl[0], tl[0]+mask.shape[0])
+##            y_slice = slice(tl[1], tl[1]+mask.shape[1])
+##            valid = image[x_slice,y_slice]<color
+##            image[x_slice, y_slice][valid] = (mask*color)[valid]
+##            lines_drawn[0] += 1
+##            return True
+##        
+##        # draw
+##        boundary_color = np.array([1.,0.,0.,1.])
+##        prev_boundary_color = np.array([.0,.0,1.,1])
+##        lines_color_max = np.array([0.5,.5,.5,1])
+##        lines_color_min = np.array([.0,.0,.0,1])
+##        lines_color_series = np.linspace(lines_color_min, lines_color_max, 10)
+##        
+##        if draw_prev_points:
+##            image[prev_pixels[:,0],prev_pixels[:,1]] = prev_boundary_color
+##            if draw_prev_normals:
+##                for index,pixel in enumerate(prev_pixels):
+##                    if index==highlighted_index: color = prev_boundary_color
+##                    else: color = lines_color_series[index%len(lines_color_series)]
+##                    
+##                    draw_line_on_image(pixel, prev_normal_pixels[index], color=color)
+##        
+##        if draw_boundary_lines or draw_inner_normals or draw_outer_normals:
+##            prev = None
+##            for index,pixel in enumerate(pixels):
+##                
+##                if index==highlighted_index: color = boundary_color
+##                else: color = lines_color_series[index%len(lines_color_series)]
+##                
+##                if draw_boundary_lines and prev is not None:
+##                    draw_line_on_image(prev, pixel, boundary_color)
+##                if draw_inner_normals:
+##                    draw_line_on_image(pixel, inner_normal_pixels[index], color=color)
+##                if draw_outer_normals:
+##                    draw_line_on_image(pixel, outer_normal_pixels[index], color=color)
+##                prev = pixel
+##            if draw_boundary_lines and prev is not None:
+##                draw_line_on_image(prev, pixels[0], boundary_color)
+##            if self.printing:
+##                print("lines ->", lines_drawn[0], "using", len(masks), "masks")
+##        
+##        image[pixels[:,0],pixels[:,1]] = boundary_color
+##        
+####        if cohesion_breaks is not None and draw_inner_normals:
+####            for index in np.arange(pixels.shape[0]-1)[cohesion_breaks]:
+####                draw_line_on_image(pixels[index], inner_normal_pixels[index], value=value0*value_mult)
+##        
         # radian bar
-        if radian_bar_height:
-            bar = self._radians/(np.pi*2)
-            bar *= (image.shape[0]-1)
-            bar = bar.astype(np.int32)%image.shape[0]
-            image[bar,0:radian_bar_height] = boundary_color
+##        if radian_bar_height:
+##            bar = self._radians/(np.pi*2)
+##            bar *= (image.shape[0]-1)
+##            bar = bar.astype(np.int32)%image.shape[0]
+##            image[bar,0:radian_bar_height,3] = 255#
         
-        if image.any():
-            image /= image.max()
-            image *= 255
-        
-        return image.astype(np.uint8), topleft, bottomright
-
-
+##        if image.any():
+##            image /= image.max()
+##            image *= 255
+##        return image.astype(np.uint8), topleft, bottomright
 
 
 if __name__ == "__main__":
@@ -419,8 +414,8 @@ if __name__ == "__main__":
 ##    config.function.fx.string = "x/2+(1-y)/3*x/4"
 ##    config.function.fy.string = "y/3+x/3"  # 
     
-##    config.function.fx.string = "x/3+cos(y)**2"
-##    config.function.fy.string = "y/2+sin(x)**2"
+    config.function.fx.string = "x/3+cos(y)**2"
+    config.function.fy.string = "y/2+sin(x)**2"
     
 ##    config.function.fx.string = "x/2-y/3"
 ##    config.function.fy.string = "y/2+x/5"
@@ -439,8 +434,8 @@ if __name__ == "__main__":
     print("")
 
     
-    resolution = 2000
-    timestep = 10
+    resolution = 500
+    timestep = 0
     for ax_target in test_plotting_grid(2, 2, timestep):
         config.process(timestep)
         image,tl,br = config.draw(resolution)
