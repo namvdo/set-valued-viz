@@ -1,0 +1,279 @@
+from _imports import *
+
+
+class ModelConfiguration(ModelBase):
+    printing = True
+    
+    precision_increase_attempts = 10
+    precision_decrease_attempts = 10
+    
+    def __init__(self):
+        super().__init__()
+        self._reset()
+
+    def _reset(self):
+        self.tij = None
+        self._timestep = None
+        self._points = np.zeros((0,2))
+        self._normals = np.zeros((0,2))
+        self._prev_points = np.zeros((0,2))
+        self._prev_normals = np.zeros((0,2))
+    
+    def _remove_items_with_mask(self, removal_mask):
+        self._points = self._points[~removal_mask]
+        self._normals = self._normals[~removal_mask]
+        self._prev_points = self._prev_points[~removal_mask]
+        self._prev_normals = self._prev_normals[~removal_mask]
+    
+    def _too_sparse_mask(self):
+        dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
+        return dist>self.epsilon/8
+
+    def _too_dense_mask(self):
+        dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
+        mask = dist<self.epsilon/16
+        mask = repeat_mask_ones_until_divisible(mask, 2)
+        mask[1::2] = False
+        return mask
+    
+    def _points_inside_the_boundary_mask(self):
+        mask = np.zeros(self._points.shape[0], dtype=np.bool_)
+        for i,x in enumerate(self._points-self._normals):
+            mask |= np.linalg.norm(x-self._points, axis=1)<self.epsilon*.95
+        return mask
+    
+    def _increase_precision(self, gap_mask):
+        # go back to previous step, but with extra points
+        prev_normals_wraparound = np.concatenate([self._prev_normals, self._prev_normals[:1]])
+        starts = prev_normals_wraparound[:-1][gap_mask]
+        ends = prev_normals_wraparound[1:][gap_mask]
+        more_normals = (starts+ends)/2
+        
+        prev_points_wraparound = np.concatenate([self._prev_points, self._prev_points[:1]])
+        starts = prev_points_wraparound[:-1][gap_mask]
+        ends = prev_points_wraparound[1:][gap_mask]
+        more_points = (starts+ends)/2
+        
+        sorting = np.arange(len(self._points)+len(more_points))
+        
+        points = np.append(self._prev_points, more_points, axis=0)
+        normals = np.append(self._prev_normals, more_normals, axis=0)
+        prev_points = np.zeros_like(points)
+        prev_normals = np.zeros_like(normals)
+        
+        self._process(points, normals, prev_points, prev_normals, 1)
+        
+        l = len(self._points)
+        for index,replace in enumerate(np.arange(l)[gap_mask]):
+            replace += index+1
+            sorting[replace+1:] = sorting[replace:-1]
+            sorting[replace] = l+index
+            
+        self._points = points[sorting]
+        self._normals = normals[sorting]
+        self._prev_points = prev_points[sorting]
+        self._prev_normals = prev_normals[sorting]
+        return True
+
+
+    def _gap_detection_loops(self):
+        for i in range(self.precision_increase_attempts):
+            gaps = self._too_sparse_mask()
+            if gaps.any():
+                if not self._increase_precision(gaps): break
+            else: break
+        
+        for i in range(self.precision_decrease_attempts):
+            nogaps = self._too_dense_mask()
+            if nogaps.any(): self._remove_items_with_mask(nogaps)
+            else: break
+
+        inside = self._points_inside_the_boundary_mask()
+        if not inside.all() and inside.any():
+            self._remove_items_with_mask(inside)
+
+        
+    def _start(self, to_timestep:int):
+        self._reset()
+        self._timestep = 0
+        
+        radians = np.linspace(0, np.pi*2, 128)[:-1]
+        
+        self._points = np.repeat([self.start_point.as_tuple()], radians.size, axis=0).astype(np.float64)
+        self._prev_points = self._points.copy()
+        
+        self._normals = radians_to_vectors(radians)
+        self._normals *= self.epsilon
+        self._prev_normals = self._normals.copy()
+        
+        self._points[:,0], self._points[:,1] = self.function(self._points[:,0], self._points[:,1])
+        self._points += self._normals
+        
+        self._continue(to_timestep=to_timestep)
+
+    def _continue(self, to_timestep:int):
+        catch_up_amount = to_timestep - self._timestep
+        if catch_up_amount>0:
+            self._process(self._points, self._normals, self._prev_points, self._prev_normals, catch_up_amount)
+
+    def _process(self, points, normals, prev_points, prev_normals, amount:int):
+        if points is self._points or self.tij is None:
+            self.tij = self.function.transposed_inverse_jacobian()
+        
+        for i in range(amount):
+            prev_points[:] = points
+            prev_normals[:] = normals
+            # |[a, b]|
+            # |[c, d]|
+            x = points[:,0]
+            y = points[:,1]
+            a = self.tij[0][0].solve(x=x, y=y, **self.function.constants)
+            b = self.tij[0][1].solve(x=x, y=y, **self.function.constants)
+            c = self.tij[1][0].solve(x=x, y=y, **self.function.constants)
+            d = self.tij[1][1].solve(x=x, y=y, **self.function.constants)
+            
+            a = np.nan_to_num(a, nan=0, posinf=1, neginf=-1)
+            b = np.nan_to_num(b, nan=0, posinf=1, neginf=-1)
+            c = np.nan_to_num(c, nan=0, posinf=1, neginf=-1)
+            d = np.nan_to_num(d, nan=0, posinf=1, neginf=-1)
+            
+            # calculate new normals
+            normals[:,0] = (prev_normals[:,0]*a+prev_normals[:,1]*b)
+            normals[:,1] = (prev_normals[:,0]*c+prev_normals[:,1]*d)
+            
+            # scale the normal to epsilon
+            lengths = np.linalg.norm(normals, axis=1)
+            normals[:,0] /= lengths
+            normals[:,1] /= lengths
+            normals *= self.epsilon
+            
+            # add the normals to the new points
+            points[:,0], points[:,1] = self.function(x, y)
+            
+            points += normals
+
+            # alternative gap detection
+            if points is self._points: # every point is being processed
+                self._timestep += 1 # increase early so that precision increase can catch up to correct step
+                
+                self._gap_detection_loops()
+                # array size changed -> reload
+                points = self._points
+                prev_points = self._prev_points
+                normals = self._normals
+                prev_normals = self._prev_normals
+                    
+                if self.printing:
+                    print("reached step", self._timestep)
+        
+
+    def process(self, to_timestep:int):
+        if self.printing:
+            print("\nprocessing step", self._timestep, "to", to_timestep)
+        if self._timestep is None or self._timestep>to_timestep: self._start(to_timestep)
+        else: self._continue(to_timestep)
+    
+    def can_draw(self): return self._points.size!=0
+    
+    def get_boundary_lines(self):
+        return self._points[:-1], self._points[1:]
+    
+    def get_inner_normals(self, length=1):
+        return self._points, self._points-self._normals*length
+    
+    def get_outer_normals(self, length=1):
+        return self._points, self._points+self._normals*length
+
+    def get_prev_inner_normals(self, length=1):
+        return self._prev_points, self._prev_points-self._prev_normals*length
+    
+    def draw(self, resolution:int):
+        if self.printing:
+            print("\ndrawing step", self._timestep, f"({resolution} px)")
+            print("points ->", len(self._points))
+
+        
+        #
+        black = np.array([0.,0.,0.,1.])
+        red = np.array([1.,0.,0.,1.])
+        green = np.array([0.,1.,0.,1.])
+        blue = np.array([0.,0.,1.,1.])
+        
+        draw_prev_points = 0
+        draw_prev_normals = 0
+        draw_boundary_lines = 1
+        draw_outer_normals = 0
+        draw_inner_normals = 1
+        
+        #
+        
+        drawing = ImageDrawing(*np.ones(4))
+
+##        drawing.circles([(0,0)], 1, *red)
+        drawing.grid((0,.31), .25, *black)
+        
+        if draw_boundary_lines:
+            drawing.lines(*self.get_boundary_lines(), *green)
+        
+        if draw_inner_normals:
+            drawing.lines(*self.get_inner_normals(), *black)
+        if draw_outer_normals:
+            drawing.lines(*self.get_outer_normals(), *black)
+        
+        if draw_prev_points:
+            drawing.points(self._prev_points, *blue)
+            if draw_prev_normals:
+                drawing.lines(*self.get_prev_inner_normals(), *black)
+        
+        drawing.points(self._points, *red)
+        
+        image = drawing.draw(resolution)
+        return image, drawing.tl, drawing.br
+        
+if __name__ == "__main__":
+    config = ModelConfiguration()
+    config.start_point.x = 0
+    config.start_point.y = 0
+    config.epsilon = 0.0625
+    config.function.set_constants(a=0.6, b=0.3)
+
+    print(config.function)
+    
+##    config.function.fx.string = "x/2+(1-y)/3*x/4"
+##    config.function.fy.string = "y/3+x/3"  # 
+    
+    config.function.fx.string = "x/3+cos(y)**2"
+    config.function.fy.string = "y/2+sin(x)**2"
+    
+##    config.function.fx.string = "x/2-y/3"
+##    config.function.fy.string = "y/2+x/5"
+    
+##    config.function.fx.string = "x/2-y/3"
+##    config.function.fy.string = "y/2+x/3"
+    
+##    config.function.fx.string = "x/2+1/(y**2+1)"
+##    config.function.fy.string = "y/(x**2+1)"
+
+    tij = config.function.transposed_inverse_jacobian()
+    print(tij[0][0])
+    print(tij[0][1])
+    print(tij[1][0])
+    print(tij[1][1])
+    print("")
+
+    
+    resolution = 2000
+    timestep = 100
+    for ax_target in test_plotting_grid(1, 1, timestep):
+        config.process(timestep)
+        image,tl,br = config.draw(resolution)
+        
+        image = image.swapaxes(0, 1)[::-1,:]
+        ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
+        
+        timestep += 1
+
+
+
+
+

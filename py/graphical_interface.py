@@ -2,7 +2,7 @@ from _imports import *
 from __gui import *
 import PIL
 
-from normals_model import ModelConfiguration as NormalsModel
+from normals_model2 import ModelConfiguration as NormalsModel
 from mask_model2 import ModelConfiguration as MaskModel
 
 SAVEDIR = os.path.join(WORKDIR, "saves")
@@ -121,11 +121,11 @@ def nice_label(*args, side=tk.LEFT, fill=tk.BOTH, **kwargs):
     set_passive_colors(label)
     return label
 
-def nice_field(*args, text="", side=tk.LEFT, update_handler=None, **kwargs):
+def nice_field(*args, identifier=None, side=tk.LEFT, update_handler=None, **kwargs):
     field = tk.Entry(*args, **kwargs)
     field.pack(side=side, fill=tk.BOTH)
     if update_handler is not None:
-        def _event_handle(event): update_handler(text, field.get())
+        def _event_handle(event): update_handler(identifier, field.get())
         field.bind("<KeyRelease>", _event_handle)
     set_hover_colors(field, set_active_colors_inverted, set_active_colors)
     return field
@@ -141,8 +141,8 @@ def nice_button(frame, *args, side=tk.TOP, **kwargs):
 def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, update_handler=None):
     subframe = nice_frame(frame, side=side)
     if text:
-        label = nice_label(subframe, text=text, width=len(text), anchor="w") # 
-    field = nice_field(subframe, text=text, width=width, update_handler=update_handler)
+        label = nice_label(subframe, text=text, width=len(text), anchor="w")
+    field = nice_field(subframe, identifier=text, width=width, update_handler=update_handler)
     return field
 
 def nice_RGB_selector(frame, color, on_update=None):
@@ -155,34 +155,34 @@ def nice_RGB_selector(frame, color, on_update=None):
         set_colors(preview, opposite_color_as_hex(color), color_as_hex(color))
     _update_preview_color()
     
-    def _update(labeltext, string):
+    def _update(identifier, string):
         value = read_number_from_string(string)
         if value is not None: color[0] = int(value)%256
         else: color[0] = 0
         if on_update is not None: on_update()
         _update_preview_color()
     
-    field = nice_field(f, text="R", width=3, update_handler=_update)
+    field = nice_field(f, width=3, update_handler=_update)
     field.insert(0, str(color[0]))
     
-    def _update(labeltext, string):
+    def _update(identifier, string):
         value = read_number_from_string(string)
         if value is not None: color[1] = int(value)%256
         else: color[1] = 0
         if on_update is not None: on_update()
         _update_preview_color()
         
-    field = nice_field(f, text="G", width=3, update_handler=_update)
+    field = nice_field(f, width=3, update_handler=_update)
     field.insert(0, str(color[1]))
     
-    def _update(labeltext, string):
+    def _update(identifier, string):
         value = read_number_from_string(string)
         if value is not None: color[2] = int(value)%256
         else: color[2] = 0
         if on_update is not None: on_update()
         _update_preview_color()
         
-    field = nice_field(f, text="B", width=3, update_handler=_update)
+    field = nice_field(f, width=3, update_handler=_update)
     field.insert(0, str(color[2]))
     
     return f
@@ -191,13 +191,13 @@ def nice_RGBA_selector(frame, color, on_update=None):
     f = nice_RGB_selector(frame, color, on_update)
     preview = f.slaves()[0].slaves()[0]
     preview.configure(text=f"{int((color[3]/255)*100)}%")
-    def _update(labeltext, string):
+    def _update(identifier, string):
         value = read_number_from_string(string)
         if value is not None: color[3] = int(value)%256
         else: color[3] = 0
         if on_update is not None: on_update()
         preview.configure(text=f"{int((color[3]/255)*100)}%")
-    field = nice_field(f, text="A", width=3, update_handler=_update)
+    field = nice_field(f, width=3, update_handler=_update)
     field.insert(0, str(color[3]))
     
     return color
@@ -241,15 +241,14 @@ class ModelInstance():
         set_padding(win)
         
         self.__init_model_control_panel(win)
+        middle = nice_frame(win) # , anchor="n"
+        self.__init_figure_drawing_panel(win)
         
-        #
-        middle = nice_frame(win, anchor="nw")
         def _mouse_handler(event):
 ##            print(event)
             pass
         self.canvas, self.fig, self.subplot = create_figure(middle, _mouse_handler, 512, 512)
-        #
-        self.__init_figure_drawing_panel(win)
+        
 
     def __init_model_control_panel(self, win):
         frame = nice_frame(win, anchor="nw")
@@ -269,7 +268,7 @@ class ModelInstance():
         
         f = nice_frame(frame, anchor="nw", side=tk.TOP)
         set_padding(f)
-        def _update(labeltext, string):
+        def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None:
                 self.model.epsilon = abs(value)
@@ -279,11 +278,27 @@ class ModelInstance():
         # buttons
         f = nice_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
         set_padding(f)
+        #
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        def _next():
+        def _press():
             self.step += 1
             self.model.process(self.step)
-        b = nice_button(ff, text="Next Step", command=_next)
+            field.delete(0, tk.END)
+            field.insert(0, str(self.step))
+        b = nice_button(ff, text="Next Step", command=_press)
+        #
+        ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
+        def _update(identifier, string):
+            value = read_number_from_string(string)
+            if value is not None:
+                self.step = max(int(value), 0)
+        field = nice_field(ff, side=tk.RIGHT, width=6, update_handler=_update)
+        field.insert(0, str(self.step))
+        def _press():
+            self.model.process(self.step)
+            field.delete(0, tk.END)
+            field.insert(0, str(self.step))
+        b = nice_button(ff, text="Go to Step", command=_press)
         #
         
     def __init_figure_drawing_panel(self, win):
@@ -297,7 +312,7 @@ class ModelInstance():
         ff = nice_frame(f, anchor="ne", side=tk.TOP)
         nice_label(ff, text="horizontal", side=tk.LEFT)
         
-        def _update(labeltext, string):
+        def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.min_x = value
             else: self.min_x = None
@@ -305,7 +320,7 @@ class ModelInstance():
         
         nice_label(ff, text=" ... ", side=tk.LEFT)
         
-        def _update(labeltext, string):
+        def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.max_x = value
             else: self.max_x = None
@@ -314,7 +329,7 @@ class ModelInstance():
         ff = nice_frame(f, anchor="ne", side=tk.TOP)
         nice_label(ff, text="vertical", side=tk.LEFT)
         
-        def _update(labeltext, string):
+        def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.min_y = value
             else: self.min_y = None
@@ -322,7 +337,7 @@ class ModelInstance():
         
         nice_label(ff, text=" ... ", side=tk.LEFT)
         
-        def _update(labeltext, string):
+        def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.max_y = value
             else: self.max_y = None
@@ -331,7 +346,7 @@ class ModelInstance():
         
         f = nice_frame(frame, anchor="nw", side=tk.TOP)
         set_padding(f)
-        def _update(labeltext, string):
+        def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.resolution = max(int(value), 2)
         field = nice_labeled_field(f, "image resolution", width=8, update_handler=_update)
@@ -355,10 +370,10 @@ class ModelInstance():
             f = nice_frame(frame, side=tk.TOP, anchor="ne")
             set_padding(f)
             for k in sorted(adjusable_parameters):
-                def _update(labeltext, string):
+                def _update(identifier, string):
                     value = read_number_from_string(string)
                     if value is not None:
-                        self.model.function.constants[labeltext] = value
+                        self.model.function.constants[identifier] = value
                         if on_update is not None: on_update()
                 field = nice_labeled_field(f, k, update_handler=_update)
                 v = self.model.function.constants.get(k)
@@ -453,7 +468,7 @@ class Interface():
         f = nice_frame(leftside, side=tk.TOP)
         set_padding(f)
         nice_label(f, text="function", side=tk.TOP, anchor="sw")
-        def _update(labeltext, string): getattr(self.model_base.function, labeltext).string = string
+        def _update(identifier, string): getattr(self.model_base.function, identifier).string = string
         field_fx = nice_labeled_field(f, "fx", update_handler=_update)
         field_fy = nice_labeled_field(f, "fy", update_handler=_update)
         field_fx.insert(0, self.model_base.function.fx.string)
@@ -462,10 +477,10 @@ class Interface():
         f = nice_frame(leftside, side=tk.TOP)
         set_padding(f)
         label = nice_label(f, text="starting point", side=tk.TOP, anchor="sw")
-        def _update_x(labeltext, string):
+        def _update_x(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.model_base.start_point.x = value
-        def _update_y(labeltext, string):
+        def _update_y(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.model_base.start_point.y = value
         field_start_x = nice_labeled_field(f, "x", update_handler=_update_x)

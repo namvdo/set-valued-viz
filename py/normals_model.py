@@ -30,6 +30,7 @@ class ModelConfiguration(ModelBase):
         self._prev_normals = self._prev_normals[~removal_mask]
         
     def _start(self, to_timestep:int):
+        self._reset()
         self._timestep = 0
         self._radians = np.linspace(0, np.pi*2, 128)[:-1] # first index is same as the last
         self._points, self._prev_points, self._normals, self._prev_normals = self._process_firststep(self._radians, to_timestep=to_timestep)
@@ -78,6 +79,7 @@ class ModelConfiguration(ModelBase):
         
         more_radians = (radians_from+radians_to)/2
         more_radians = more_radians[valid]
+        if more_radians.size==0: return False
         
         if self.printing:
             print("increasing precision by", more_radians.size)
@@ -95,12 +97,14 @@ class ModelConfiguration(ModelBase):
         self._normals = self._normals[sorting]
         self._prev_points = self._prev_points[sorting]
         self._prev_normals = self._prev_normals[sorting]
+        return True
 
 
     def _gap_detection_loops(self):
         for i in range(self.precision_increase_attempts):
             gaps = self._too_sparse_mask()
-            if gaps.any(): self._increase_precision(gaps)
+            if gaps.any():
+                if not self._increase_precision(gaps): break
             else: break
         
         for i in range(self.precision_decrease_attempts):

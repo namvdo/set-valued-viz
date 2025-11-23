@@ -9,6 +9,7 @@ def nearestpoint_i(a, *b):
 
 def nearestvalue_i(array, value):
     return np.argmin(np.abs(np.asarray(array)-value))
+
 #
 
 def radians_absolute(radians): # -inf...inf -> 0...2*np.pi
