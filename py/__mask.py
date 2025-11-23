@@ -209,8 +209,7 @@ def polygon_mask(points, resolution:int, fill=False):
         tl = np.min([start,end], axis=0)
         x_slice = slice(tl[0], tl[0]+mask.shape[0])
         y_slice = slice(tl[1], tl[1]+mask.shape[1])
-        valid = image[x_slice,y_slice]==0
-        image[x_slice, y_slice][valid] = mask[valid]
+        image[x_slice, y_slice] |= mask
         return True
     
     # draw

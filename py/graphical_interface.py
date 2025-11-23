@@ -18,6 +18,8 @@ PASSIVE_BG_COLOR = "#262626"
 
 def color_as_hex(color):
     return "#"+"".join([hex(i%256)[2:].rjust(2, "0") for i in color[:3]])
+def opposite_color_as_hex(color):
+    return "#"+"".join([hex(255-i%256)[2:].rjust(2, "0") for i in color[:3]])
 ##print(color_as_hex([12, 200, 255]))
 
 ##def array_to_imagetk(frame, array):
@@ -144,12 +146,13 @@ def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, 
     return field
 
 def nice_RGB_selector(frame, color, on_update=None):
-    f = nice_frame(frame)
+    f = nice_frame(frame, anchor="e")
+    set_passive_colors_inverted(f)
     
-    l = nice_label(f, text=" ")
+    ff = nice_frame(f, side=tk.LEFT, padx=2)
+    preview = nice_label(ff, width=4)
     def _update_preview_color():
-        hexcolor = color_as_hex(color)
-        set_colors(l, hexcolor, hexcolor)
+        set_colors(preview, opposite_color_as_hex(color), color_as_hex(color))
     _update_preview_color()
     
     def _update(labeltext, string):
@@ -186,12 +189,14 @@ def nice_RGB_selector(frame, color, on_update=None):
 
 def nice_RGBA_selector(frame, color, on_update=None):
     f = nice_RGB_selector(frame, color, on_update)
-    
+    preview = f.slaves()[0].slaves()[0]
+    preview.configure(text=f"{int((color[3]/255)*100)}%")
     def _update(labeltext, string):
         value = read_number_from_string(string)
         if value is not None: color[3] = int(value)%256
         else: color[3] = 0
         if on_update is not None: on_update()
+        preview.configure(text=f"{int((color[3]/255)*100)}%")
     field = nice_field(f, text="A", width=3, update_handler=_update)
     field.insert(0, str(color[3]))
     
@@ -285,12 +290,12 @@ class ModelInstance():
         frame = nice_frame(win, anchor="nw")
         #
         
-        nice_label(frame, text="domain limits", anchor="c", side=tk.TOP)
+        nice_label(frame, text="extend figure limits", anchor="c", side=tk.TOP)
         f = nice_frame(frame, anchor="c", side=tk.TOP)
         set_padding(f)
         
-        ff = nice_frame(f, anchor="nw", side=tk.TOP)
-        nice_label(ff, text="x range", side=tk.LEFT)
+        ff = nice_frame(f, anchor="ne", side=tk.TOP)
+        nice_label(ff, text="horizontal", side=tk.LEFT)
         
         def _update(labeltext, string):
             value = read_number_from_string(string)
@@ -306,8 +311,8 @@ class ModelInstance():
             else: self.max_x = None
         field = nice_field(ff, side=tk.LEFT, width=5, update_handler=_update)
         
-        ff = nice_frame(f, anchor="nw", side=tk.TOP)
-        nice_label(ff, text="y range", side=tk.LEFT)
+        ff = nice_frame(f, anchor="ne", side=tk.TOP)
+        nice_label(ff, text="vertical", side=tk.LEFT)
         
         def _update(labeltext, string):
             value = read_number_from_string(string)
@@ -355,12 +360,12 @@ class ModelInstance():
                     if value is not None:
                         self.model.function.constants[labeltext] = value
                         if on_update is not None: on_update()
-                field = nice_labeled_field(f, f"{k}", update_handler=_update)
+                field = nice_labeled_field(f, k, update_handler=_update)
                 v = self.model.function.constants.get(k)
                 if v is not None: field.insert(0, str(v))
 
     def __init_color_settings_frame(self, frame, on_update=None):
-        nice_label(frame, text="RGBA colors", side=tk.TOP, anchor="c", justify="center")
+        nice_label(frame, text="figure RGBA colors", side=tk.TOP, anchor="c", justify="center")
         f = nice_frame(frame, side=tk.TOP, anchor="ne")
         set_padding(f)
         
@@ -372,10 +377,11 @@ class ModelInstance():
             "normals": [0,0,0,127],
             "prev_points": [0,0,255,0],
             }
+##        longest_name_len = len(max(self.colors.keys(), key=len))
         for name,color in self.colors.items():
             ff = nice_frame(f, side=tk.TOP, anchor="ne")
 ##            set_padding(ff)
-            nice_label(ff, text=name, side=tk.LEFT)
+            nice_label(ff, text=name, anchor="w", side=tk.LEFT) # , width=longest_name_len
             nice_RGBA_selector(ff, color)
 
     def draw(self):

@@ -153,7 +153,7 @@ class ImageDrawing:
     def __init__(self, *args, **kwargs):
         self.background = self._color_check(*args, **kwargs)
         self.objects = []
-        self.colors = [] # list of RGBA color arrays
+        self.colors = [] # list of RGBA color arrays (0..1)
 
     def _color_check(self, r=0, g=0, b=0, a=1, **kwargs):
         return np.asarray([r,g,b,a])
