@@ -68,15 +68,6 @@ class ModelConfiguration(ModelBase):
     def points_as_values(self, points):
         points *= self.precision
         points += self.topleft
-    
-    def visualization(self):
-        extent = (self.topleft[0],self.bottomright[0],self.topleft[1],self.bottomright[1])
-        fig, ax = plt.subplots(1, 2, figsize=(12, 6))
-        ax[0].imshow(self.image_history.swapaxes(0, 1)[::-1,:], extent=extent)
-        ax[1].imshow(self.image.swapaxes(0, 1)[::-1,:], extent=extent)
-        ax[0].set_title(f"Cumulative Timesteps")
-        ax[1].set_title(f"Timestep: {self.timestep}")
-        plt.show()
 
     def nextstep(self):
         self.topleft_old[:] = self.topleft

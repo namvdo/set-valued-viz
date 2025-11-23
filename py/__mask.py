@@ -134,7 +134,7 @@ def hausdorff_distance(source_mask, target_mask):
 
 def image_shape(resolution, max_x, max_y):
     # resolution -> length of the longest side
-    aspect = max_x/max_y
+    aspect = max_x/max_y if max_y!=0 else 1
     width = int(resolution*min(aspect, 1))
     height = int(resolution*min(1/aspect, 1))
     if width>height: height += 1
@@ -143,7 +143,9 @@ def image_shape(resolution, max_x, max_y):
 
 def pixelize_points(points, topleft, bottomright, resolution):
     pixels = points-topleft
-    pixels /= (bottomright-topleft).max()
+    scale = (bottomright-topleft).max()
+    if scale!=0: pixels /= scale
+    else: pixels *= 0
     pixels *= resolution-1
     pixels += .5
     return pixels.astype(np.int32)
@@ -152,6 +154,13 @@ def pixelize_distances(values, topleft, bottomright, resolution):
     pixels = np.divide(values, (bottomright-topleft).max())
     pixels *= resolution-1
     return pixels.astype(np.int32)
+
+def pointify_pixels(pixels, topleft, bottomright, resolution):
+    points = pixels.astype(np.float64)
+    points -= .5
+    points /= resolution-1
+    points *= (bottomright-topleft).max()
+    return points+topleft
 
 
 def circle_mask(r, inner=0, border=0):

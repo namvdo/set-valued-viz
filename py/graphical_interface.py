@@ -3,6 +3,7 @@ from __gui import *
 import PIL
 
 from normals_model import ModelConfiguration as NormalsModel
+from mask_model2 import ModelConfiguration as MaskModel
 
 SAVEDIR = os.path.join(WORKDIR, "saves")
 
@@ -197,10 +198,26 @@ def nice_RGBA_selector(frame, color, on_update=None):
     return color
 
 
+##class HybridModel(ModelBase):
+##    step = None
+##    def __init__(self, model_base):
+##        self.copy_attributes_from(model_base)
+##        
+##        self.normals = NormalsModel()
+##        self.mask = MaskModel()
+##
+##        # share start_points
+##        self.normals.start_point = self.start_point
+##        self.mask.start_point = self.start_point
+##        
+##        # share functions
+##        self.normals.function = self.function
+##        self.mask.function = self.function
+
 class ModelInstance():
     key = None
-    step = 0
     model = None
+    step = 0
     
     resolution = 512
 
@@ -223,13 +240,11 @@ class ModelInstance():
         #
         middle = nice_frame(win, anchor="nw")
         def _mouse_handler(event):
-            print(event)
+##            print(event)
             pass
         self.canvas, self.fig, self.subplot = create_figure(middle, _mouse_handler, 512, 512)
         #
-        
         self.__init_figure_drawing_panel(win)
-        
 
     def __init_model_control_panel(self, win):
         frame = nice_frame(win, anchor="nw")
@@ -243,7 +258,8 @@ class ModelInstance():
         nice_label(f, text=text, side=tk.TOP, anchor="nw", justify="left")
 
         def _update():
-            print(self.model.function)
+##            print(self.model.function)
+            pass
         self.__init_parameters_frame(frame, on_update=_update)
         
         f = nice_frame(frame, anchor="nw", side=tk.TOP)
@@ -325,12 +341,7 @@ class ModelInstance():
         b = nice_button(ff, text="Save PNG", command=self.save_png)
         #
 
-        # color selector test
-        color = [255,0,0,0]
-        f = nice_frame(frame, side=tk.TOP)
-        nice_label(f, text="test", side=tk.LEFT)
-        nice_RGBA_selector(f, color)
-        #
+        self.__init_color_settings_frame(frame)
 
     def __init_parameters_frame(self, frame, on_update=None):
         adjusable_parameters = self.model.function.required_constants()
@@ -348,49 +359,53 @@ class ModelInstance():
                 v = self.model.function.constants.get(k)
                 if v is not None: field.insert(0, str(v))
 
+    def __init_color_settings_frame(self, frame, on_update=None):
+        nice_label(frame, text="RGBA colors", side=tk.TOP, anchor="c", justify="center")
+        f = nice_frame(frame, side=tk.TOP, anchor="ne")
+        set_padding(f)
+        
+        self.colors = {
+            "background": [255,255,255,255],
+            "grid": [0,127,127,63],
+            "points": [255,0,0,255],
+            "boundary": [0,255,0,255],
+            "normals": [0,0,0,127],
+            "prev_points": [0,0,255,0],
+            }
+        for name,color in self.colors.items():
+            ff = nice_frame(f, side=tk.TOP, anchor="ne")
+##            set_padding(ff)
+            nice_label(ff, text=name, side=tk.LEFT)
+            nice_RGBA_selector(ff, color)
+
     def draw(self):
-        if not self.model.can_draw(): self.model.process(self.step)
+        if not self.model.can_draw():
+            self.model.process(self.step)
         
-        #
-        transparent = np.zeros(4)
-        white = np.ones(4)
-        black = np.array([0.,0.,0.,1.])
-        red = np.array([1.,0.,0.,1.])
-        green = np.array([0.,1.,0.,1.])
-        blue = np.array([0.,0.,1.,1.])
+        color = np.divide(self.colors["background"], 255)
+        drawing = ImageDrawing(*color)
         
-        draw_prev_points = 0
-        draw_prev_normals = 0
-        draw_boundary_lines = 1
-        draw_outer_normals = 0
-        draw_inner_normals = 1
-        #
+        color = np.divide(self.colors["boundary"], 255)
+        if color[3]>0: drawing.lines(*self.model.get_boundary_lines(), *color)
         
-        drawing = ImageDrawing(*white)
+        color = np.divide(self.colors["normals"], 255)
+        if color[3]>0: drawing.lines(*self.model.get_inner_normals(), *color)
         
-##        drawing.circle((0,0), 1, red)
-        drawing.grid((0,0), .1, *((green+blue)/2))
+        color = np.divide(self.colors["prev_points"], 255)
+        if color[3]>0: drawing.points(self.model._prev_points, *color)
         
-        if draw_boundary_lines:
-            drawing.lines(*self.model.get_boundary_lines(), *green)
-        
-        if draw_inner_normals:
-            drawing.lines(*self.model.get_inner_normals(), *(black/2))
-        if draw_outer_normals:
-            drawing.lines(*self.model.get_outer_normals(), *(black/2))
-        
-        if draw_prev_points:
-            drawing.points(self.model._prev_points, *blue)
-            if draw_prev_normals:
-                drawing.lines(*self.model.get_prev_inner_normals(), *black)
-        
-        drawing.points(self.model._points, *red)
-        
+        color = np.divide(self.colors["points"], 255)
+        if color[3]>0: drawing.points(self.model._points, *color)
         
         if self.min_x is not None: drawing.tl[0] = min(drawing.tl[0], self.min_x)
         if self.max_x is not None: drawing.br[0] = max(drawing.br[0], self.max_x)
         if self.min_y is not None: drawing.tl[1] = min(drawing.tl[1], self.min_y)
         if self.max_y is not None: drawing.br[1] = max(drawing.br[1], self.max_y)
+        
+        color = np.divide(self.colors["grid"], 255)
+        if color[3]>0:
+##            dist = np.linalg.norm(drawing.br-drawing.tl)/10
+            drawing.grid((0,0), self.model.epsilon, *color)
         
         image = drawing.draw(self.resolution)
         return np.flip(image.swapaxes(0, 1), axis=0), drawing.tl, drawing.br
@@ -413,7 +428,7 @@ class Interface():
     instances_created = 0
     
     def __init__(self):
-        self.normals_model = NormalsModel()
+        self.model_base = ModelBase()
         self.model_instances = {}
         self._init_main_window()
 
@@ -432,25 +447,25 @@ class Interface():
         f = nice_frame(leftside, side=tk.TOP)
         set_padding(f)
         nice_label(f, text="function", side=tk.TOP, anchor="sw")
-        def _update(labeltext, string): getattr(self.normals_model.function, labeltext).string = string
+        def _update(labeltext, string): getattr(self.model_base.function, labeltext).string = string
         field_fx = nice_labeled_field(f, "fx", update_handler=_update)
         field_fy = nice_labeled_field(f, "fy", update_handler=_update)
-        field_fx.insert(0, self.normals_model.function.fx.string)
-        field_fy.insert(0, self.normals_model.function.fy.string)
+        field_fx.insert(0, self.model_base.function.fx.string)
+        field_fy.insert(0, self.model_base.function.fy.string)
         
         f = nice_frame(leftside, side=tk.TOP)
         set_padding(f)
         label = nice_label(f, text="starting point", side=tk.TOP, anchor="sw")
         def _update_x(labeltext, string):
             value = read_number_from_string(string)
-            if value is not None: self.normals_model.start_point.x = value
+            if value is not None: self.model_base.start_point.x = value
         def _update_y(labeltext, string):
             value = read_number_from_string(string)
-            if value is not None: self.normals_model.start_point.y = value
+            if value is not None: self.model_base.start_point.y = value
         field_start_x = nice_labeled_field(f, "x", update_handler=_update_x)
         field_start_y = nice_labeled_field(f, "y", update_handler=_update_y)
-        field_start_x.insert(0, str(self.normals_model.start_point.x))
-        field_start_y.insert(0, str(self.normals_model.start_point.y))
+        field_start_x.insert(0, str(self.model_base.start_point.x))
+        field_start_y.insert(0, str(self.model_base.start_point.y))
         
         
     def log(self, string):
@@ -465,7 +480,11 @@ class Interface():
                 del self.model_instances[key]
                 self.log(f"destroyed instance {key}")
             except: pass
-        instance = ModelInstance(on_destroy, model=self.normals_model.copy(), key=key)
+        
+        normals_model = NormalsModel()
+        normals_model.copy_attributes_from(self.model_base)
+        
+        instance = ModelInstance(on_destroy, model=normals_model, key=key)
         self.model_instances[key] = instance
         self.instances_created += 1
         self.log(f"created instance {key}")

@@ -299,7 +299,7 @@ class ModelConfiguration(ModelBase):
         
         drawing = ImageDrawing(*np.ones(4))
 
-        drawing.circle((0,0), 1, *red)
+##        drawing.circles([(0,0)], 1, *red)
         drawing.grid((0,.31), .25, *black)
         
         if draw_boundary_lines:

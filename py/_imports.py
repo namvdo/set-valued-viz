@@ -16,6 +16,8 @@ class Point2D:
     def __str__(self):
         return f"({self.x}, {self.y})"
 
+    def as_tuple(self): return self.x, self.y
+
 class EquationObject():
     def __init__(self, string):
         self.string = string
@@ -108,11 +110,20 @@ class MappingFunction2D:
 
 class ModelBase():
     epsilon = 0.01
+    start_point = None
+    function = None
     
     def __init__(self):
         self.start_point = Point2D(0,0)
         self.function = MappingFunction2D("1-a*x*x+y", "b*x")
         self.function.set_constants(a=1.4, b=0.3)
+
+    def copy_attributes_from(self, obj):
+        for attr in ["epsilon","start_point","function"]:
+            if hasattr(obj, attr):
+                value = getattr(obj, attr)
+                if hasattr(value, "copy"): value = value.copy()
+                setattr(self, attr, value)
     
     def copy(self):
         new = type(self)()
@@ -125,8 +136,8 @@ class ImageDrawing:
     class LinesObj:
         starts = None
         ends = None
-    class CircleObj:
-        center = (0,0)
+    class CirclesObj:
+        points = None
         radius = 1
         inside = 0
     class GridObj:
@@ -136,6 +147,9 @@ class ImageDrawing:
     tl = None
     br = None
     
+##    last_drawn_image = None
+##    last_resolution_used = None
+    
     def __init__(self, *args, **kwargs):
         self.background = self._color_check(*args, **kwargs)
         self.objects = []
@@ -144,49 +158,61 @@ class ImageDrawing:
     def _color_check(self, r=0, g=0, b=0, a=1, **kwargs):
         return np.asarray([r,g,b,a])
 
+##    def clear_image_memory(self):
+##        self.last_drawn_image = None
+##        self.last_resolution_used = None
+    
     def clear(self):
         self.tl = self.br = None
         self.objects.clear()
         self.colors.clear()
+##        self.clear_image_memory()
 
     def update_tl_br(self, tl, br):
         if self.tl is None: self.tl = tl
         else: self.tl = np.min([tl,self.tl], axis=0)
         if self.br is None: self.br = br
         else: self.br = np.max([br,self.br], axis=0)
+##        self.clear_image_memory()
         
     def points(self, points, *args, **kwargs):
-        points = np.asarray(points)
+        points = np.asarray(points, dtype=np.float64)
         self.update_tl_br(*bounding_box(points))
         self.objects.append(points)
         self.colors.append(self._color_check(*args, **kwargs))
     
     def lines(self, starts, ends, *args, **kwargs):
         obj = self.LinesObj()
-        obj.starts = np.asarray(starts)
-        obj.ends = np.asarray(ends)
+        obj.starts = np.asarray(starts, dtype=np.float64)
+        obj.ends = np.asarray(ends, dtype=np.float64)
         self.update_tl_br(*bounding_box(obj.starts))
         self.update_tl_br(*bounding_box(obj.ends))
         self.objects.append(obj)
         self.colors.append(self._color_check(*args, **kwargs))
-
-    def circle(self, center, radius, *args, inside=0, **kwargs):
-        obj = self.CircleObj()
-        obj.center = np.asarray(center)
+    
+    def circles(self, points, radius, *args, inside=0, **kwargs):
+        obj = self.CirclesObj()
+        obj.points = np.asarray(points, dtype=np.float64)
         obj.radius = radius
         obj.inside = inside
-        self.update_tl_br(obj.center-radius, obj.center+radius)
+        self.update_tl_br(*bounding_box(obj.points-radius))
+        self.update_tl_br(*bounding_box(obj.points+radius))
         self.objects.append(obj)
         self.colors.append(self._color_check(*args, **kwargs))
 
     def grid(self, center, size, *args, **kwargs):
         obj = self.GridObj()
-        obj.center = np.asarray(center)
+        obj.center = np.asarray(center, dtype=np.float64)
         obj.size = size
         self.objects.append(obj)
         self.colors.append(self._color_check(*args, **kwargs))
 
     def draw(self, resolution:int):
+
+##        # no need to redraw
+##        if self.last_drawn_image is not None and self.last_resolution_used==resolution:
+##            return self.last_drawn_image
+        
         pixels = []
         for x in self.objects:
             if isinstance(x, self.LinesObj):
@@ -194,12 +220,12 @@ class ImageDrawing:
                 e = pixelize_points(x.ends, self.tl, self.br, resolution)
                 pixels.append((0, s, e))
                 
-            elif isinstance(x, self.CircleObj):
-                c = pixelize_points(x.center, self.tl, self.br, resolution)
+            elif isinstance(x, self.CirclesObj):
+                c = pixelize_points(x.points, self.tl, self.br, resolution)
                 radii = pixelize_distances([x.radius, x.inside], self.tl, self.br, resolution)
                 m = circle_mask(*radii)
                 pixels.append((1, c, m))
-
+                
             elif isinstance(x, self.GridObj):
                 c = x.center
                 s = x.size
@@ -214,12 +240,16 @@ class ImageDrawing:
         image[:,:] = self.background
 
         def color_blend_on_array(array, color):
-            array[:,:3] = color[:3]*color[3] + array[:,:3]*array[:,3:4]*(1-color[3])
-            array[:,3] = 1-(1-array[:,3])*(1-color[3])
-            array[:,:3] /= array[:,3:4]
+            if color[3]<1:
+                array[:,:3] = color[:3]*color[3] + array[:,:3]*array[:,3:4]*(1-color[3])
+                array[:,3] = 1-(1-array[:,3])*(1-color[3])
+                array[:,:3] /= array[:,3:4]
+            else:
+                array[:] = color
             return array
         
-        masks = {}
+        masks = {} # storage for mask reuse
+        
         def draw_line_on_image(start, end, color):
             key = (int(start[0]-end[0]), int(start[1]-end[1]))
             alt_key = (-key[0], -key[1])
@@ -236,7 +266,7 @@ class ImageDrawing:
             
             image[x_slice, y_slice][mask] = color_blend_on_array(image[x_slice, y_slice][mask], color)
             return True
-
+        
         def draw_circle_on_image(center, mask, color):
             r = mask.shape[0]//2
             x_slice = slice(center[0]-r, center[0]+r+1)
@@ -250,8 +280,9 @@ class ImageDrawing:
                     case 0: # lines
                         for i,s in enumerate(x[1]):
                             draw_line_on_image(s, x[2][i], color)
-                    case 1: # circle
-                        draw_circle_on_image(x[1], x[2], color)
+                    case 1: # circles
+                        for c in x[1]:
+                            draw_circle_on_image(c, x[2], color)
                     case 2: # grid
                         grid_lines_n = int(np.divide(self.br-self.tl, x[2]).max())+2
                         offset = np.divide(x[1]-self.tl, x[2]).astype(np.int32)
@@ -259,17 +290,20 @@ class ImageDrawing:
                             i -= offset
                             target = x[2]*i
                             target = pixelize_points(target, self.tl, self.br, resolution)
-                            target = np.clip(target, a_min=0, a_max=np.subtract(image.shape[:2], 1))
-
-                            color_blend_on_array(image[target[0],:], color)
-                            color_blend_on_array(image[:,target[1]], color)
+                            
+                            if target[0]>=0 and target[0]<image.shape[0]:
+                                color_blend_on_array(image[target[0],:], color)
+                            if target[1]>=0 and target[1]<image.shape[1]:
+                                color_blend_on_array(image[:,target[1]], color)
             else: # points
                 image[x[:,0],x[:,1]] = color_blend_on_array(image[x[:,0],x[:,1]], color)
-
-##        print(image.min(), image.max())
+        
         if image.any():
             image /= image.max()
             image *= 255
+        
+##        self.last_drawn_image = image.astype(np.uint8)
+##        self.last_resolution_used = resolution
         return image.astype(np.uint8)
 
 
