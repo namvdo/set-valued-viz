@@ -4,14 +4,16 @@ from _imports import *
 class ModelConfiguration(ModelBase):
     printing = True
     
+    precision = 8
+    
     precision_increase_attempts = 10
     precision_decrease_attempts = 10
     
     def __init__(self):
         super().__init__()
-        self._reset()
+        self.reset()
 
-    def _reset(self):
+    def reset(self):
         self.tij = None
         self._timestep = None
         self._points = np.zeros((0,2))
@@ -27,11 +29,11 @@ class ModelConfiguration(ModelBase):
     
     def _too_sparse_mask(self):
         dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
-        return dist>self.epsilon/8
+        return dist>self.epsilon/self.precision
 
     def _too_dense_mask(self):
         dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
-        mask = dist<self.epsilon/16
+        mask = dist<self.epsilon/(self.precision*2)
         mask = repeat_mask_ones_until_divisible(mask, 2)
         mask[1::2] = False
         return mask
@@ -54,8 +56,6 @@ class ModelConfiguration(ModelBase):
         ends = prev_points_wraparound[1:][gap_mask]
         more_points = (starts+ends)/2
         
-        sorting = np.arange(len(self._points)+len(more_points))
-        
         points = np.append(self._prev_points, more_points, axis=0)
         normals = np.append(self._prev_normals, more_normals, axis=0)
         prev_points = np.zeros_like(points)
@@ -63,6 +63,7 @@ class ModelConfiguration(ModelBase):
         
         self._process(points, normals, prev_points, prev_normals, 1)
         
+        sorting = np.arange(len(self._points)+len(more_points))
         l = len(self._points)
         for index,replace in enumerate(np.arange(l)[gap_mask]):
             replace += index+1
@@ -94,7 +95,7 @@ class ModelConfiguration(ModelBase):
 
         
     def _start(self, to_timestep:int):
-        self._reset()
+        self.reset()
         self._timestep = 0
         
         radians = np.linspace(0, np.pi*2, 128)[:-1]
@@ -108,6 +109,8 @@ class ModelConfiguration(ModelBase):
         
         self._points[:,0], self._points[:,1] = self.function(self._points[:,0], self._points[:,1])
         self._points += self._normals
+        
+        self._gap_detection_loops()
         
         self._continue(to_timestep=to_timestep)
 

@@ -38,9 +38,66 @@ def read_numbers_from_string(string):
         values.append(value)
     return values
 
+
+
+def scroll_delta_translate(delta):
+    if os.name=="nt": return delta//120 # on windows must divide by 120
+    return delta
+
+def integer_cycler(obj, mod, on_update=None, button=True, scroll=True):
+    var = tk.IntVar(value=0)
+    def button_handler(event):
+        match event.num:
+            case 1: var.set((var.get()+1)%mod)
+            case 3: var.set((var.get()-1)%mod)
+            case _: return
+        if on_update is not None: on_update()
+    def wheel_handler(event):
+        var.set((var.get()+scroll_delta_translate(event.delta))%mod)
+        if on_update is not None: on_update()
+    if button: obj.bind("<Button>", button_handler, add="+")
+    if scroll: obj.bind("<MouseWheel>", wheel_handler, add="+")
+    return var
+
+def string_cycler(obj, options, on_update=None, button=True, scroll=True):
+    var = tk.StringVar(value=options[0])
+    var.option_index = 0
+    def button_handler(event):
+        match event.num:
+            case 1:
+                var.option_index += 1
+                var.option_index %= len(options)
+                var.set(options[var.option_index])
+            case 3:
+                var.option_index -= 1
+                var.option_index %= len(options)
+                var.set(options[var.option_index])
+            case _: return
+        if on_update is not None: on_update()
+    def wheel_handler(event):
+        var.option_index += scroll_delta_translate(event.delta)
+        var.option_index %= len(options)
+        var.set(options[var.option_index])
+        if on_update is not None: on_update()
+    if button: obj.bind("<Button>", button_handler, add="+")
+    if scroll: obj.bind("<MouseWheel>", wheel_handler, add="+")
+    return var
+
+
+
+
+
+
+
+
+
 def set_colors(obj, fg, bg):
     if isinstance(obj, tk.Frame) or isinstance(obj, tk.Tk) or isinstance(obj, tk.Scrollbar):
         obj.config(bg=bg)
+    elif isinstance(obj, tk.ttk.Combobox):
+        pass
+    elif isinstance(obj, tk.OptionMenu):
+        obj.config(fg=fg, bg=bg, highlightbackground=PASSIVE_BG_COLOR)
     elif isinstance(obj, tk.Canvas):
         obj.config(bg=fg, highlightbackground=bg)
     elif isinstance(obj, tk.Entry):
@@ -135,6 +192,10 @@ def nice_field(*args, identifier=None, side=tk.LEFT, fill=tk.BOTH, update_handle
     set_hover_colors(field, set_active_colors_inverted, set_active_colors)
     return field
 
+def set_field_content(field, string):
+    field.delete(0, tk.END)
+    field.insert(0, string)
+
 def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, fill=tk.BOTH, update_handler=None):
     subframe = nice_frame(frame, side=side, fill=fill)
     if text:
@@ -157,7 +218,8 @@ def nice_RGB_selector(frame, color, on_update=None):
     def _update_preview_color():
         set_colors(preview, opposite_color_as_hex(color), color_as_hex(color))
     _update_preview_color()
-    
+
+    # Red
     def _update(identifier, string):
         value = read_number_from_string(string)
         if value is not None: color[0] = int(value)%256
@@ -165,9 +227,19 @@ def nice_RGB_selector(frame, color, on_update=None):
         if on_update is not None: on_update()
         _update_preview_color()
     
-    field = nice_field(f, width=3, update_handler=_update)
-    field.insert(0, str(color[0]))
+    field0 = nice_field(f, width=3, update_handler=_update)
+    field0.insert(0, str(color[0]))
     
+    def _var0_update():
+        color[0] = var0.get()
+        if on_update is not None: on_update()
+        _update_preview_color()
+        set_field_content(field0, str(color[0]))
+    var0 = integer_cycler(field0, 256, on_update=_var0_update, button=False)
+    var0.set(color[0])
+    #
+
+    # Green
     def _update(identifier, string):
         value = read_number_from_string(string)
         if value is not None: color[1] = int(value)%256
@@ -175,9 +247,19 @@ def nice_RGB_selector(frame, color, on_update=None):
         if on_update is not None: on_update()
         _update_preview_color()
         
-    field = nice_field(f, width=3, update_handler=_update)
-    field.insert(0, str(color[1]))
+    field1 = nice_field(f, width=3, update_handler=_update)
+    field1.insert(0, str(color[1]))
     
+    def _var1_update():
+        color[1] = var1.get()
+        if on_update is not None: on_update()
+        _update_preview_color()
+        set_field_content(field1, str(color[1]))
+    var1 = integer_cycler(field1, 256, on_update=_var1_update, button=False)
+    var1.set(color[1])
+    #
+
+    # Blue
     def _update(identifier, string):
         value = read_number_from_string(string)
         if value is not None: color[2] = int(value)%256
@@ -185,23 +267,45 @@ def nice_RGB_selector(frame, color, on_update=None):
         if on_update is not None: on_update()
         _update_preview_color()
         
-    field = nice_field(f, width=3, update_handler=_update)
-    field.insert(0, str(color[2]))
+    field2 = nice_field(f, width=3, update_handler=_update)
+    field2.insert(0, str(color[2]))
+    
+    def _var2_update():
+        color[2] = var2.get()
+        if on_update is not None: on_update()
+        _update_preview_color()
+        set_field_content(field2, str(color[2]))
+    var2 = integer_cycler(field2, 256, on_update=_var2_update, button=False)
+    var2.set(color[2])
+    #
     
     return f
 
 def nice_RGBA_selector(frame, color, on_update=None):
     f = nice_RGB_selector(frame, color, on_update)
     preview = f.slaves()[0].slaves()[0]
-    preview.configure(text=f"{int((color[3]/255)*100)}%")
+    
+    def _preview_update():
+        preview.configure(text=f"{int((color[3]/255)*100)}%")
+
+    _preview_update()
+    
     def _update(identifier, string):
         value = read_number_from_string(string)
         if value is not None: color[3] = int(value)%256
         else: color[3] = 0
         if on_update is not None: on_update()
-        preview.configure(text=f"{int((color[3]/255)*100)}%")
+        _preview_update()
     field = nice_field(f, width=3, update_handler=_update)
     field.insert(0, str(color[3]))
+    
+    def _update():
+        color[3] = var.get()
+        if on_update is not None: on_update()
+        _preview_update()
+        set_field_content(field, str(color[3]))
+    var = integer_cycler(field, 256, on_update=_update, button=False)
+    var.set(color[3])
     
     return color
 
@@ -225,6 +329,9 @@ def nice_titled_frame(frame, title, **kwargs):
     ff = nice_frame(f, fill=tk.BOTH)
     set_padding(ff)
     return ff
+
+
+
 
 ##class HybridModel(ModelBase):
 ##    step = None
@@ -283,8 +390,7 @@ class ModelInstance():
         def _press():
             self.step += 1
             self.model.process(self.step)
-            field.delete(0, tk.END)
-            field.insert(0, str(self.step))
+            set_field_content(step_field, str(self.step))
         b = nice_button(ff, text="Next Step", command=_press)
         
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
@@ -292,13 +398,20 @@ class ModelInstance():
             value = read_number_from_string(string)
             if value is not None:
                 self.step = max(int(value), 0)
-        field = nice_field(ff, side=tk.RIGHT, width=6, justify="center", update_handler=_update)
-        field.insert(0, str(self.step))
+                
+        step_field = nice_field(ff, side=tk.RIGHT, width=6, justify="center", update_handler=_update)
+        step_field.insert(0, str(self.step))
+        
         def _press():
             self.model.process(self.step)
-            field.delete(0, tk.END)
-            field.insert(0, str(self.step))
+            set_field_content(step_field, str(self.step))
         b = nice_button(ff, text="Go to Step", command=_press)
+        
+        def _press():
+            self.model.reset()
+            self.step = 0
+            set_field_content(step_field, str(self.step))
+        b = nice_button(f, text="Reset", command=_press)
         #
         
         f = nice_titled_frame(frame, "model configuration", side=tk.TOP)
@@ -306,13 +419,17 @@ class ModelInstance():
         text = f"fx = {self.model.function.fx}"
         text += f"\nfy = {self.model.function.fy}"
         text += f"\nstart = {self.model.start_point}"
-        nice_label(ff, text=text, anchor="nw", justify="left")
+        label = nice_label(ff, text=text, anchor="nw", justify="left")
 
-        def _update():
-##            print(self.model.function)
-            pass
-        self.__init_parameters_frame(f, on_update=_update)
+##        def _update():
+##            print(var.get())
+##        var = string_cycler(label, list("abcdef"), on_update=_update)
+##        
+##        def _update():
+##            print(var1.get())
+##        var1 = integer_cycler(label, 256, on_update=_update)
         
+        #
         ff = nice_titled_frame(f, "noise", anchor="nw", side=tk.TOP)
         nice_label(ff, text="shape?")
         def _update(identifier, string):
@@ -321,6 +438,12 @@ class ModelInstance():
                 self.model.epsilon = abs(value)
         field = nice_labeled_field(ff, "epsilon", width=8, update_handler=_update)
         field.insert(0, str(self.model.epsilon))
+        #
+
+        def _update():
+##            print(self.model.function)
+            pass
+        self.__init_parameters_frame(f, on_update=_update)
         
         
 
@@ -363,7 +486,7 @@ class ModelInstance():
         field.insert(0, str(self.resolution))
         
         #
-        fff = nice_titled_frame(ff, "extend axii", anchor="nw", side=tk.LEFT)
+        fff = nice_titled_frame(ff, "extend limits", anchor="nw", side=tk.LEFT)
         
         ffff = nice_frame(fff, anchor="c", side=tk.TOP)
         
@@ -472,18 +595,15 @@ class Interface():
         self.window = nice_window("main")
         set_padding(self.window)
         
-        leftside = padded_frame(self.window, side=tk.LEFT, fill=tk.BOTH)
-        set_padding(leftside)
-        rightside = padded_and_raised_frame(self.window, side=tk.LEFT, fill=tk.BOTH)
+        leftside = nice_frame(self.window, side=tk.LEFT, fill=tk.BOTH)
+        rightside = nice_titled_frame(self.window, "log", side=tk.LEFT)
         self._logbox = nice_textbox(rightside, 36, 12)
         
         # main window content
-        f = nice_frame(leftside, side=tk.TOP, fill=tk.BOTH)
-        
+        f = padded_frame(leftside, side=tk.TOP, fill=tk.BOTH)
         b = nice_button(f, text="New Instance", side=tk.TOP, command=self.start_model_instance)
         
-        ff = nice_frame(f, side=tk.TOP, fill=tk.BOTH, anchor="nw")
-        nice_label(ff, text="function", anchor="nw")
+        ff = nice_titled_frame(leftside, "function", side=tk.TOP, fill=tk.BOTH, anchor="ne")
         def _update(identifier, string):
             getattr(self.model_base.function, identifier).string = string
         field_fx = nice_labeled_field(ff, "fx", update_handler=_update)
@@ -491,18 +611,15 @@ class Interface():
         field_fx.insert(0, self.model_base.function.fx.string)
         field_fy.insert(0, self.model_base.function.fy.string)
         
-        nice_label(f, height=1)
-        
-        ff = nice_frame(f, side=tk.TOP, fill=tk.BOTH, anchor="nw")
-        label = nice_label(ff, text="starting point", anchor="nw")
+        ff = nice_titled_frame(leftside, "starting point", side=tk.TOP, anchor="ne")
         def _update_x(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.model_base.start_point.x = value
         def _update_y(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.model_base.start_point.y = value
-        field_start_x = nice_labeled_field(ff, "x", update_handler=_update_x)
-        field_start_y = nice_labeled_field(ff, "y", update_handler=_update_y)
+        field_start_x = nice_labeled_field(ff, "x", width=8, update_handler=_update_x)
+        field_start_y = nice_labeled_field(ff, "y", width=8, update_handler=_update_y)
         field_start_x.insert(0, str(self.model_base.start_point.x))
         field_start_y.insert(0, str(self.model_base.start_point.y))
         
