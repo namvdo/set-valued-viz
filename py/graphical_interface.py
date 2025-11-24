@@ -92,15 +92,14 @@ def nice_frame(root, *args, side=tk.LEFT, **kwargs):
     set_passive_colors(frame)
     return frame
 
-def nice_textbox(frame, width=80, height=20):
-    boxframe = create_frame(frame, tk.TOP)
+def nice_textbox(frame, width=80, height=20, side=tk.TOP, **kwargs):
+    boxframe = nice_frame(frame, side=side, **kwargs)
     scrollbar = tk.Scrollbar(boxframe)
     box = tk.Text(boxframe, height=height, width=width, yscrollcommand=scrollbar.set)
     box.configure(state="disabled")
     box.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
     scrollbar.configure(command=box.yview)
-    set_passive_colors(boxframe)
     set_active_colors(box)
     return box
 
@@ -115,42 +114,46 @@ def nice_separator(frame, padx=DEFAULT_PADDING_WIDTH, pady=DEFAULT_PADDING_HEIGH
     separator.pack(side=tk.LEFT if vertical else tk.TOP, fill=tk.BOTH, padx=padx, pady=pady)
     return separator
 
-def nice_label(*args, side=tk.LEFT, fill=tk.BOTH, **kwargs):
+def nice_label(*args, side=tk.TOP, fill=tk.BOTH, **kwargs):
     label = tk.Label(*args, **kwargs)
     label.pack(side=side, fill=fill)
     set_passive_colors(label)
     return label
 
-def nice_field(*args, identifier=None, side=tk.LEFT, update_handler=None, **kwargs):
+def nice_title(frame, text, *args, side=tk.TOP, fill=tk.BOTH, **kwargs):
+    label = tk.Label(frame, text=text.title(), *args, **kwargs)
+    label.pack(side=side, fill=fill)
+    set_passive_colors_inverted(label)
+    return label
+
+def nice_field(*args, identifier=None, side=tk.LEFT, fill=tk.BOTH, update_handler=None, **kwargs):
     field = tk.Entry(*args, **kwargs)
-    field.pack(side=side, fill=tk.BOTH)
+    field.pack(side=side, fill=fill)
     if update_handler is not None:
         def _event_handle(event): update_handler(identifier, field.get())
         field.bind("<KeyRelease>", _event_handle)
     set_hover_colors(field, set_active_colors_inverted, set_active_colors)
     return field
 
+def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, fill=tk.BOTH, update_handler=None):
+    subframe = nice_frame(frame, side=side, fill=fill)
+    if text:
+        label = nice_label(subframe, text=text, width=len(text), side=tk.LEFT, anchor="e")
+    field = nice_field(subframe, identifier=text, width=width, side=tk.LEFT, update_handler=update_handler)
+    return field
 
 def nice_button(frame, *args, side=tk.TOP, **kwargs):
     but = tk.Button(frame, *args, **kwargs)
     but.pack(side=tk.TOP, fill=tk.BOTH)
     set_hover_colors(but)
     return but
-    
-
-def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, update_handler=None):
-    subframe = nice_frame(frame, side=side)
-    if text:
-        label = nice_label(subframe, text=text, width=len(text), anchor="w")
-    field = nice_field(subframe, identifier=text, width=width, update_handler=update_handler)
-    return field
 
 def nice_RGB_selector(frame, color, on_update=None):
     f = nice_frame(frame, anchor="e")
     set_passive_colors_inverted(f)
     
     ff = nice_frame(f, side=tk.LEFT, padx=2)
-    preview = nice_label(ff, width=4)
+    preview = nice_label(ff, width=4, side=tk.LEFT)
     def _update_preview_color():
         set_colors(preview, opposite_color_as_hex(color), color_as_hex(color))
     _update_preview_color()
@@ -202,6 +205,26 @@ def nice_RGBA_selector(frame, color, on_update=None):
     
     return color
 
+def padded_frame(frame, *args, **kwargs):
+    f = nice_frame(frame, *args, **kwargs)
+    set_padding(f)
+    return f
+
+def raised_frame(frame, *args, border=1, **kwargs):
+    f = nice_frame(frame, *args, **kwargs)
+    set_passive_colors_inverted(f)
+    return nice_frame(f, padx=border, pady=border, fill=tk.BOTH)
+
+def padded_and_raised_frame(frame, *args, border=1, **kwargs):
+    f = padded_frame(frame, *args, **kwargs)
+    return raised_frame(f, border=border, fill=tk.BOTH)
+
+def nice_titled_frame(frame, title, **kwargs):
+    f = padded_and_raised_frame(frame, **kwargs)
+    nice_title(f, title)
+    ff = nice_frame(f, fill=tk.BOTH)
+    set_padding(ff)
+    return ff
 
 ##class HybridModel(ModelBase):
 ##    step = None
@@ -241,7 +264,7 @@ class ModelInstance():
         set_padding(win)
         
         self.__init_model_control_panel(win)
-        middle = nice_frame(win) # , anchor="n"
+        middle = nice_titled_frame(win, "figure") # , anchor="n"
         self.__init_figure_drawing_panel(win)
         
         def _mouse_handler(event):
@@ -252,33 +275,10 @@ class ModelInstance():
 
     def __init_model_control_panel(self, win):
         frame = nice_frame(win, anchor="nw")
-        
-        nice_label(frame, text="configuration", side=tk.TOP, anchor="c", justify="center")
-        f = nice_frame(frame, anchor="nw", side=tk.TOP)
-        set_padding(f)
-        text = f"fx = {self.model.function.fx}"
-        text += f"\nfy = {self.model.function.fy}"
-        text += f"\nstart = {self.model.start_point}"
-        nice_label(f, text=text, side=tk.TOP, anchor="nw", justify="left")
 
-        def _update():
-##            print(self.model.function)
-            pass
-        self.__init_parameters_frame(frame, on_update=_update)
-        
-        f = nice_frame(frame, anchor="nw", side=tk.TOP)
-        set_padding(f)
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None:
-                self.model.epsilon = abs(value)
-        field = nice_labeled_field(f, "epsilon", width=8, update_handler=_update)
-        field.insert(0, str(self.model.epsilon))
-        
         # buttons
-        f = nice_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        set_padding(f)
-        #
+        f = padded_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
+        
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
         def _press():
             self.step += 1
@@ -286,13 +286,13 @@ class ModelInstance():
             field.delete(0, tk.END)
             field.insert(0, str(self.step))
         b = nice_button(ff, text="Next Step", command=_press)
-        #
+        
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
         def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None:
                 self.step = max(int(value), 0)
-        field = nice_field(ff, side=tk.RIGHT, width=6, update_handler=_update)
+        field = nice_field(ff, side=tk.RIGHT, width=6, justify="center", update_handler=_update)
         field.insert(0, str(self.step))
         def _press():
             self.model.process(self.step)
@@ -301,74 +301,33 @@ class ModelInstance():
         b = nice_button(ff, text="Go to Step", command=_press)
         #
         
-    def __init_figure_drawing_panel(self, win):
-        frame = nice_frame(win, anchor="nw")
-        #
-        
-        nice_label(frame, text="extend figure limits", anchor="c", side=tk.TOP)
-        f = nice_frame(frame, anchor="c", side=tk.TOP)
-        set_padding(f)
-        
-        ff = nice_frame(f, anchor="ne", side=tk.TOP)
-        nice_label(ff, text="horizontal", side=tk.LEFT)
-        
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.min_x = value
-            else: self.min_x = None
-        field = nice_field(ff, side=tk.LEFT, width=5, update_handler=_update)
-        
-        nice_label(ff, text=" ... ", side=tk.LEFT)
-        
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.max_x = value
-            else: self.max_x = None
-        field = nice_field(ff, side=tk.LEFT, width=5, update_handler=_update)
-        
-        ff = nice_frame(f, anchor="ne", side=tk.TOP)
-        nice_label(ff, text="vertical", side=tk.LEFT)
-        
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.min_y = value
-            else: self.min_y = None
-        field = nice_field(ff, side=tk.LEFT, width=5, update_handler=_update)
-        
-        nice_label(ff, text=" ... ", side=tk.LEFT)
-        
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.max_y = value
-            else: self.max_y = None
-        field = nice_field(ff, side=tk.LEFT, width=5, update_handler=_update)
-        
-        
-        f = nice_frame(frame, anchor="nw", side=tk.TOP)
-        set_padding(f)
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.resolution = max(int(value), 2)
-        field = nice_labeled_field(f, "image resolution", width=8, update_handler=_update)
-        field.insert(0, str(self.resolution))
-        
-        # buttons
-        f = nice_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        set_padding(f)
-        ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        b = nice_button(ff, text="Matplotlib Figure", command=self.refresh_figure)
-        ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        b = nice_button(ff, text="Save PNG", command=self.save_png)
-        #
+        f = nice_titled_frame(frame, "model configuration", side=tk.TOP)
+        ff = padded_frame(f, anchor="nw", side=tk.TOP)
+        text = f"fx = {self.model.function.fx}"
+        text += f"\nfy = {self.model.function.fy}"
+        text += f"\nstart = {self.model.start_point}"
+        nice_label(ff, text=text, anchor="nw", justify="left")
 
-        self.__init_color_settings_frame(frame)
+        def _update():
+##            print(self.model.function)
+            pass
+        self.__init_parameters_frame(f, on_update=_update)
+        
+        ff = nice_titled_frame(f, "noise", anchor="nw", side=tk.TOP)
+        nice_label(ff, text="shape?")
+        def _update(identifier, string):
+            value = read_number_from_string(string)
+            if value is not None:
+                self.model.epsilon = abs(value)
+        field = nice_labeled_field(ff, "epsilon", width=8, update_handler=_update)
+        field.insert(0, str(self.model.epsilon))
+        
+        
 
     def __init_parameters_frame(self, frame, on_update=None):
         adjusable_parameters = self.model.function.required_constants()
         if len(adjusable_parameters)>0:
-            nice_label(frame, text="parameters", side=tk.TOP, anchor="c", justify="center")
-            f = nice_frame(frame, side=tk.TOP, anchor="ne")
-            set_padding(f)
+            f = nice_titled_frame(frame, "parameters", side=tk.TOP, anchor="ne")
             for k in sorted(adjusable_parameters):
                 def _update(identifier, string):
                     value = read_number_from_string(string)
@@ -378,11 +337,68 @@ class ModelInstance():
                 field = nice_labeled_field(f, k, update_handler=_update)
                 v = self.model.function.constants.get(k)
                 if v is not None: field.insert(0, str(v))
+        
+    def __init_figure_drawing_panel(self, win):
+        frame = nice_frame(win, anchor="nw")
+        
+        # buttons
+        f = padded_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
+        ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
+        b = nice_button(ff, text="Matplotlib Figure", command=self.refresh_figure)
+        ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
+        b = nice_button(ff, text="Save PNG", command=self.save_png)
+        #
 
-    def __init_color_settings_frame(self, frame, on_update=None):
-        nice_label(frame, text="figure RGBA colors", side=tk.TOP, anchor="c", justify="center")
-        f = nice_frame(frame, side=tk.TOP, anchor="ne")
-        set_padding(f)
+        self.__init_figure_settings_frame(frame)
+
+    def __init_figure_settings_frame(self, frame, on_update=None):
+        f = nice_titled_frame(frame, "figure settings")
+
+        ff = nice_frame(f, side=tk.TOP)
+        fff = nice_titled_frame(ff, "resolution", anchor="nw", side=tk.LEFT)
+        def _update(identifier, string):
+            value = read_number_from_string(string)
+            if value is not None: self.resolution = max(int(value), 2)
+        field = nice_field(fff, width=7, update_handler=_update)
+        field.insert(0, str(self.resolution))
+        
+        #
+        fff = nice_titled_frame(ff, "extend axii", anchor="nw", side=tk.LEFT)
+        
+        ffff = nice_frame(fff, anchor="c", side=tk.TOP)
+        
+        def _update(identifier, string):
+            value = read_number_from_string(string)
+            if value is not None: self.min_x = value
+            else: self.min_x = None
+        field = nice_field(ffff, side=tk.LEFT, width=5, update_handler=_update)
+        
+        nice_label(ffff, text="<= x <=", side=tk.LEFT)
+        
+        def _update(identifier, string):
+            value = read_number_from_string(string)
+            if value is not None: self.max_x = value
+            else: self.max_x = None
+        field = nice_field(ffff, side=tk.LEFT, width=5, update_handler=_update)
+        
+        ffff = nice_frame(fff, anchor="c", side=tk.TOP)
+        
+        def _update(identifier, string):
+            value = read_number_from_string(string)
+            if value is not None: self.min_y = value
+            else: self.min_y = None
+        field = nice_field(ffff, side=tk.LEFT, width=5, update_handler=_update)
+        
+        nice_label(ffff, text="<= y <=", side=tk.LEFT)
+        
+        def _update(identifier, string):
+            value = read_number_from_string(string)
+            if value is not None: self.max_y = value
+            else: self.max_y = None
+        field = nice_field(ffff, side=tk.LEFT, width=5, update_handler=_update)
+        #
+        
+        ff = nice_titled_frame(f, "colors", side=tk.TOP, anchor="ne")
         
         self.colors = {
             "background": [255,255,255,255],
@@ -394,10 +410,9 @@ class ModelInstance():
             }
 ##        longest_name_len = len(max(self.colors.keys(), key=len))
         for name,color in self.colors.items():
-            ff = nice_frame(f, side=tk.TOP, anchor="ne")
-##            set_padding(ff)
-            nice_label(ff, text=name, anchor="w", side=tk.LEFT) # , width=longest_name_len
-            nice_RGBA_selector(ff, color)
+            fff = nice_frame(ff, side=tk.TOP, anchor="ne")
+            nice_label(fff, text=name, anchor="w", side=tk.LEFT) # , width=longest_name_len
+            nice_RGBA_selector(fff, color)
 
     def draw(self):
         if not self.model.can_draw():
@@ -457,34 +472,37 @@ class Interface():
         self.window = nice_window("main")
         set_padding(self.window)
         
-        leftside = nice_frame(self.window, anchor="nw")
+        leftside = padded_frame(self.window, side=tk.LEFT, fill=tk.BOTH)
         set_padding(leftside)
-        rightside = nice_frame(self.window, anchor="nw")
+        rightside = padded_and_raised_frame(self.window, side=tk.LEFT, fill=tk.BOTH)
         self._logbox = nice_textbox(rightside, 36, 12)
         
         # main window content
-        b1 = nice_button(leftside, text="New Instance", command=self.start_model_instance)
+        f = nice_frame(leftside, side=tk.TOP, fill=tk.BOTH)
         
-        f = nice_frame(leftside, side=tk.TOP)
-        set_padding(f)
-        nice_label(f, text="function", side=tk.TOP, anchor="sw")
-        def _update(identifier, string): getattr(self.model_base.function, identifier).string = string
-        field_fx = nice_labeled_field(f, "fx", update_handler=_update)
-        field_fy = nice_labeled_field(f, "fy", update_handler=_update)
+        b = nice_button(f, text="New Instance", side=tk.TOP, command=self.start_model_instance)
+        
+        ff = nice_frame(f, side=tk.TOP, fill=tk.BOTH, anchor="nw")
+        nice_label(ff, text="function", anchor="nw")
+        def _update(identifier, string):
+            getattr(self.model_base.function, identifier).string = string
+        field_fx = nice_labeled_field(ff, "fx", update_handler=_update)
+        field_fy = nice_labeled_field(ff, "fy", update_handler=_update)
         field_fx.insert(0, self.model_base.function.fx.string)
         field_fy.insert(0, self.model_base.function.fy.string)
         
-        f = nice_frame(leftside, side=tk.TOP)
-        set_padding(f)
-        label = nice_label(f, text="starting point", side=tk.TOP, anchor="sw")
+        nice_label(f, height=1)
+        
+        ff = nice_frame(f, side=tk.TOP, fill=tk.BOTH, anchor="nw")
+        label = nice_label(ff, text="starting point", anchor="nw")
         def _update_x(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.model_base.start_point.x = value
         def _update_y(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.model_base.start_point.y = value
-        field_start_x = nice_labeled_field(f, "x", update_handler=_update_x)
-        field_start_y = nice_labeled_field(f, "y", update_handler=_update_y)
+        field_start_x = nice_labeled_field(ff, "x", update_handler=_update_x)
+        field_start_y = nice_labeled_field(ff, "y", update_handler=_update_y)
         field_start_x.insert(0, str(self.model_base.start_point.x))
         field_start_y.insert(0, str(self.model_base.start_point.y))
         
