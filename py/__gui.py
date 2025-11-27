@@ -303,6 +303,7 @@ def nice_RGB_selector(frame, color, on_update=None):
         else: color[0] = 0
         if on_update is not None: on_update()
         _update_preview_color()
+        var0.set(color[0])
     
     field0 = nice_field(f, width=3, update_handler=_update)
     field0.insert(0, str(color[0]))
@@ -323,6 +324,7 @@ def nice_RGB_selector(frame, color, on_update=None):
         else: color[1] = 0
         if on_update is not None: on_update()
         _update_preview_color()
+        var1.set(color[1])
         
     field1 = nice_field(f, width=3, update_handler=_update)
     field1.insert(0, str(color[1]))
@@ -343,6 +345,7 @@ def nice_RGB_selector(frame, color, on_update=None):
         else: color[2] = 0
         if on_update is not None: on_update()
         _update_preview_color()
+        var2.set(color[2])
         
     field2 = nice_field(f, width=3, update_handler=_update)
     field2.insert(0, str(color[2]))
@@ -364,7 +367,7 @@ def nice_RGBA_selector(frame, color, on_update=None):
     
     def _preview_update():
         preview.configure(text=f"{int((color[3]/255)*100)}%")
-
+    
     _preview_update()
     
     def _update(identifier, string):
@@ -373,15 +376,16 @@ def nice_RGBA_selector(frame, color, on_update=None):
         else: color[3] = 0
         if on_update is not None: on_update()
         _preview_update()
+        var.set(color[3])
     field = nice_field(f, width=3, update_handler=_update)
     field.insert(0, str(color[3]))
     
-    def _update():
+    def _var_update():
         color[3] = var.get()
         if on_update is not None: on_update()
         _preview_update()
         set_field_content(field, str(color[3]))
-    var = integer_cycler(field, 256, on_update=_update, button=False)
+    var = integer_cycler(field, 256, on_update=_var_update, button=False)
     var.set(color[3])
     
     return color

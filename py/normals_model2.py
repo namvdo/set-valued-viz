@@ -22,7 +22,9 @@ class ModelConfiguration(ModelBase):
     printing = True
     print_func = print
     
-    precision = 8
+    precision = 10 # point density (relative to epsilon)
+    precision_ceiling = 500 # soft ceiling for points (increases allowed distance between points after the ceiling)
+    precision_ceiling_hardness = 1 # increase to harshen the ceiling effect
     
     precision_increase_attempts = 10
     precision_decrease_attempts = 10
@@ -34,6 +36,8 @@ class ModelConfiguration(ModelBase):
     def __init__(self):
         super().__init__()
         self.reset()
+
+    def __len__(self): return len(self._points)
 
     def reset(self):
         self.tij = None
@@ -48,26 +52,41 @@ class ModelConfiguration(ModelBase):
         self._normals = self._normals[~removal_mask]
         self._prev_points = self._prev_points[~removal_mask]
         self._prev_normals = self._prev_normals[~removal_mask]
+
+    def _min_distance_between_points(self):
+        n = len(self._points)
+        c = self.precision_ceiling
+        over_the_ceiling_ratio = max((n-c)/c, 0)
+        e = self.epsilon
+        e /= self.precision
+        if over_the_ceiling_ratio>0:
+            over_the_ceiling_ratio *= self.precision_ceiling_hardness
+            e *= 1+over_the_ceiling_ratio**2
+        return e
     
     def _too_sparse_mask(self):
+        d = self._min_distance_between_points()
         dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
-        return dist>self.epsilon/self.precision
+        return dist>d*2
 
     def _too_dense_mask(self):
+        d = self._min_distance_between_points()
         dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
-        mask = dist<self.epsilon/(self.precision*2)
+        mask = dist<d
         mask = repeat_mask_ones_until_divisible(mask, 2)
         mask[1::2] = False
         return mask
 
     
     def _points_inside_the_boundary_mask(self):
+        allowed_distance = self.epsilon*.98
         if self.noise_geometry is not None:
-            return np.zeros(self._points.shape[0], dtype=np.bool_)
+            allowed_distance *= noise_geometry_multipliers(self._normals, self.noise_geometry).min()
+##            return np.zeros(self._points.shape[0], dtype=np.bool_)
         inner_points = self._points-self._normals
         inner_points = np.repeat(np.expand_dims(inner_points, axis=0), len(self._points), axis=0)
         diffs = np.subtract(inner_points, np.expand_dims(self._points, axis=1))
-        return np.any(np.linalg.norm(diffs, axis=2)<self.epsilon*.98, axis=1)
+        return np.any(np.linalg.norm(diffs, axis=2)<allowed_distance, axis=1)
 
     ##
     def update_noise_geometry(self, sides=None, rotation=None):

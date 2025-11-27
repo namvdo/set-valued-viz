@@ -192,7 +192,8 @@ class ModelInstance():
             else: self.max_y = None
         field = nice_field(ffff, side=tk.LEFT, width=5, update_handler=_update)
         #
-        
+
+        #
         ff = nice_titled_frame(f, "colors", side=tk.TOP, anchor="ne")
         
         self.colors = {
@@ -208,6 +209,7 @@ class ModelInstance():
             fff = nice_frame(ff, side=tk.TOP, anchor="ne")
             nice_label(fff, text=name, anchor="w", side=tk.LEFT) # , width=longest_name_len
             nice_RGBA_selector(fff, color)
+        #
 
     def draw(self):
         if not self.model.can_draw(): self.model.process(self.step)
@@ -233,9 +235,7 @@ class ModelInstance():
         if self.max_y is not None: drawing.br[1] = max(drawing.br[1], self.max_y)
         
         color = np.divide(self.colors["grid"], 255)
-        if color[3]>0:
-##            dist = np.linalg.norm(drawing.br-drawing.tl)/10
-            drawing.grid((0,0), self.model.epsilon, *color)
+        if color[3]>0: drawing.grid((0,0), self.model.epsilon, *color)
         
         image = drawing.draw(self.resolution)
         return np.flip(image.swapaxes(0, 1), axis=0), drawing.tl, drawing.br
@@ -251,7 +251,9 @@ class ModelInstance():
         if self.step>=0:
             image, tl, br = self.draw()
             self.subplot.imshow(image, extent=(tl[0], br[0], tl[1], br[1]))
-            self.subplot.set_title(f"step: {self.step}, shape: {image.shape}")
+            title = f"step: {self.step}, image: {image.shape}"
+            title += f"\n{len(self.model)} points"
+            self.subplot.set_title(title)
         self.canvas.draw()
 
 class Interface():
