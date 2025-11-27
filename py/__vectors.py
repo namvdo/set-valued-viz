@@ -10,6 +10,15 @@ def nearestpoint_i(a, *b):
 def nearestvalue_i(array, value):
     return np.argmin(np.abs(np.asarray(array)-value))
 
+def find_intersection(line0, line1):
+    def det(a, b): return a[0]*b[1]-a[1]*b[0]
+    xdiff = (line0[0][0]-line0[1][0], line1[0][0]-line1[1][0])
+    ydiff = (line0[0][1]-line0[1][1], line1[0][1]-line1[1][1])
+    if (div:=det(xdiff, ydiff))!=0:
+        d = (det(line0[0], line0[1]), det(line1[0],line1[1]))
+        x = det(d, xdiff) / div
+        y = det(d, ydiff) / div
+        return x, y
 #
 
 def radians_absolute(radians): # -inf...inf -> 0...2*np.pi
@@ -48,4 +57,20 @@ def simple_normals_from_points(points):
     cand1_area = np.prod(np.subtract(cand1_bottomright, cand1_topleft))
     if cand0_area>cand1_area: return candidates0
     return candidates1
+
+
+def even_sided_polygon(sides, rotation):
+    radians = np.linspace(0, np.pi*2, sides+1)[:-1]
+    radians += rotation
+    return radians_to_vectors(radians)
+
+def point_lines(points):
+    lines = np.repeat(np.expand_dims(points, axis=0), 2, axis=0)
+    lines[1,1:] = lines[0,:-1]
+    lines[1,0] = lines[0,-1]
+    return lines
+
+
+
+
 

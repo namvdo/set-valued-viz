@@ -367,7 +367,7 @@ class ModelInstance():
         for k,v in kwargs.items():
             if hasattr(self, k): setattr(self, k, v)
         
-        win = nice_window(f"model_{self.key}", on_destroy=on_destroy)
+        win = nice_window(self.key, on_destroy=on_destroy)
         set_padding(win)
         
         self.__init_model_control_panel(win)
@@ -430,8 +430,24 @@ class ModelInstance():
 ##        var1 = integer_cycler(label, 256, on_update=_update)
         
         #
-        ff = nice_titled_frame(f, "noise", anchor="nw", side=tk.TOP)
-        nice_label(ff, text="shape?")
+        ff = nice_titled_frame(f, "noise", anchor="n", side=tk.TOP)
+##        label = nice_label(ff, text="shape?")
+        
+        def _update(identifier, string):
+            value = read_number_from_string(string)
+            if value is not None: sides = max(abs(value), 3)
+            else: sides = 0
+            self.model.update_noise_geometry(sides=sides)
+        field = nice_labeled_field(ff, "sides", width=8, update_handler=_update)
+        
+        def _update(identifier, string):
+            value = read_number_from_string(string)
+            if value is not None: rotation = (value%360)/180*np.pi
+            else: rotation = 0
+            self.model.update_noise_geometry(rotation=rotation)
+        field = nice_labeled_field(ff, "rotation", width=8, update_handler=_update)
+        
+        
         def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None:
@@ -450,7 +466,7 @@ class ModelInstance():
     def __init_parameters_frame(self, frame, on_update=None):
         adjusable_parameters = self.model.function.required_constants()
         if len(adjusable_parameters)>0:
-            f = nice_titled_frame(frame, "parameters", side=tk.TOP, anchor="ne")
+            f = nice_titled_frame(frame, "parameters", side=tk.TOP, anchor="n")
             for k in sorted(adjusable_parameters):
                 def _update(identifier, string):
                     value = read_number_from_string(string)
@@ -630,20 +646,24 @@ class Interface():
         write_to_textbox(self._logbox, f"ERROR: {string}")
 
     def start_model_instance(self):
-        key = self.instances_created
+        key = "model_"+str(self.instances_created)
         def on_destroy():
             try:
                 del self.model_instances[key]
-                self.log(f"destroyed instance {key}")
+                self.log(f"destroyed {key}")
             except: pass
         
         normals_model = NormalsModel()
+        normals_model.printing = False
+        def _print(string):
+            self.log(f"{key} "+string)
+        normals_model.print_func = _print
         normals_model.copy_attributes_from(self.model_base)
         
         instance = ModelInstance(on_destroy, model=normals_model, key=key)
         self.model_instances[key] = instance
         self.instances_created += 1
-        self.log(f"created instance {key}")
+        self.log(f"created {key}")
         
         
     def start(self):

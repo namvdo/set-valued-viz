@@ -1,13 +1,35 @@
 from _imports import *
 
 
+def noise_geometry_multipliers(normals, polygon):
+    multipliers = np.ones((len(normals),1))
+    origin = np.zeros(2)
+    for i,normal in enumerate(normals):
+        result_dist = 1
+        line_dist = 2
+        prev_vertex = polygon[-1]
+        for vertex in polygon:
+            if (dist:=np.linalg.norm((vertex*2+prev_vertex)/2-normal))<line_dist:
+                temp = find_intersection((prev_vertex, vertex), [origin, normal])
+                if (dist2:=np.linalg.norm(temp))<1:
+                    result_dist = dist2
+                    line_dist = dist
+            prev_vertex = vertex
+        if result_dist is not None: multipliers[i] = result_dist
+    return multipliers
+
 class ModelConfiguration(ModelBase):
     printing = True
+    print_func = print
     
     precision = 8
     
     precision_increase_attempts = 10
     precision_decrease_attempts = 10
+    
+    noise_geometry = None
+    noise_geometry_sides = 0
+    noise_geometry_rotation = 0
     
     def __init__(self):
         super().__init__()
@@ -40,9 +62,27 @@ class ModelConfiguration(ModelBase):
     
     def _points_inside_the_boundary_mask(self):
         mask = np.zeros(self._points.shape[0], dtype=np.bool_)
+        if self.noise_geometry is not None: return mask
+##        else:
+##            threshold = 1-noise_geometry_multipliers(self._normals, self.noise_geometry).flatten()
         for i,x in enumerate(self._points-self._normals):
-            mask |= np.linalg.norm(x-self._points, axis=1)<self.epsilon*.95
+            mask |= np.linalg.norm(x-self._points, axis=1)<self.epsilon*.98
         return mask
+
+
+
+    ##
+    def update_noise_geometry(self, sides=None, rotation=None):
+        if sides is not None: self.noise_geometry_sides = sides
+        if rotation is not None: self.noise_geometry_rotation = rotation
+        
+        if self.noise_geometry_sides>2:
+            self.noise_geometry = even_sided_polygon(self.noise_geometry_sides, self.noise_geometry_rotation)
+        else:
+            self.noise_geometry = None
+    ##
+
+    
     
     def _increase_precision(self, gap_mask):
         # go back to previous step, but with extra points
@@ -69,24 +109,26 @@ class ModelConfiguration(ModelBase):
             replace += index+1
             sorting[replace+1:] = sorting[replace:-1]
             sorting[replace] = l+index
-            
+        
         self._points = points[sorting]
         self._normals = normals[sorting]
         self._prev_points = prev_points[sorting]
         self._prev_normals = prev_normals[sorting]
-        return True
 
 
     def _gap_detection_loops(self):
         for i in range(self.precision_increase_attempts):
             gaps = self._too_sparse_mask()
             if gaps.any():
-                if not self._increase_precision(gaps): break
+                if self.printing: self.print_func(f"points: +{gaps.sum()}")
+                self._increase_precision(gaps)
             else: break
         
         for i in range(self.precision_decrease_attempts):
             nogaps = self._too_dense_mask()
-            if nogaps.any(): self._remove_items_with_mask(nogaps)
+            if nogaps.any():
+                if self.printing: self.print_func(f"points: -{nogaps.sum()}")
+                self._remove_items_with_mask(nogaps)
             else: break
 
         inside = self._points_inside_the_boundary_mask()
@@ -104,6 +146,11 @@ class ModelConfiguration(ModelBase):
         self._prev_points = self._points.copy()
         
         self._normals = radians_to_vectors(radians)
+        
+        # apply noise geometry
+        if self.noise_geometry is not None:
+            self._normals *= noise_geometry_multipliers(self._normals, self.noise_geometry)
+        
         self._normals *= self.epsilon
         self._prev_normals = self._normals.copy()
         
@@ -150,6 +197,11 @@ class ModelConfiguration(ModelBase):
             normals[:,1] /= lengths
             normals *= self.epsilon
             
+            # apply noise geometry
+            if self.noise_geometry is not None:
+                normals *= noise_geometry_multipliers(normals, self.noise_geometry)
+            
+            
             # add the normals to the new points
             points[:,0], points[:,1] = self.function(x, y)
             
@@ -167,12 +219,12 @@ class ModelConfiguration(ModelBase):
                 prev_normals = self._prev_normals
                     
                 if self.printing:
-                    print("reached step", self._timestep)
+                    self.print_func(f"reached: {self._timestep}")
         
 
     def process(self, to_timestep:int):
         if self.printing:
-            print("\nprocessing step", self._timestep, "to", to_timestep)
+            self.print_func(f"processing: {self._timestep} -> {to_timestep}")
         if self._timestep is None or self._timestep>to_timestep: self._start(to_timestep)
         else: self._continue(to_timestep)
     
@@ -191,10 +243,7 @@ class ModelConfiguration(ModelBase):
         return self._prev_points, self._prev_points-self._prev_normals*length
     
     def draw(self, resolution:int):
-        if self.printing:
-            print("\ndrawing step", self._timestep, f"({resolution} px)")
-            print("points ->", len(self._points))
-
+        if self.printing: self.print_func(f"\ndrawing: {self._timestep}")
         
         #
         black = np.array([0.,0.,0.,1.])
@@ -232,7 +281,10 @@ class ModelConfiguration(ModelBase):
         
         image = drawing.draw(resolution)
         return image, drawing.tl, drawing.br
-        
+
+
+
+
 if __name__ == "__main__":
     config = ModelConfiguration()
     config.start_point.x = 0

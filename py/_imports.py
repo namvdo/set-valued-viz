@@ -132,6 +132,9 @@ class ModelBase():
         new.function = self.function.copy()
         return new
 
+
+
+
 class ImageDrawing:
     class LinesObj:
         starts = None
