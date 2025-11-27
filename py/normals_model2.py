@@ -66,8 +66,8 @@ class ModelConfiguration(ModelBase):
             return np.zeros(self._points.shape[0], dtype=np.bool_)
         inner_points = self._points-self._normals
         inner_points = np.repeat(np.expand_dims(inner_points, axis=0), len(self._points), axis=0)
-        diffs = np.subtract(inner_points, np.expand_dims(self._points, axis=0))
-        return np.any(np.linalg.norm(diffs, axis=2)<self.epsilon*.98, axis=0)
+        diffs = np.subtract(inner_points, np.expand_dims(self._points, axis=1))
+        return np.any(np.linalg.norm(diffs, axis=2)<self.epsilon*.98, axis=1)
 
     ##
     def update_noise_geometry(self, sides=None, rotation=None):
@@ -295,8 +295,8 @@ if __name__ == "__main__":
 ##    config.function.fx.string = "x/2+(1-y)/3*x/4"
 ##    config.function.fy.string = "y/3+x/3"  # 
     
-    config.function.fx.string = "x/3+cos(y)**2"
-    config.function.fy.string = "y/2+sin(x)**2"
+##    config.function.fx.string = "x/3+cos(y)**2"
+##    config.function.fy.string = "y/2+sin(x)**2"
     
 ##    config.function.fx.string = "x/2-y/3"
 ##    config.function.fy.string = "y/2+x/5"
@@ -316,7 +316,7 @@ if __name__ == "__main__":
 
     
     resolution = 2000
-    timestep = 100
+    timestep = 10
     for ax_target in test_plotting_grid(1, 1, timestep):
         config.process(timestep)
         image,tl,br = config.draw(resolution)
