@@ -196,10 +196,10 @@ def set_field_content(field, string):
     field.delete(0, tk.END)
     field.insert(0, string)
 
-def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, fill=tk.BOTH, update_handler=None):
-    subframe = nice_frame(frame, side=side, fill=fill)
+def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, fill=tk.BOTH, update_handler=None, **kwargs):
+    subframe = nice_frame(frame, side=side, **kwargs)
     if text:
-        label = nice_label(subframe, text=text, width=len(text), side=tk.LEFT, anchor="e")
+        label = nice_label(subframe, text=text, side=tk.LEFT, anchor="c") # , width=len(text)
     field = nice_field(subframe, identifier=text, width=width, side=tk.LEFT, update_handler=update_handler)
     return field
 
@@ -435,24 +435,24 @@ class ModelInstance():
         
         def _update(identifier, string):
             value = read_number_from_string(string)
-            if value is not None: sides = max(abs(value), 3)
+            if value is not None: sides = abs(value)
             else: sides = 0
             self.model.update_noise_geometry(sides=sides)
-        field = nice_labeled_field(ff, "sides", width=8, update_handler=_update)
+        field = nice_labeled_field(ff, "sides", width=8, anchor="ne", update_handler=_update)
         
         def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None: rotation = (value%360)/180*np.pi
             else: rotation = 0
             self.model.update_noise_geometry(rotation=rotation)
-        field = nice_labeled_field(ff, "rotation", width=8, update_handler=_update)
+        field = nice_labeled_field(ff, "rotation", width=8, anchor="ne", update_handler=_update)
         
         
         def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None:
                 self.model.epsilon = abs(value)
-        field = nice_labeled_field(ff, "epsilon", width=8, update_handler=_update)
+        field = nice_labeled_field(ff, "epsilon", width=8, anchor="ne", update_handler=_update)
         field.insert(0, str(self.model.epsilon))
         #
 
@@ -473,7 +473,7 @@ class ModelInstance():
                     if value is not None:
                         self.model.function.constants[identifier] = value
                         if on_update is not None: on_update()
-                field = nice_labeled_field(f, k, update_handler=_update)
+                field = nice_labeled_field(f, k, anchor="ne", update_handler=_update)
                 v = self.model.function.constants.get(k)
                 if v is not None: field.insert(0, str(v))
         

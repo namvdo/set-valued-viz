@@ -59,17 +59,15 @@ class ModelConfiguration(ModelBase):
         mask = repeat_mask_ones_until_divisible(mask, 2)
         mask[1::2] = False
         return mask
+
     
     def _points_inside_the_boundary_mask(self):
-        mask = np.zeros(self._points.shape[0], dtype=np.bool_)
-        if self.noise_geometry is not None: return mask
-##        else:
-##            threshold = 1-noise_geometry_multipliers(self._normals, self.noise_geometry).flatten()
-        for i,x in enumerate(self._points-self._normals):
-            mask |= np.linalg.norm(x-self._points, axis=1)<self.epsilon*.98
-        return mask
-
-
+        if self.noise_geometry is not None:
+            return np.zeros(self._points.shape[0], dtype=np.bool_)
+        inner_points = self._points-self._normals
+        inner_points = np.repeat(np.expand_dims(inner_points, axis=0), len(self._points), axis=0)
+        diffs = np.subtract(inner_points, np.expand_dims(self._points, axis=0))
+        return np.any(np.linalg.norm(diffs, axis=2)<self.epsilon*.98, axis=0)
 
     ##
     def update_noise_geometry(self, sides=None, rotation=None):
@@ -231,7 +229,7 @@ class ModelConfiguration(ModelBase):
     def can_draw(self): return self._points.size!=0
     
     def get_boundary_lines(self):
-        return self._points[:-1], self._points[1:]
+        return point_lines(self._points)
     
     def get_inner_normals(self, length=1):
         return self._points, self._points-self._normals*length
