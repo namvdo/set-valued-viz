@@ -1184,23 +1184,131 @@ def find_invariant_measure(P: sparse.csr_matrix, tol: float = 1e-10, max_iter: i
         p = p_new
     print(f"Warning: Did not converge after {max_iter} iterations")
     return p / np.sum(p)
+
+
+
+def visualize_sampled_next_positions(
+    current_point: Tuple[float, float], 
+    P: sparse.csr_matrix, 
+    grid: ProbabilityGrid, 
+    n_samples: int = 500, 
+    henon_a: float = A, 
+    henon_b: float = B,
+    ax: Optional[plt.Axes] = None
+):
+    """ 
+    Sample next possible positions and visualize them as a scatter plot.
+    """
+    if ax is None: 
+        fig, ax = plt.subplots(figsize=(10, 8))
+    
+    x_curr, y_curr = current_point
+    
+    source_cell = grid.point_to_cell(x_curr, y_curr)
+    if source_cell is None: 
+        ax.text(0.5, 0.5, 'Current point is outside the grid!',
+                ha='center', va='center', transform=ax.transAxes,
+                fontsize=16, color='red')
+        return ax
+    
+    # get the probability distribution over the destination cells 
+    next_step_probs = P[source_cell, :].toarray().flatten()
+    
+    # sample destination cells according to these probabilities, cells with higher probability will be sampled more often
+    nonzero_cells = np.where(next_step_probs > 0)[0]
+    nonzero_probs = next_step_probs[nonzero_cells]
+    nonzero_probs /= np.sum(nonzero_probs)  # normalize
+    
+    sampled_cells = np.random.choice(
+        nonzero_cells, 
+        size=n_samples,
+        p=nonzero_probs
+    )
+
+    sampled_x = []
+    sampled_y = []
+    
+    for cell in sampled_cells:
+        x_min, x_max, y_min, y_max = grid.get_cell_bounds(cell)
+        x = np.random.uniform(x_min, x_max)
+        y = np.random.uniform(y_min, y_max)
         
-
+        sampled_x.append(x)
+        sampled_y.append(y)
         
+    ax.scatter(sampled_x, sampled_y, alpha=0.3, s=20, c='orange',
+               label=f'{n_samples} sampled next positions')
     
+    # Mark the current point
+    ax.plot(x_curr, y_curr, 'bo', markersize=12, label='Current point',
+            markeredgecolor='white', markeredgewidth=2, zorder=10)
+    
+    # Mark the deterministic image
+    x_det = 1 - henon_a * x_curr**2 + y_curr
+    y_det = henon_b * x_curr
+    ax.plot(x_det, y_det, 'gs', markersize=12, label='Deterministic image',
+            markeredgecolor='white', markeredgewidth=2, zorder=10)
+    
+    # Draw arrow
+    ax.annotate('', xy=(x_det, y_det), xytext=(x_curr, y_curr),
+                arrowprops=dict(arrowstyle='->', color='green', lw=2, alpha=0.6))
+    
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title(f'Sampled next positions from ({x_curr:.3f}, {y_curr:.3f})')
+    ax.legend()
+    ax.set_aspect('equal')
+    ax.grid(True, alpha=0.3)
+    
+    return ax
 
 
-if __name__ == '__main__':
-    print("\nChoose a demo:")
-    print("1. Interactive stepper")
-    print("2. Quick demo")
-    print("3. Full analysis")
+
+def main_transition_matrix_demo():
+    print("=== Transition Matrix Visualization Demo ===\n")
     
-    choice = input("\nEnter choice (1-3): ").strip()
+    # Step 1: Create the grid covering the attractor region
+    print("Step 1: Creating grid...")
+    grid = ProbabilityGrid(
+        x_min=-1.5, x_max=1.5,
+        y_min=-0.5, y_max=0.5,
+        nx_cells=30, ny_cells=30
+    )
+    print(f"Grid created: {grid.nx_cells}×{grid.ny_cells} = {grid.nx_cells * grid.ny_cells} cells\n")
     
-    if choice == '1':
-        interactive_henon_stepper()
-    elif choice == '2':
-        quick_demo()
-    else:
-        main()  
+    # Step 2: Compute the transition matrix (this takes a few minutes)
+    print("Step 2: Computing transition matrix...")
+    print("(This is the expensive one-time computation)\n")
+    P = compute_transition_matrix_sparse(
+        grid,
+        henon_a=A,
+        henon_b=B,
+        noise_radius=0.02,
+        samples_per_cell=500  # Use 500 samples per cell for reasonable accuracy
+    )
+    print("\nTransition matrix ready!\n")
+    
+    # Step 3: Choose a starting point on the attractor
+    # Using a point that's known to be on the Hénon attractor
+    starting_point = (0.6, -0.2)
+    print(f"Step 3: Visualizing predictions from starting point {starting_point}\n")
+    
+    # Step 4: Create the visualization
+    fig, ax = plt.subplots(figsize=(12, 10))
+    visualize_sampled_next_positions(
+        current_point=starting_point,
+        P=P,
+        grid=grid,
+        n_samples=1000,  # Sample 1000 possible next positions
+        henon_a=A,
+        henon_b=B,
+        ax=ax
+    )
+    
+    plt.suptitle('Transition Matrix Prediction: Sampled Next Positions', 
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.show()
+
+if __name__ == "__main__":
+    main_transition_matrix_demo()
