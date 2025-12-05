@@ -3,6 +3,7 @@ import numpy as np
 from scipy.linalg import solve, norm
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
+import scipy.sparse as sparse
 
 # TODO: Implement Newton's method for multivariate functions start with those initial values
 (x0,y0) = (0.6381939926271558578, -0.2120300331658224337)
@@ -775,7 +776,7 @@ def interactive_henon_stepper():
         henon_a=A,
         henon_b=B,
         noise_radius=0.02,  # Smaller noise
-        num_particles=5000,  # Fewer particles is fine
+        num_particles=1,  
         grid=grid
     )
     
@@ -1092,6 +1093,73 @@ def quick_demo():
         print(f"{'='*60}")
         show_current_state(sim)
         plot_probability_heatmap(sim, f"Iteration {sim.current_iteration}")
+    
+    
+def compute_transition_matrix_sparse(grid: ProbabilityGrid, henon_a: float, henon_b: float, noise_radius: float = 0.02, samples_per_cell:int = 500) -> sparse.csr_matrix:
+    """
+    Compute the transition matrix for the noisy Henon map 
+    
+    Returns a sparse matrix P where P[i, j] is the probability that a particle starting in cell i and being ends up in cell j after one iteration.
+    """
+
+    n_cells = grid.nx_cells * grid.ny_cells
+
+    # building the matrix using C00 format, then convert to CSR
+    
+    row_indices = []
+    col_indices = []
+    values = []
+    
+    print(f"Computing transition matrix for {n_cells} cells...")
+    print(f"Using {samples_per_cell} samples per cell")
+    print(f"Total particle updates: {n_cells * samples_per_cell:,}")
+    
+    
+    for source_cell in range(n_cells):
+        if source_cell % 500 == 0:
+            print(f"Processing source cell {source_cell}/{n_cells}...")
+        
+        x_min_cell, x_max_cell, y_min_cell, y_max_cell = grid.get_cell_bounds(source_cell)
+        
+        x_samples = np.random.uniform(x_min_cell, x_max_cell, samples_per_cell)
+        y_samples = np.random.uniform(y_min_cell, y_max_cell, samples_per_cell)
+        
+        x_new = 1 - henon_a * x_samples**2 + y_samples
+        y_new = henon_b * x_samples
+        
+        # add noise to each particle
+        theta = np.random.uniform(0, 2 * np.pi, samples_per_cell)
+        r = noise_radius * np.sqrt(np.random.uniform(0, 1, samples_per_cell))
+        x_final = x_new + r * np.cos(theta)
+        y_final = y_new + r * np.sin(theta)
+        
+        # count destinations
+        dest_counts = {}
+        for x, y in zip(x_final, y_final):
+            dest_cell = grid.point_to_cell(x, y)
+            if dest_cell is not None:
+                dest_counts[dest_cell] = dest_counts.get(dest_cell, 0) + 1
+        for desc_cell, count in dest_counts.items(): 
+            probability = count / samples_per_cell
+            row_indices.append(source_cell)
+            col_indices.append(desc_cell)
+            values.append(probability)
+            
+        
+        P_coo = sparse.coo_matrix(
+            (values, (row_indices, col_indices)),
+            shape=(n_cells, n_cells)
+        )
+
+        P_csr = P_coo.tocsr()
+        
+        print(f"\nTransition matrix computed:")
+        print(f"  Size: {n_cells} × {n_cells}")
+        print(f"  Nonzero entries: {P_csr.nnz:,} ({100*P_csr.nnz/n_cells**2:.2f}% sparse)")
+
+        return P_csr
+        
+    
 
 
 if __name__ == '__main__':
