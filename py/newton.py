@@ -1095,17 +1095,21 @@ def quick_demo():
         plot_probability_heatmap(sim, f"Iteration {sim.current_iteration}")
     
     
-def compute_transition_matrix_sparse(grid: ProbabilityGrid, henon_a: float, henon_b: float, noise_radius: float = 0.02, samples_per_cell:int = 500) -> sparse.csr_matrix:
+def compute_transition_matrix_sparse(
+    grid: ProbabilityGrid, 
+    henon_a: float, 
+    henon_b: float, 
+    noise_radius: float = 0.02, 
+    samples_per_cell: int = 500
+) -> sparse.csr_matrix:
     """
-    Compute the transition matrix for the noisy Henon map 
+    Compute the transition matrix for the noisy Henon map.
     
-    Returns a sparse matrix P where P[i, j] is the probability that a particle starting in cell i and being ends up in cell j after one iteration.
+    Returns a sparse matrix P where P[i, j] is the probability that 
+    a particle starting in cell i ends up in cell j after one iteration.
     """
-
     n_cells = grid.nx_cells * grid.ny_cells
-
-    # building the matrix using C00 format, then convert to CSR
-    
+    # Building the matrix using COO format, then convert to CSR
     row_indices = []
     col_indices = []
     values = []
@@ -1114,10 +1118,9 @@ def compute_transition_matrix_sparse(grid: ProbabilityGrid, henon_a: float, heno
     print(f"Using {samples_per_cell} samples per cell")
     print(f"Total particle updates: {n_cells * samples_per_cell:,}")
     
-    
     for source_cell in range(n_cells):
-        if source_cell % 500 == 0:
-            print(f"Processing source cell {source_cell}/{n_cells}...")
+        if source_cell % 100 == 0:
+            print(f"  Processing source cell {source_cell}/{n_cells}...")
         
         x_min_cell, x_max_cell, y_min_cell, y_max_cell = grid.get_cell_bounds(source_cell)
         
@@ -1139,27 +1142,25 @@ def compute_transition_matrix_sparse(grid: ProbabilityGrid, henon_a: float, heno
             dest_cell = grid.point_to_cell(x, y)
             if dest_cell is not None:
                 dest_counts[dest_cell] = dest_counts.get(dest_cell, 0) + 1
-        for desc_cell, count in dest_counts.items(): 
+        
+        for dest_cell, count in dest_counts.items(): 
             probability = count / samples_per_cell
             row_indices.append(source_cell)
-            col_indices.append(desc_cell)
+            col_indices.append(dest_cell)
             values.append(probability)
-            
-        
-        P_coo = sparse.coo_matrix(
-            (values, (row_indices, col_indices)),
-            shape=(n_cells, n_cells)
-        )
-
-        P_csr = P_coo.tocsr()
-        
-        print(f"\nTransition matrix computed:")
-        print(f"  Size: {n_cells} × {n_cells}")
-        print(f"  Nonzero entries: {P_csr.nnz:,} ({100*P_csr.nnz/n_cells**2:.2f}% sparse)")
-
-        return P_csr
-
-
+    
+    P_coo = sparse.coo_matrix(
+        (values, (row_indices, col_indices)),
+        shape=(n_cells, n_cells)
+    )
+    
+    P_csr = P_coo.tocsr()
+    
+    print(f"\nTransition matrix computed:")
+    print(f"  Size: {n_cells} × {n_cells}")
+    print(f"  Nonzero entries: {P_csr.nnz:,} ({100*P_csr.nnz/n_cells**2:.2f}% sparse)")
+    
+    return P_csr  
 
 def find_invariant_measure(P: sparse.csr_matrix, tol: float = 1e-10, max_iter: int = 1000) -> np.ndarray:
     """
