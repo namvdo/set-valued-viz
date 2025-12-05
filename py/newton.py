@@ -1158,6 +1158,34 @@ def compute_transition_matrix_sparse(grid: ProbabilityGrid, henon_a: float, heno
         print(f"  Nonzero entries: {P_csr.nnz:,} ({100*P_csr.nnz/n_cells**2:.2f}% sparse)")
 
         return P_csr
+
+
+
+def find_invariant_measure(P: sparse.csr_matrix, tol: float = 1e-10, max_iter: int = 1000) -> np.ndarray:
+    """
+    Find the invariant measure (stationary distribution) of the Markov chain defined by transition matrix P.
+    
+    Starting from uniform distribution, repeatedly apply P^T until convergence.
+    This finds the left eigenvector associated with eigenvalue 1.
+    """
+
+    n = P.shape[0]
+    
+    # start with uniform distribution
+    p = np.ones(n) / n 
+    for iteration in range(max_iter):
+        p_new = P.T @ p
+
+        change = np.linalg.norm(p_new - p, 1)
+
+        if change < tol: 
+            print(f"Converged after {iteration} iterations")
+            return p_new / np.sum(p_new)
+        p = p_new
+    print(f"Warning: Did not converge after {max_iter} iterations")
+    return p / np.sum(p)
+        
+
         
     
 
