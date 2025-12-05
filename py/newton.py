@@ -581,106 +581,530 @@ def plot_probability_heatmap(sim: MonteCarloSimulation, title: str):
     
     plt.tight_layout()
     plt.show()
+
+
+def plot_probability_evolution(
+    sim: MonteCarloSimulation,
+    cell_indices: List[int],
+    cell_labels: Optional[List[str]] = None
+):
+    """
+    Plot how probability in specific cells changes over iterations.
+    This creates a line graph showing p_i(n) versus n for selected cells.
+    It helps visualize the convergence to the invariant measure.
+    """
+    if cell_labels is None:
+        cell_labels = [f'Cell {i}' for i in cell_indices]
     
+    fig, ax = plt.subplots(figsize=(12, 6))
     
-def main():
-    import warnings 
-    warnings.filterwarnings('ignore')
+    # Extract probability history for each selected cell
+    for idx, cell_index in enumerate(cell_indices):
+        # Get the center coordinates of this cell for the label
+        x_center, y_center = sim.grid.cell_center(cell_index)
+        
+        # Extract probabilities across all iterations
+        probs_over_time = [
+            prob_dist[cell_index] for prob_dist in sim.probability_history
+        ]
+        
+        # Plot the evolution
+        ax.plot(
+            range(len(probs_over_time)),
+            probs_over_time,
+            marker='o',
+            label=f'{cell_labels[idx]} at ({x_center:.2f}, {y_center:.2f})'
+        )
+    
+    ax.set_xlabel('Iteration')
+    ax.set_ylabel('Probability')
+    ax.set_title(f'Probability Evolution (ε={sim.noise_radius})')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_particles_and_grid(
+    sim: MonteCarloSimulation,
+    show_particles: bool = True,
+    show_grid: bool = True
+):
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Plot probability heatmap in the background
+    prob_2d = sim.grid.probabilities.reshape(
+        (sim.grid.ny_cells, sim.grid.nx_cells)
+    )
+    ax.imshow(
+        prob_2d,
+        origin='lower',
+        extent=[sim.grid.x_min, sim.grid.x_max, sim.grid.y_min, sim.grid.y_max],
+        cmap='YlOrRd',
+        alpha=0.6,
+        aspect='auto'
+    )
+    
+    # Overlay particle positions if requested
+    if show_particles:
+        x_coords = [p.x for p in sim.particles]
+        y_coords = [p.y for p in sim.particles]
+        ax.scatter(x_coords, y_coords, s=1, c='blue', alpha=0.5, label='Particles')
+    
+    # Draw grid lines if requested
+    if show_grid:
+        # Vertical lines
+        for i in range(sim.grid.nx_cells + 1):
+            x = sim.grid.x_min + i * sim.grid.cell_width
+            ax.axvline(x, color='gray', linewidth=0.5, alpha=0.3)
+        
+        # Horizontal lines
+        for j in range(sim.grid.ny_cells + 1):
+            y = sim.grid.y_min + j * sim.grid.cell_height
+            ax.axhline(y, color='gray', linewidth=0.5, alpha=0.3)
+    
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title(f'Particles and Probability Grid\n'
+                 f'Iteration {sim.current_iteration}, {sim.num_particles} particles')
+    ax.legend()
+    
+    plt.tight_layout()
+    plt.show() 
+
+
+
+def example_1_single_point_initial():
+    """
+    Start all particles at a single point and watch uncertainty spread.
+    
+    This demonstrates how noise causes an initially precise state to disperse
+    over iterations. Even though all particles start at the same location, they
+    quickly diverge due to:
+
+    1. Different noise realizations
+    2. Chaotic dynamics of the Hénon map (sensitive dependence)
+    """
     print("\n" + "="*60)
-    print("HÉNON MAP PERIODIC ORBIT FINDER")
+    print("EXAMPLE 1: Single Point Initial Condition")
     print("="*60)
-    print(f"Parameters: a = {A}, b = {B}")
-    print("="*60 + "\n")
+    print("\nStarting all 10,000 particles at (0.1, 0.1)")
+    print("Noise radius ε = 0.05")
+    print("This shows how uncertainty spreads from a precise initial condition.\n")
     
-    # Example 1: Find period-1 orbits (fixed points)
-    print("\n" + "─"*60)
-    print("EXAMPLE 1: Finding period-1 orbits (fixed points)")
-    print("─"*60)
-    
-    period1_orbits = find_periodic_orbits_grid(
-        period=1, 
-        grid_size=30,
+    # Create the probability grid 40x40 cells over [-2, 2] x [-2, 2]
+    grid = ProbabilityGrid(
+        x_min=-2.0, x_max=2.0,
+        y_min=-2.0, y_max=2.0,
+        nx_cells=40,
+        ny_cells=40
     )
+    
+    # Create the Monte Carlo simulation
+    sim = MonteCarloSimulation(
+        henon_a=A,
+        henon_b=B,
+        noise_radius=0.05,
+        num_particles=10000,
+        grid=grid
+    )
+    
+    # Initialize all particles at a single point
+    sim.initialize_particles(init_type='point', x0=0.1, y0=0.1)
+    
+    print(f"Initial state:")
+    print(f"  All particles at: (0.1, 0.1)")
+    
+    # Find which cell this point is in
+    initial_cell = sim.find_cell_at_point(0.1, 0.1)
+    if initial_cell is not None:
+        prob = sim.get_probability_at_cell(initial_cell)
+        print(f"  Cell index: {initial_cell}")
+        print(f"  Probability in that cell: {prob:.4f} (should be ~1.0)")
+    
+    # Run for 50 iterations
+    print(f"\nRunning simulation for 50 iterations...")
+    sim.run_simulation(num_steps=1000, verbose=True)
+    
+    # Analyze the final state
+    print(f"\nFinal state (iteration {sim.current_iteration}):")
+    
+    # Check probability in a specific region (e.g., near the attractor)
+    prob_attractor = sim.probability_in_region(-1.5, 1.5, -0.5, 0.5)
+    print(f"  Probability in region [-1.5, 1.5] × [-0.5, 0.5]: {prob_attractor:.4f}")
+    
+    # Find the cell with maximum probability
+    max_prob_cell = np.argmax(sim.grid.probabilities)
+    max_prob = sim.grid.probabilities[max_prob_cell]
+    max_prob_x, max_prob_y = sim.grid.cell_center(max_prob_cell)
+    print(f"  Highest probability cell: {max_prob:.4f} at ({max_prob_x:.2f}, {max_prob_y:.2f})")
+    
+    # Visualize
+    print("\nGenerating visualizations...")
+    plot_probability_heatmap(sim, "Single Point Initial Condition")
+    plot_particles_and_grid(sim, show_particles=True, show_grid=False)
+    
+    # Track a few specific cells over time
+    interesting_cells = [
+        initial_cell,  # Where we started
+        max_prob_cell,  # Where most probability ended up
+    ]
+    plot_probability_evolution(
+        sim,
+        interesting_cells,
+        ['Initial cell', 'Final max prob cell']
+    )
+
+def interactive_henon_stepper():
+    print("\n" + "="*60)
+    print("INTERACTIVE HÉNON MAP STEPPER")
+    print("="*60)
+    
+    # Create a smaller, focused grid around the attractor region
+    # The Hénon attractor lives roughly in [-1.5, 1.5] × [-0.4, 0.4]
+    grid = ProbabilityGrid(
+        x_min=-1.5, x_max=1.5,
+        y_min=-0.5, y_max=0.5,
+        nx_cells=30,  # 30x30 = 900 cells
+        ny_cells=30
+    )
+    
+    # Create simulation with reasonable parameters
+    sim = MonteCarloSimulation(
+        henon_a=A,
+        henon_b=B,
+        noise_radius=0.02,  # Smaller noise
+        num_particles=5000,  # Fewer particles is fine
+        grid=grid
+    )
+    
+    sim.initialize_particles(init_type='point', x0=0.6, y0=-0.2)
+    
+    print(f"\nInitialized {sim.num_particles} particles at (0.6, -0.2)")
+    print(f"Grid: {grid.nx_cells}×{grid.ny_cells} cells")
+    print(f"Grid covers: x ∈ [{grid.x_min}, {grid.x_max}], y ∈ [{grid.y_min}, {grid.y_max}]")
+    print(f"Noise radius: ε = {sim.noise_radius}")
+    
+    print(f"\n{'='*60}")
+    print(f"ITERATION 0 (Initial State)")
+    print(f"{'='*60}")
+    show_current_state(sim)
+    plot_probability_heatmap(sim, "Iteration 0")
+    
+    iteration = 0
+    max_iterations = 100  
+    
+    while iteration < max_iterations:
+        print(f"\n{'─'*60}")
+        user_input = input("Press ENTER to step forward, 'q' to quit, or number of steps: ").strip()
+        
+        if user_input.lower() == 'q':
+            print("Exiting...")
+            break
+        
+        # Determine how many steps to take
+        if user_input == '':
+            steps = 1
+        else:
+            try:
+                steps = int(user_input)
+                steps = max(1, min(steps, 50))  # Between 1 and 50
+            except ValueError:
+                steps = 1
+        
+        # Take the steps
+        for _ in range(steps):
+            sim.step_forward()
+            iteration += 1
+        
+        # Show the new state
+        print(f"\n{'='*60}")
+        print(f"ITERATION {sim.current_iteration}")
+        print(f"{'='*60}")
+        show_current_state(sim)
+        plot_probability_heatmap(sim, f"Iteration {sim.current_iteration}")
+    
+    print("\n" + "="*60)
+    print("SESSION COMPLETE")
+    print("="*60)
+
+
+def show_current_state(sim: MonteCarloSimulation):
+    """
+    Display key statistics about the current state of the simulation.
+    """
+    # Count how many particles are still in bounds
+    particles_in_grid = sum(
+        1 for p in sim.particles 
+        if sim.grid.point_to_cell(p.x, p.y) is not None
+    )
+    
+    print(f"Particles in grid: {particles_in_grid}/{sim.num_particles} "
+          f"({100*particles_in_grid/sim.num_particles:.1f}%)")
+    
+    if particles_in_grid == 0:
+        print("The system has diverged.")
+        return
+    
+    # Find the cell with maximum probability
+    max_prob_cell = np.argmax(sim.grid.probabilities)
+    max_prob = sim.grid.probabilities[max_prob_cell]
+    max_prob_x, max_prob_y = sim.grid.cell_center(max_prob_cell)
+    
+    print(f"Maximum probability: {max_prob:.6f} at cell ({max_prob_x:.3f}, {max_prob_y:.3f})")
+    
+    # Show the top 5 cells by probability
+    top_cells = np.argsort(sim.grid.probabilities)[-5:][::-1]
+    print(f"\nTop 5 cells by probability:")
+    for rank, cell_idx in enumerate(top_cells, 1):
+        prob = sim.grid.probabilities[cell_idx]
+        cx, cy = sim.grid.cell_center(cell_idx)
+        if prob > 0:
+            print(f"  {rank}. Cell at ({cx:6.3f}, {cy:6.3f}): p = {prob:.6f}")
+    
+    # Calculate entropy as a measure of spread
+    probs = sim.grid.probabilities[sim.grid.probabilities > 0]
+    if len(probs) > 0:
+        entropy = -np.sum(probs * np.log(probs))
+        print(f"\nEntropy: {entropy:.4f} (higher = more spread out)")
+    
+    # Show probability in the attractor region
+    prob_core = sim.probability_in_region(-1.0, 1.0, -0.4, 0.4)
+    print(f"Probability in core region [-1, 1] × [-0.4, 0.4]: {prob_core:.4f}")
+
+
+def quick_demo():
+    """
+    Quick non-interactive demo showing the first few iterations.
+    """
+    print("\n" + "="*60)
+    print("QUICK DEMO: First 10 Iterations")
+    print("="*60)
+    
+    grid = ProbabilityGrid(
+        x_min=-1.5, x_max=1.5,
+        y_min=-0.5, y_max=0.5,
+        nx_cells=30,
+        ny_cells=30
+    )
+    
+    sim = MonteCarloSimulation(
+        henon_a=A,
+        henon_b=B,
+        noise_radius=0.02,
+        num_particles=5000,
+        grid=grid
+    )
+    
+    # Start on the attractor
+    sim.initialize_particles(init_type='point', x0=0.6, y0=-0.2)
+    
+    # Show iterations 0, 1, 2, 5, 10
+    for target_iter in [0, 1, 2, 5, 10]:
+        while sim.current_iteration < target_iter:
+            sim.step_forward()
+        
+        print(f"\n{'='*60}")
+        print(f"ITERATION {sim.current_iteration}")
+        print(f"{'='*60}")
+        show_current_state(sim)
+        plot_probability_heatmap(sim, f"Iteration {sim.current_iteration}")
+
+
+
+    
+    
+
+def main():
+    print("\n" + "="*70)
+    print("HÉNON MAP: PERIODIC ORBITS + MONTE CARLO PROBABILITY ESTIMATION")
+    print("="*70)
+    
+    print("\n" + "─"*70)
+    print("PART 1: PERIODIC ORBIT ANALYSIS")
+    print("─"*70)
+    print("\nFinding period-1 orbits (fixed points)...")
+    period1_orbits = find_periodic_orbits_grid(period=1, grid_size=30)
     
     if period1_orbits:
-        print(f"\nAnalyzing first period-1 orbit:")
-        analyze_orbit(period1_orbits[0][0], period1_orbits[0][1], 1)
-    
-    # Example 2: Find period-2 orbits
-    print("\n" + "─"*60)
-    print("EXAMPLE 2: Finding period-2 orbits")
-    print("─"*60)
-    
-    period2_orbits = find_periodic_orbits_grid(
-        period=2,
-        grid_size=40,
-    )
-    
-    if period2_orbits:
-        print(f"\nAnalyzing first period-2 orbit:")
-        analyze_orbit(period2_orbits[0][0], period2_orbits[0][1], 2)
-    
-    # Example 3: Find period-3 orbits
-    print("\n" + "─"*60)
-    print("EXAMPLE 3: Finding period-3 orbits")
-    print("─"*60)
-    
-    period3_orbits = find_periodic_orbits_grid(
-        period=3,
-        grid_size=50,
-    )
-    
-    if period3_orbits:
-        print(f"\nAnalyzing first period-3 orbit:")
-        analyze_orbit(period3_orbits[0][0], period3_orbits[0][1], 3)
-    
-    # Example 3: Find period-3 orbits
-    print("\n" + "─"*60)
-    print("EXAMPLE 4: Finding period-4 orbits")
-    print("─"*60)
-    
-    period4_orbits = find_periodic_orbits_grid(
-        period=4,
-        grid_size=50,
-    )
-    
-    if period4_orbits:
-        print(f"\nAnalyzing first period-3 orbit:")
-        analyze_orbit(period4_orbits[0][0], period4_orbits[0][1], 4)
-    
-    for i in range(5, 10):
-        periodic_i_orbit = find_periodic_orbits_grid(period=i, grid_size=50)
-        if periodic_i_orbit:
-            print(f"Found {i}-periodic orbit!")
-            print(f"Analyzing {i}-period orbit")
-            analyze_orbit(periodic_i_orbit[0][0], periodic_i_orbit[0][1], i)
-    
-    # Visualization
-    print("\n" + "─"*60)
-    print("VISUALIZATION")
-    print("─"*60)
-    
-    if period1_orbits:
-        print("Plotting period-1 orbits...")
+        print(f"Found {len(period1_orbits)} period-1 orbit(s)")
+        x, y = period1_orbits[0]
+        analyze_orbit(x, y, 1)
         plot_periodic_orbits(period1_orbits, 1)
     
-    if period2_orbits:
-        print("Plotting period-2 orbits...")
-        plot_periodic_orbits(period2_orbits, 2)
+    # Now run Monte Carlo examples
+    print("\n" + "─"*70)
+    print("PART 2: MONTE CARLO PROBABILITY ESTIMATION")
     
-    if period3_orbits:
-        print("Plotting period-3 orbits...")
-        plot_periodic_orbits(period3_orbits, 3)
-    if period4_orbits:
-        plot_periodic_orbits(period4_orbits, 4)
+    # Run all Monte Carlo examples
+    example_1_single_point_initial()
+    
+    print("\n" + "="*70)
+    print("ALL EXAMPLES COMPLETE")
+    print("="*70)
+
+
+
+def interactive_henon_stepper():
+    print("\n" + "="*60)
+    print("INTERACTIVE HÉNON MAP STEPPER")
+    print("="*60)
+    
+    # Create a smaller, focused grid around the attractor region
+    # The Hénon attractor lives roughly in [-1.5, 1.5] × [-0.4, 0.4]
+    grid = ProbabilityGrid(
+        x_min=-1.5, x_max=1.5,
+        y_min=-0.5, y_max=0.5,
+        nx_cells=500,  
+        ny_cells=500
+    )
+    
+    sim = MonteCarloSimulation(
+        henon_a=A,
+        henon_b=B,
+        noise_radius=0.02,  
+        num_particles=10_000, 
+        grid=grid
+    )
+    
+    # Start near a known point on the attractor
+    sim.initialize_particles(init_type='point', x0=0.6, y0=-0.2)
+    
+    print(f"\nInitialized {sim.num_particles} particles at (0.6, -0.2)")
+    print(f"Grid: {grid.nx_cells}×{grid.ny_cells} cells")
+    print(f"Grid covers: x ∈ [{grid.x_min}, {grid.x_max}], y ∈ [{grid.y_min}, {grid.y_max}]")
+    print(f"Noise radius: ε = {sim.noise_radius}")
+    
+    # Show initial state
+    print(f"\n{'='*60}")
+    print(f"ITERATION 0 (Initial State)")
+    print(f"{'='*60}")
+    show_current_state(sim)
+    plot_probability_heatmap(sim, "Iteration 0")
+    
+    iteration = 0
+    max_iterations = 1000 
+    
+    while iteration < max_iterations:
+        print(f"\n{'─'*60}")
+        user_input = input("Press ENTER to step forward, 'q' to quit, or number of steps: ").strip()
+        
+        if user_input.lower() == 'q':
+            print("Exiting...")
+            break
+        
+        if user_input == '':
+            steps = 1
+        else:
+            try:
+                steps = int(user_input)
+                steps = max(1, min(steps, 500)) 
+            except ValueError:
+                steps = 1
+        
+        # Take the steps
+        for _ in range(steps):
+            sim.step_forward()
+            iteration += 1
+        
+        # Show the new state
+        print(f"\n{'='*60}")
+        print(f"ITERATION {sim.current_iteration}")
+        print(f"{'='*60}")
+        show_current_state(sim)
+        plot_probability_heatmap(sim, f"Iteration {sim.current_iteration}")
+    
+    print("\n" + "="*60)
+    print("SESSION COMPLETE")
+    print("="*60)
+
+
+def show_current_state(sim: MonteCarloSimulation):
+    # Count how many particles are still in bounds
+    particles_in_grid = sum(
+        1 for p in sim.particles 
+        if sim.grid.point_to_cell(p.x, p.y) is not None
+    )
+    
+    print(f"Particles in grid: {particles_in_grid}/{sim.num_particles} "
+          f"({100*particles_in_grid/sim.num_particles:.1f}%)")
+    
+    if particles_in_grid == 0:
+        print("   The system has diverged.")
+        return
+    
+    # Find the cell with maximum probability
+    max_prob_cell = np.argmax(sim.grid.probabilities)
+    max_prob = sim.grid.probabilities[max_prob_cell]
+    max_prob_x, max_prob_y = sim.grid.cell_center(max_prob_cell)
+    
+    print(f"Maximum probability: {max_prob:.6f} at cell ({max_prob_x:.3f}, {max_prob_y:.3f})")
+    
+    # Show the top 5 cells by probability
+    top_cells = np.argsort(sim.grid.probabilities)[-5:][::-1]
+    print(f"\nTop 5 cells by probability:")
+    for rank, cell_idx in enumerate(top_cells, 1):
+        prob = sim.grid.probabilities[cell_idx]
+        cx, cy = sim.grid.cell_center(cell_idx)
+        if prob > 0:
+            print(f"  {rank}. Cell at ({cx:6.3f}, {cy:6.3f}): p = {prob:.6f}")
+    
+    # Calculate entropy as a measure of spread
+    probs = sim.grid.probabilities[sim.grid.probabilities > 0]
+    if len(probs) > 0:
+        entropy = -np.sum(probs * np.log(probs))
+        print(f"\nEntropy: {entropy:.4f} (higher = more spread out)")
+    
+    # Show probability in the attractor region
+    prob_core = sim.probability_in_region(-1.0, 1.0, -0.4, 0.4)
+    print(f"Probability in core region [-1, 1] × [-0.4, 0.4]: {prob_core:.4f}")
+
+
+def quick_demo():
+    print("\n" + "="*60)
+    print("QUICK DEMO: First 10 Iterations")
+    print("="*60)
+    
+    grid = ProbabilityGrid(
+        x_min=-1.5, x_max=1.5,
+        y_min=-0.5, y_max=0.5,
+        nx_cells=30,
+        ny_cells=30
+    )
+    
+    sim = MonteCarloSimulation(
+        henon_a=A,
+        henon_b=B,
+        noise_radius=0.02,
+        num_particles=5000,
+        grid=grid
+    )
+    
+    sim.initialize_particles(init_type='point', x0=0.6, y0=-0.2)
+    
+    for target_iter in [0, 1, 2, 5, 10]:
+        while sim.current_iteration < target_iter:
+            sim.step_forward()
+        
+        print(f"\n{'='*60}")
+        print(f"ITERATION {sim.current_iteration}")
+        print(f"{'='*60}")
+        show_current_state(sim)
+        plot_probability_heatmap(sim, f"Iteration {sim.current_iteration}")
+
 
 if __name__ == '__main__':
-    main()
-     
+    print("\nChoose a demo:")
+    print("1. Interactive stepper")
+    print("2. Quick demo")
+    print("3. Full analysis")
     
-
-            
-
-
-
-
+    choice = input("\nEnter choice (1-3): ").strip()
+    
+    if choice == '1':
+        interactive_henon_stepper()
+    elif choice == '2':
+        quick_demo()
+    else:
+        main()  
