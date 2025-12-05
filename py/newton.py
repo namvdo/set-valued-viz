@@ -432,9 +432,155 @@ class ProbabilityGrid:
         y_max_cell = y_min_cell + self.cell_height
         return x_min_cell, x_max_cell, y_min_cell, y_max_cell
         
+
+
+class MonteCarloSimulation:
+    def __init__(self, henon_a: float, henon_b: float, noise_radius: float, num_particles: int, grid: ProbabilityGrid):
+        self.henon_a = henon_a
+        self.henon_b = henon_b
+        self.noise_radius = noise_radius
+        self.num_particles = num_particles
+        self.grid = grid
+        self.particles: List[Particle] = []
+        
+        self.current_iteration = 0
+        self.probability_history = []
+        self.rng = np.random.default_rng()
+        
+    def sample_uniform_circle(self, radius: float) -> Tuple[float, float]:
+        theta = self.rng.uniform(0, 2 * np.pi)
+        r = radius * np.sqrt(self.rng.uniform(0, 1))
+        x = r * np.cos(theta)
+        y = r * np.sin(theta)
+        return x, y 
+    
+    def initialize_particles(self, init_type: str, x0: float = 0.0, y0: float = 0.0, radius: float = 0.1):
+        self.particles = []
+        self.current_iteration = 0
+        self.probability_history = []
         
         
+        if init_type == 'point': 
+            for _ in range(self.num_particles):
+                self.particles.append(Particle(x0, y0))
+        elif init_type == 'circle': 
+            for _ in range(self.num_particles):
+                dx, dy = self.sample_uniform_circle(radius)
+                self.particles.append(Particle(x0 + dx, y0 + dy))
+        elif init_type == 'grid':
+            for _ in range(self.num_particles):
+                x = self.rng.uniform(self.grid.x_min, self.grid.x_max)
+                y = self.rng.uniform(self.grid.y_min, self.grid.y_max)
+                self.particles.append(Particle(x, y))
+        else:
+            raise ValueError(f"Unknown init_type: {init_type}")
+        self.compute_probabilities()
+        self.probability_history.append(self.grid.probabilities.copy())
         
+    def step_forward(self):
+        for particle in self.particles: 
+            x_new = 1 - self.henon_a * particle.x**2 + particle.y
+            y_new = self.henon_b * particle.x
+            
+            noise_x, noise_y = self.sample_uniform_circle(self.noise_radius)
+
+            # this models the bounded noise: x_{n+1} = f(x_n) + θ where ||θ|| ≤ ε
+            particle.x = x_new + noise_x 
+            particle.y = y_new + noise_y 
+        
+        self.current_iteration += 1
+        self.compute_probabilities()
+        self.probability_history.append(self.grid.probabilities.copy())
+    
+    def compute_probabilities(self):
+        """
+        This implements the Monte Carlo estimation 
+        p_i = (number of particles in cell i) / (total number of particles)
+
+        This is approximating the intergal: p_i = ∫_{C_i} ρ(x,y) dx dy
+        by sampling: if we have N particles distributed according to p(x, y), then
+        the fraction landing in cell_i converges to p_i as N → ∞
+        """
+
+        self.grid.probabilities.fill(0)
+        
+        valid_particles = 0 # track the particles that are in the valid grid area
+        for particle in self.particles:
+            cell_index = self.grid.point_to_cell(particle.x, particle.y)
+            
+            if cell_index is not None: 
+                self.grid.probabilities[cell_index] += 1
+                valid_particles += 1
+        # normalize by the total number of particles to convert counts to probabilities
+        if valid_particles > 0:
+            self.grid.probabilities /= valid_particles
+        
+        
+    def probability_in_region(self, x_min: float, x_max:float, y_min:float, y_max:float) -> float: 
+        """
+        Calculate the probability of the particle being in this particular retangular region
+        """
+
+        total_prob = 0.0
+        for cell_index in range(len(self.grid.probabilities)):
+            cell_x_min, cell_x_max, cell_y_min, cell_y_max = self.grid.get_cell_bounds(cell_index)
+            overlap = not (
+                cell_x_max <= x_min or # cell is to the left 
+                cell_x_min >= x_max or # cell is to the right 
+                cell_y_max <= y_min or # cell is below 
+                cell_y_min >= y_max # cell is above
+            ) 
+
+            if overlap: 
+                total_prob += self.grid.probabilities[cell_index]
+        return total_prob
+
+    def run_simulation(self, num_steps: int, verbose:bool = True):
+        for iteration in range(num_steps):
+            self.step_forward()
+            if verbose and (iteration + 1) % 10 == 0:
+                print(f"Completed iteration {self.current_iteration}")
+    
+    def get_probability_at_cell(self, cell_index: int) -> float:
+        return self.grid.probabilities[cell_index]
+
+    def find_cell_at_point(self, x: float, y: float) -> Optional[int]:
+        return self.grid.point_to_cell(x, y)
+
+
+
+def plot_probability_heatmap(sim: MonteCarloSimulation, title: str):
+    """
+    This creates a color-coded image where bright regions indicate high
+    probability (many particles) and dark regions indicate low probability
+    (few particles).
+    """ 
+
+    prob_2d = sim.grid.probabilities.reshape((sim.grid.ny_cells, sim.grid.nx_cells))
+
+    
+    fig, ax = plt.subplots(figsize=(10,8))
+    
+    
+    im = ax.imshow(
+        prob_2d,
+        extent=(sim.grid.x_min, sim.grid.x_max, sim.grid.y_min, sim.grid.y_max),
+        origin='lower',
+        cmap='hot',
+        interpolation='nearest',
+        aspect='auto'
+    )
+    
+    cbar = plt.colorbar(im, ax=ax)
+    cbar.set_label('Probability', rotation=270, labelpad=20)
+
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_title(f'{title}\nIteration {sim.current_iteration}, '
+                 f'{sim.num_particles} particles, ε={sim.noise_radius}')
+    
+    plt.tight_layout()
+    plt.show()
     
     
 def main():
