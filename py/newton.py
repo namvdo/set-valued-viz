@@ -2,6 +2,7 @@ from typing import Tuple, List, Optional
 import numpy as np 
 from scipy.linalg import solve, norm
 import matplotlib.pyplot as plt
+from dataclasses import dataclass
 
 # TODO: Implement Newton's method for multivariate functions start with those initial values
 (x0,y0) = (0.6381939926271558578, -0.2120300331658224337)
@@ -355,6 +356,86 @@ def plot_periodic_orbits(
     
     plt.tight_layout()
     plt.show()   
+
+
+
+# Monte Carlo simulation 
+@dataclass 
+class Particle:
+    x: float
+    y: float
+
+    def __repr__(self):
+        return f"Particle(x={self.x:.4f}, y={self.y:.4f})"
+    
+class ProbabilityGrid:
+    """
+    Represents 2d grid that discretizes the phase space into cells
+    """
+
+    def __init__(self, x_min: float, x_max: float, y_min: float, y_max: float, nx_cells: int, ny_cells: int):
+        """
+        Args:
+            x_min, x_max: Range of x coordinates to cover
+            y_min, y_max: Range of y coordinates to cover
+            nx_cells: Number of cells in the x direction
+            ny_cells: Number of cells in the y direction
+        """
+        self.x_min = x_min
+        self.x_max = x_max
+        self.y_min = y_min
+        self.y_max = y_max
+        self.nx_cells = nx_cells
+        self.ny_cells = ny_cells
+
+        self.cell_width = (x_max - x_min) / nx_cells
+        self.cell_height = (y_max - y_min) / ny_cells
+
+        self.probabilities = np.zeros(nx_cells * ny_cells)
+
+    def point_to_cell(self, x: float, y: float) -> Optional[int]:
+        """
+        Map a point (x, y) to a cell index in the grid.
+        Returns None if the point is out of bounds.
+        """
+        if x < self.x_min or x >= self.x_max or y < self.y_min or y >= self.y_max:
+            return None
+        i = int((x - self.x_min) / self.cell_width)
+        j = int((y - self.y_min) / self.cell_height)
+
+        # handle edge case where the point is exactly on the max boundary
+        i = min(i, self.nx_cells - 1)
+        j = min(j, self.ny_cells - 1)
+        # convert 2d indices to 1d index, row-major order
+        cell_index = j * self.nx_cells + i
+        return cell_index
+
+    def cell_to_indices(self, cell_index: int) -> Tuple[int, int]:
+        # Math: if cell_index = j * nx_cells + i, then:
+        i = cell_index % self.nx_cells 
+        j = cell_index // self.nx_cells
+        return i, j
+    
+    def cell_center(self, cell_index:int) -> Tuple[float, float]: 
+        i, j = self.cell_to_indices(cell_index)
+
+        x_center = self.x_min + (i + 0.5) * self.cell_width
+        y_center = self.y_min + (j + 0.5) * self.cell_height
+        return x_center, y_center
+    
+    
+    def get_cell_bounds(self, cell_index: int) -> Tuple[float, float, float, float]:
+        i, j = self.cell_to_indices(cell_index)
+        x_min_cell = self.x_min + i * self.cell_width
+        x_max_cell = x_min_cell + self.cell_width
+        y_min_cell = self.y_min + j * self.cell_height
+        y_max_cell = y_min_cell + self.cell_height
+        return x_min_cell, x_max_cell, y_min_cell, y_max_cell
+        
+        
+        
+        
+    
     
 def main():
     import warnings 
