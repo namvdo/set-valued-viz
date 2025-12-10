@@ -238,7 +238,7 @@ class ModelInstance():
         if color[3]>0: drawing.grid((0,0), self.model.epsilon, *color)
         
         image = drawing.draw(self.resolution)
-        return np.flip(image.swapaxes(0, 1), axis=0), drawing.tl, drawing.br
+        return image, drawing.tl, drawing.br
         
     def save_png(self):
         path = os.path.join(SAVEDIR, "test.png")

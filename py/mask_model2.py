@@ -19,7 +19,7 @@ class ModelConfiguration(ModelBase):
         
     def get_boundary_pixels(self, resolution:int):
         if self.drawing is None: self._firststep()
-        image = self.drawing.draw(resolution)
+        image = self.drawing.draw(resolution, False)
         mask = obj_mask(image)
         border = get_mask_border(mask)
         indexes = calc_mask_indexes(mask)
@@ -41,6 +41,7 @@ class ModelConfiguration(ModelBase):
         if self.drawing is None: self._firststep()
         # get boundary points from the image
         pixels = self.get_boundary_pixels(resolution)
+        
         points = pointify_pixels(pixels, self.drawing.tl, self.drawing.br, resolution)
         #
         
@@ -75,7 +76,6 @@ if __name__ == "__main__":
     for ax_target in test_plotting_grid(2, 2, timestep):
         config.process(resolution)
         image, tl, br = config.draw(resolution)
-        image = np.flip(image.swapaxes(0, 1), axis=0)
         ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
         
 

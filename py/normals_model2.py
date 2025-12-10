@@ -18,6 +18,20 @@ def noise_geometry_multipliers(normals, polygon):
         if result_dist is not None: multipliers[i] = result_dist
     return multipliers
 
+##def nearest_polygon_vertices(normals, polygon):
+##    distances = indexes = None
+##    for index,vertex in enumerate(polygon):
+##        dist = np.linalg.norm(normals-vertex, axis=1)
+##        if distances is None:
+##            distances = dist
+##            indexes = np.zeros(len(normals), dtype=np.int16)
+##        else:
+##            closer = dist<distances
+##            indexes[closer] = index
+##            distances[closer] = dist[closer]
+##    return indexes
+
+
 class ModelConfiguration(ModelBase):
     printing = True
     print_func = print
@@ -82,7 +96,6 @@ class ModelConfiguration(ModelBase):
         allowed_distance = self.epsilon*.98
         if self.noise_geometry is not None:
             allowed_distance *= noise_geometry_multipliers(self._normals, self.noise_geometry).min()
-##            return np.zeros(self._points.shape[0], dtype=np.bool_)
         inner_points = self._points-self._normals
         inner_points = np.repeat(np.expand_dims(inner_points, axis=0), len(self._points), axis=0)
         diffs = np.subtract(inner_points, np.expand_dims(self._points, axis=1))
@@ -97,6 +110,10 @@ class ModelConfiguration(ModelBase):
             self.noise_geometry = even_sided_polygon(self.noise_geometry_sides, self.noise_geometry_rotation)
         else:
             self.noise_geometry = None
+        
+    def try_to_apply_noise_geometry(self, normals):
+        if self.noise_geometry is not None:
+            normals *= noise_geometry_multipliers(normals, self.noise_geometry)
     ##
 
     
@@ -164,9 +181,7 @@ class ModelConfiguration(ModelBase):
         
         self._normals = radians_to_vectors(radians)
         
-        # apply noise geometry
-        if self.noise_geometry is not None:
-            self._normals *= noise_geometry_multipliers(self._normals, self.noise_geometry)
+        self.try_to_apply_noise_geometry(self._normals)
         
         self._normals *= self.epsilon
         self._prev_normals = self._normals.copy()
@@ -212,12 +227,10 @@ class ModelConfiguration(ModelBase):
             lengths = np.linalg.norm(normals, axis=1)
             normals[:,0] /= lengths
             normals[:,1] /= lengths
+            
+            self.try_to_apply_noise_geometry(normals)
+            
             normals *= self.epsilon
-            
-            # apply noise geometry
-            if self.noise_geometry is not None:
-                normals *= noise_geometry_multipliers(normals, self.noise_geometry)
-            
             
             # add the normals to the new points
             points[:,0], points[:,1] = self.function(x, y)
@@ -229,7 +242,7 @@ class ModelConfiguration(ModelBase):
                 self._timestep += 1 # increase early so that precision increase can catch up to correct step
                 
                 self._gap_detection_loops()
-                # array size changed -> reload
+                # amount of points might have changed -> reload
                 points = self._points
                 prev_points = self._prev_points
                 normals = self._normals
@@ -263,11 +276,6 @@ class ModelConfiguration(ModelBase):
         if self.printing: self.print_func(f"\ndrawing: {self._timestep}")
         
         #
-        black = np.array([0.,0.,0.,1.])
-        red = np.array([1.,0.,0.,1.])
-        green = np.array([0.,1.,0.,1.])
-        blue = np.array([0.,0.,1.,1.])
-        
         draw_prev_points = 0
         draw_prev_normals = 0
         draw_boundary_lines = 1
@@ -276,25 +284,32 @@ class ModelConfiguration(ModelBase):
         
         #
         
-        drawing = ImageDrawing(*np.ones(4))
+        drawing = ImageDrawing(r=1, g=1, b=1)
 
 ##        drawing.circles([(0,0)], 1, *red)
-        drawing.grid((0,.31), .25, *black)
+        drawing.grid((0,0), .25, b=1, a=0.2)
         
         if draw_boundary_lines:
-            drawing.lines(*self.get_boundary_lines(), *green)
+            drawing.lines(*self.get_boundary_lines(), g=1)
         
         if draw_inner_normals:
-            drawing.lines(*self.get_inner_normals(), *black)
+            drawing.lines(*self.get_inner_normals())
         if draw_outer_normals:
-            drawing.lines(*self.get_outer_normals(), *black)
+            drawing.lines(*self.get_outer_normals())
         
         if draw_prev_points:
-            drawing.points(self._prev_points, *blue)
+            drawing.points(self._prev_points, b=1)
             if draw_prev_normals:
-                drawing.lines(*self.get_prev_inner_normals(), *black)
+                drawing.lines(*self.get_prev_inner_normals())
         
-        drawing.points(self._points, *red)
+        drawing.points(self._points, r=1)
+
+##        l = len(self)//4
+        drawing.circles(self._points[:1], self.epsilon/10, inside=self.epsilon/11, r=1)
+##        drawing.circles(self._points[l:l+1], self.epsilon/10, inside=-self.epsilon/20, r=0.75, b=0.25)
+##        drawing.circles(self._points[l*2:l*2+1], self.epsilon/10, inside=-self.epsilon/20, r=0.5, b=0.5)
+##        drawing.circles(self._points[l*3:l*3+1], self.epsilon/10, inside=-self.epsilon/20, r=0.25, b=0.75)
+##        drawing.circles(self._points[-1:], self.epsilon/10, inside=-self.epsilon/20, b=1)
         
         image = drawing.draw(resolution)
         return image, drawing.tl, drawing.br
@@ -335,12 +350,11 @@ if __name__ == "__main__":
 
     
     resolution = 2000
-    timestep = 10
-    for ax_target in test_plotting_grid(1, 1, timestep):
+    timestep = 0
+    for ax_target in test_plotting_grid(2, 2, timestep):
         config.process(timestep)
         image,tl,br = config.draw(resolution)
         
-        image = image.swapaxes(0, 1)[::-1,:]
         ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
         
         timestep += 1

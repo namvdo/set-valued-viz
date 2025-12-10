@@ -1295,7 +1295,7 @@ def main_transition_matrix_demo():
     print(f"Step 3: Visualizing predictions from starting point {starting_point}\n")
     
     # Step 4: Create the visualization
-    fig, ax = plt.subplots(figsize=(12, 10))
+    fig, ax = plt.subplots(figsize=(10, 9))
     visualize_sampled_next_positions(
         current_point=starting_point,
         P=P,

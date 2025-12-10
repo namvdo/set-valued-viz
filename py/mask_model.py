@@ -199,7 +199,6 @@ if __name__ == "__main__":
     for ax_target in test_plotting_grid(2, 2, timestep):
         config.nextstep()
         image, tl, br = config.image, config.topleft, config.bottomright
-        image = image.swapaxes(0, 1)[::-1,:]
         ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
         
 

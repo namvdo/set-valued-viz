@@ -362,7 +362,6 @@ if __name__ == "__main__":
         config.process(timestep)
         image,tl,br = config.draw(resolution)
         
-        image = image.swapaxes(0, 1)[::-1,:]
         ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
         
         timestep += 1

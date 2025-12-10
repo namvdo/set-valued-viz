@@ -2,9 +2,8 @@ import os, sys
 import matplotlib.pyplot as plt
 
 from __equation import *
-from __mask import *
 from __system import *
-from __vectors import *
+from __points_and_masks import *
 
 WORKDIR, FILENAME = os.path.abspath(sys.argv[0]).rsplit(os.path.sep, 1)
 
@@ -17,96 +16,6 @@ class Point2D:
         return f"({self.x}, {self.y})"
 
     def as_tuple(self): return self.x, self.y
-
-class EquationObject():
-    def __init__(self, string):
-        self.string = string
-    
-    def required_inputs(self): # return a set of variables needed to solve
-        return set(re.findall(RE_ALGEBRAIC_POS, self.string)) - ALGEBRAIC_BLACKLIST
-
-    def derivative(self, target_variable="x"):
-        return type(self)(derivative(self.string, target=target_variable))
-
-    def solve(self, **inputs):
-        return solve(self.string, **inputs)
-    
-    def copy(self): return type(self)(self.string)
-    
-    def __str__(self): return self.string
-
-
-class MappingFunction2D:
-    def __init__(self, fx:str, fy:str):
-        self.fx = EquationObject(fx)
-        self.fy = EquationObject(fy)
-        self.constants = {}
-
-    def set_constants(self, **values):
-        self.constants.update(values)
-        
-    def required_constants(self): # return a set of keyword arguments __call__ requires
-        need = self.fx.required_inputs()
-        need |= self.fy.required_inputs()
-        if "x" in need: need.remove("x")
-        if "y" in need: need.remove("y")
-        return need
-
-    def missing_constants(self):
-        return self.required_constants()-set(self.constants.keys())
-
-    def trim_excess_constants(self):
-        required = self.required_constants()
-        for k in list(self.constants.keys()):
-            if k not in required: del self.constants[k]
-
-    def copy(self):
-        new = type(self)(self.fx.string, self.fy.string)
-        new.constants = self.constants.copy()
-        return new
-    
-    def __str__(self):
-        x = self.fx.string
-        y = self.fy.string
-        for k,v in self.constants.items():
-            v = str(v)
-            x = x.replace(k, v)
-            y = y.replace(k, v)
-        missing = self.missing_constants()
-        return f"({x}, {y})" + (str(" (has undefined constants)") if missing else "")
-    
-    def __call__(self, x, y, **inputs):
-        return (self.fx.solve(x=x, y=y, **self.constants|inputs),
-                self.fy.solve(x=x, y=y, **self.constants|inputs))
-
-    def jacobian(self):
-        return [
-            [self.fx.derivative("x"), self.fx.derivative("y")],
-            [self.fy.derivative("x"), self.fy.derivative("y")],
-            ]
-
-    def transposed_inverse_jacobian(self): # T(L)^-1
-        jacobian = self.jacobian()
-        # transpose
-        jacobian[1][0], jacobian[0][1] = jacobian[0][1], jacobian[1][0]
-        
-        # determinant
-        det = f"({jacobian[0][0].string})*({jacobian[1][1].string})-({jacobian[0][1].string})*({jacobian[1][0].string})"
-        det = expand(shrink(det))
-        if det=="0":
-            print("non invertible matrix")
-            return None
-        
-        # inverse
-        jacobian[0][0], jacobian[1][1] = jacobian[1][1], jacobian[0][0]
-        jacobian[0][1].string = f"-({jacobian[0][1].string})"
-        jacobian[1][0].string = f"-({jacobian[1][0].string})"
-        for i in range(2):
-            for j in range(2):
-                o = jacobian[i][j]
-                o.string = f"({o.string})/({det})" # divide with the determinant
-        return jacobian
-
 
 class ModelBase():
     epsilon = 0.01
@@ -150,9 +59,6 @@ class ImageDrawing:
     tl = None
     br = None
     
-##    last_drawn_image = None
-##    last_resolution_used = None
-    
     def __init__(self, *args, **kwargs):
         self.background = self._color_check(*args, **kwargs)
         self.objects = []
@@ -161,22 +67,16 @@ class ImageDrawing:
     def _color_check(self, r=0, g=0, b=0, a=1, **kwargs):
         return np.asarray([r,g,b,a])
 
-##    def clear_image_memory(self):
-##        self.last_drawn_image = None
-##        self.last_resolution_used = None
-    
     def clear(self):
         self.tl = self.br = None
         self.objects.clear()
         self.colors.clear()
-##        self.clear_image_memory()
 
     def update_tl_br(self, tl, br):
         if self.tl is None: self.tl = tl
         else: self.tl = np.min([tl,self.tl], axis=0)
         if self.br is None: self.br = br
         else: self.br = np.max([br,self.br], axis=0)
-##        self.clear_image_memory()
         
     def points(self, points, *args, **kwargs):
         points = np.asarray(points, dtype=np.float64)
@@ -210,12 +110,7 @@ class ImageDrawing:
         self.objects.append(obj)
         self.colors.append(self._color_check(*args, **kwargs))
 
-    def draw(self, resolution:int):
-
-##        # no need to redraw
-##        if self.last_drawn_image is not None and self.last_resolution_used==resolution:
-##            return self.last_drawn_image
-        
+    def draw(self, resolution:int, topright_is_the_positive_corner=True):
         pixels = []
         for x in self.objects:
             if isinstance(x, self.LinesObj):
@@ -305,9 +200,10 @@ class ImageDrawing:
             image /= image.max()
             image *= 255
         
-##        self.last_drawn_image = image.astype(np.uint8)
-##        self.last_resolution_used = resolution
-        return image.astype(np.uint8)
+        image = image.astype(np.uint8)
+        if topright_is_the_positive_corner:
+            return np.flip(image.swapaxes(0, 1), axis=0)
+        return image
 
 
 def test_plotting_grid(width=1, height=1, timestep=0, figsize=(9,9)):
