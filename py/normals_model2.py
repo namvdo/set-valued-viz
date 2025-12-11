@@ -236,8 +236,7 @@ class ModelConfiguration(ModelBase):
             points[:,0], points[:,1] = self.function(x, y)
             
             points += normals
-
-            # alternative gap detection
+            
             if points is self._points: # every point is being processed
                 self._timestep += 1 # increase early so that precision increase can catch up to correct step
                 

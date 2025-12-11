@@ -113,8 +113,12 @@ def repeat_mask_ones_until_divisible(mask, divisible_by=2):
     return continuous
 
 def get_mask_border(mask):
-    border = mask.copy()
-    border[1:,:] = mask[1:]*~mask[:-1]
+    border = np.zeros_like(mask)
+    border[0,:] = mask[0,:]
+    border[:,0] = mask[:,0]
+    border[-1,:] = mask[-1,:]
+    border[:,-1] = mask[:,-1]
+    border[1:,:] |= mask[1:]*~mask[:-1]
     border[:,1:] |= mask[:,1:]*~mask[:,:-1]
     border[:-1,:] |= ~mask[1:,]*mask[:-1]
     border[:,:-1] |= ~mask[:,1:]*mask[:,:-1]
@@ -128,31 +132,6 @@ def calc_mask_indexes(mask):
     indexes[:,:,1] = np.arange(mask.shape[1])
     return indexes
 
-
-def fill_closed_areas(mask): # very crude
-    fill_mask_hor = np.zeros(mask.shape, dtype=np.bool_)
-    fill_mask_ver = fill_mask_hor.copy()
-    
-    for r,row in enumerate(mask):
-        i = row.argmax() # first one
-        while 1:
-            j = i+row[i:].argmin() # first zero after that
-            ii = j+row[j:].argmax() # closing one
-            if j==ii: break
-            fill_mask_hor[r,j:ii] = True
-            i = ii
-            
-    for c in range(mask.shape[1]):
-        col = mask[:,c]
-        i = col.argmax() # first one
-        while 1:
-            j = i+col[i:].argmin() # first zero after that
-            ii = j+col[j:].argmax() # closing one
-            if j==ii: break
-            fill_mask_ver[j:ii,c] = True
-            i = ii
-    
-    return fill_mask_hor*fill_mask_ver
 
 def simple_hausdorff_distance(source_mask, target_mask):
     # flood source_mask until target_mask is covered
@@ -290,7 +269,7 @@ def polygon_mask(points, resolution:int, fill=False):
         draw_line_on_image(prev, pixel)
         prev = pixel
     
-    if fill: image |= fill_closed_areas(image)
+    if fill: image |= horizontally_closed_areas(image)
     return image
 
 def center_rotate_points(points, rotation):
@@ -303,20 +282,102 @@ def center_rotate_points(points, rotation):
     return center+offsets
 
 
+def image_color_mask(image, color):
+    return (image[:,:,0]==color[0])*(image[:,:,1]==color[1])*(image[:,:,2]==color[2])
+
+
+##def fill_closed_areas(mask): # very crude
+##    fill_mask_hor = np.zeros(mask.shape, dtype=np.bool_)
+##    fill_mask_ver = fill_mask_hor.copy()
+##    
+##    for r,row in enumerate(mask):
+##        i = row.argmax() # first one
+##        while 1:
+##            j = i+row[i:].argmin() # first zero after that
+##            ii = j+row[j:].argmax() # closing one
+##            if j==ii: break
+##            fill_mask_hor[r,j:ii] = True
+##            i = ii
+##            
+##    for c in range(mask.shape[1]):
+##        col = mask[:,c]
+##        i = col.argmax() # first one
+##        while 1:
+##            j = i+col[i:].argmin() # first zero after that
+##            ii = j+col[j:].argmax() # closing one
+##            if j==ii: break
+##            fill_mask_ver[j:ii,c] = True
+##            i = ii
+##    return fill_mask_hor*fill_mask_ver
+
+
+def horizontally_closed_areas(mask):
+    fill_mask_hor = np.zeros_like(mask)
+    for r,row in enumerate(mask):
+        i = row.argmax() # first one
+        while 1:
+            j = i+row[i:].argmin() # first zero after that
+            ii = j+row[j:].argmax() # closing one
+            if j==ii: break
+            fill_mask_hor[r,j:ii] = True
+            i = ii
+    return fill_mask_hor
+
+def vertically_closed_areas(mask):
+    fill_mask_ver = np.zeros_like(mask)
+    for c in range(mask.shape[1]):
+        col = mask[:,c]
+        i = col.argmax() # first one
+        while 1:
+            j = i+col[i:].argmin() # first zero after that
+            ii = j+col[j:].argmax() # closing one
+            if j==ii: break
+            fill_mask_ver[j:ii,c] = True
+            i = ii
+    return fill_mask_ver
+
+def find_closed_areas(mask): # upgrade to fill_closed_areas
+    surrounded = horizontally_closed_areas(mask)
+    surrounded *= vertically_closed_areas(mask)
+    
+    while 1:
+        combined = mask|surrounded
+        open_upward = surrounded[:-1,:]*~(combined[1:,:])
+        if open_upward.any():
+            surrounded[:-1,:][open_upward] = False
+            continue
+        open_downward = surrounded[1:,:]*~(combined[:-1,:])
+        if open_downward.any():
+            surrounded[1:,:][open_downward] = False
+            continue
+        open_leftward = surrounded[:,1:]*~(combined[:,:-1])
+        if open_leftward.any():
+            surrounded[:,1:][open_leftward] = False
+            continue
+        open_rightward = surrounded[:,:-1]*~(combined[:,1:])
+        if open_rightward.any():
+            surrounded[:,:-1][open_rightward] = False
+            continue
+        break
+    return surrounded
 
 
 if __name__ == "__main__":
-##    mask = np.ones(10, dtype=np.bool_)
-##    mask[8] = False
-####    mask[4] = True
-####    mask[5] = True
-##    print(mask)
-##    new_mask = repeat_mask_ones_until_divisible(mask, 2)
-##    print(new_mask)
-##    print(line_mask((0,0), (-1,0.1)))
-
-    print(circle_mask(5))
-##    points = np.zeros((10,2))
-##    points[1:] += 1
-##    polygon_mask(points, 512)
+    # test mask filling
+    mask = circle_mask(20)
+    mask *= np.random.random(mask.shape)>.5
+    
+    mask1 = mask.astype(np.uint8)+vertically_closed_areas(mask)/2
+    mask2 = mask.astype(np.uint8)+horizontally_closed_areas(mask)/2
+    mask3 = mask.astype(np.uint8)+find_closed_areas(mask)/2
+    
+    import matplotlib.pyplot as plt
+    
+    fig, ax = plt.subplots(1, 4, figsize=(12,5))
+    ax[0].imshow(mask)
+    ax[1].imshow(mask1)
+    ax[2].imshow(mask2)
+    ax[3].imshow(mask3)
+    plt.show()
+    pass
 

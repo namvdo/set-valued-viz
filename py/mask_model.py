@@ -167,7 +167,7 @@ class ModelConfiguration(ModelBase):
         # hausdorff
         dist = hausdorff_distance(new_image, self.image)
         dist = max(dist, hausdorff_distance(self.image, new_image))
-        dist *= self.precision
+##        dist *= self.precision
         self.log_hausdorff(dist)
         #
 
@@ -194,13 +194,15 @@ if __name__ == "__main__":
 
     config.precision = 0.0025
     
-    timestep = 10
+    timestep = 0
     for _ in range(timestep): config.nextstep()
     for ax_target in test_plotting_grid(2, 2, timestep):
         config.nextstep()
         image, tl, br = config.image, config.topleft, config.bottomright
+
+        image = np.flip(image.swapaxes(0,1), axis=0)
         ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
-        
+        print(config.hausdorff_distance)
 
 
 

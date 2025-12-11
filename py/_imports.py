@@ -77,6 +77,9 @@ class ImageDrawing:
         else: self.tl = np.min([tl,self.tl], axis=0)
         if self.br is None: self.br = br
         else: self.br = np.max([br,self.br], axis=0)
+
+    def get_extent(self):
+        return (self.tl[0], self.br[0], self.tl[1], self.br[1])
         
     def points(self, points, *args, **kwargs):
         points = np.asarray(points, dtype=np.float64)

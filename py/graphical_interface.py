@@ -26,13 +26,25 @@ class ModelInstance():
             if hasattr(self, k): setattr(self, k, v)
         win = nice_window(self.key, on_destroy=on_destroy)
         set_padding(win)
-        self._model_control_panel(win)
-        self._figure_viewport_panel(win)
-        self._figure_drawing_panel(win)
+        
+##        top = nice_frame(win, side=tk.TOP, fill=tk.BOTH)
+##        nice_label(top, text="asd", anchor="w")
+        
+        mid = nice_frame(win, side=tk.TOP)
+        self._model_control_panel(mid)
+        self._figure_viewport_panel(mid)
+        self._figure_drawing_panel(mid)
+        
+        bot = nice_frame(win, side=tk.TOP, fill=tk.BOTH)
+        self._information_panel(bot)
+
+    def _information_panel(self, root):
+        nice_label(root, text="asd", anchor="w")
+        pass
         
 
-    def _model_control_panel(self, win):
-        frame = nice_frame(win, anchor="nw")
+    def _model_control_panel(self, root):
+        frame = nice_frame(root, anchor="nw")
         
         # buttons
         f = padded_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
@@ -128,16 +140,16 @@ class ModelInstance():
                 if v is not None: field.insert(0, str(v))
         #
 
-    def _figure_viewport_panel(self, win):
-        middle = nice_titled_frame(win, "figure") # , anchor="n"
+    def _figure_viewport_panel(self, root):
+        middle = nice_titled_frame(root, "figure") # , anchor="n"
         def _mouse_handler(event):
 ##            print(event)
             pass
         self.canvas, self.fig, self.subplot = create_figure(middle, _mouse_handler, 512, 512)
         
         
-    def _figure_drawing_panel(self, win):
-        frame = nice_frame(win, anchor="nw")
+    def _figure_drawing_panel(self, root):
+        frame = nice_frame(root, anchor="nw")
         
         # buttons
         f = padded_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
