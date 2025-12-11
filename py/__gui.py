@@ -1,6 +1,7 @@
 import os, re
 import tkinter as tk
 from tkinter import messagebox, filedialog
+import numpy as np
 
 from PIL.Image import fromarray as PIL_image_from_array
 
@@ -50,12 +51,14 @@ def set_colors(obj, fg, bg):
     else:
         obj.config(fg=fg, bg=bg)
 
-def set_padding(obj):
-    if isinstance(obj, tk.Entry):
-        pass
-    else:
-        obj.configure(padx=DEFAULT_PADDING_WIDTH, pady=DEFAULT_PADDING_HEIGHT)
+def set_padding(obj, x=DEFAULT_PADDING_WIDTH, y=DEFAULT_PADDING_HEIGHT):
+    if isinstance(obj, tk.Entry): pass
+    else: obj.configure(padx=x, pady=y)
 
+def set_random_colors(obj): # for debugging
+    foreground = color_as_hex(np.random.randint(0, 255, 3))
+    background = color_as_hex(np.random.randint(0, 255, 3))
+    set_colors(obj, foreground, background)
 
 def set_active_colors(obj):
     set_colors(obj, ACTIVE_FG_COLOR, ACTIVE_BG_COLOR)
@@ -192,10 +195,12 @@ def nice_window(title, configure_handler=None, on_destroy=None):
     set_passive_colors(win)
     return win
 
-def nice_frame(root, *args, side=tk.LEFT, **kwargs):
+def nice_frame(root, *args, side=tk.LEFT, pack=True, **kwargs):
     frame = tk.Frame(root)
-    frame.pack(*args, side=side, **kwargs)
+    if pack:
+        frame.pack(*args, side=side, **kwargs)
     set_passive_colors(frame)
+##    set_random_colors(frame) # DEBUG
     return frame
 
 def nice_textbox(frame, width=80, height=20, side=tk.TOP, **kwargs):
@@ -227,8 +232,8 @@ def nice_title(frame, text, *args, side=tk.TOP, fill=tk.BOTH, **kwargs):
     set_passive_colors_inverted(label)
     return label
 
-def nice_field(*args, identifier=None, side=tk.LEFT, fill=tk.BOTH, update_handler=None, **kwargs):
-    field = tk.Entry(*args, **kwargs)
+def nice_field(frame, *args, identifier=None, side=tk.LEFT, fill=tk.BOTH, update_handler=None, **kwargs):
+    field = tk.Entry(frame, *args, **kwargs)
     field.pack(side=side, fill=fill)
     if update_handler is not None:
         def _event_handle(event): update_handler(identifier, field.get())
@@ -240,7 +245,7 @@ def set_field_content(field, string):
     field.delete(0, tk.END)
     field.insert(0, string)
 
-def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, fill=tk.BOTH, update_handler=None, **kwargs):
+def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, fill=tk.X, update_handler=None, **kwargs):
     subframe = nice_frame(frame, side=side, **kwargs)
     if text:
         label = nice_label(subframe, text=text, side=tk.LEFT, anchor="c") # , width=len(text)
@@ -268,16 +273,13 @@ def raised_frame(frame, *args, border=1, **kwargs):
     set_passive_colors_inverted(f)
     return nice_frame(f, padx=border, pady=border, fill=tk.BOTH)
 
-def padded_and_raised_frame(frame, *args, border=1, **kwargs):
-    f = padded_frame(frame, *args, **kwargs)
-    return raised_frame(f, border=border, fill=tk.BOTH)
-
-def nice_titled_frame(frame, title, **kwargs):
-    f = padded_and_raised_frame(frame, **kwargs)
-    nice_title(f, title)
-    ff = nice_frame(f, fill=tk.BOTH)
-    set_padding(ff)
-    return ff
+def nice_titled_frame(frame, title, *args, fill=tk.NONE, **kwargs):
+    f = padded_frame(frame, *args, fill=fill, **kwargs)
+    ff = raised_frame(f, border=1, fill=tk.BOTH)
+    nice_title(ff, title)
+    fff = nice_frame(ff, fill=tk.BOTH)
+    set_padding(fff)
+    return fff
 
 
 
@@ -286,109 +288,50 @@ def nice_titled_frame(frame, title, **kwargs):
 
 
 
-def nice_RGB_selector(frame, color, on_update=None):
+def nice_RGBA_selector(frame, color, on_update=None): # both RGBA and RGB work fine
     f = nice_frame(frame, anchor="e")
     set_passive_colors_inverted(f)
     
     ff = nice_frame(f, side=tk.LEFT, padx=2)
     preview = nice_label(ff, width=4, side=tk.LEFT)
-    def _update_preview_color():
-        set_colors(preview, opposite_color_as_hex(color), color_as_hex(color))
-    _update_preview_color()
-
-    # Red
+    def _update_preview_color(index):
+        if index==3: preview.configure(text=f"{int((color[index]/255)*100)}%")
+        else: set_colors(preview, opposite_color_as_hex(color), color_as_hex(color))
+    _update_preview_color(0)
+    if len(color)>3: _update_preview_color(3)
+    
+    _vars = []
+    _var_updates = []
+    _fields = []
+    
     def _update(identifier, string):
         value = read_number_from_string(string)
-        if value is not None: color[0] = int(value)%256
-        else: color[0] = 0
+        if value is not None: color[identifier] = int(value)%256
+        else: color[identifier] = 0
         if on_update is not None: on_update()
-        _update_preview_color()
-        var0.set(color[0])
-    
-    field0 = nice_field(f, width=3, update_handler=_update)
-    field0.insert(0, str(color[0]))
-    
-    def _var0_update():
-        color[0] = var0.get()
-        if on_update is not None: on_update()
-        _update_preview_color()
-        set_field_content(field0, str(color[0]))
-    var0 = integer_cycler(field0, 256, on_update=_var0_update, button=False)
-    var0.set(color[0])
-    #
-
-    # Green
-    def _update(identifier, string):
-        value = read_number_from_string(string)
-        if value is not None: color[1] = int(value)%256
-        else: color[1] = 0
-        if on_update is not None: on_update()
-        _update_preview_color()
-        var1.set(color[1])
+        _update_preview_color(identifier)
+        _vars[identifier].set(color[identifier])
         
-    field1 = nice_field(f, width=3, update_handler=_update)
-    field1.insert(0, str(color[1]))
-    
-    def _var1_update():
-        color[1] = var1.get()
+    def _var_update(index):
+        color[index] = _vars[index].get()
         if on_update is not None: on_update()
-        _update_preview_color()
-        set_field_content(field1, str(color[1]))
-    var1 = integer_cycler(field1, 256, on_update=_var1_update, button=False)
-    var1.set(color[1])
-    #
+        _update_preview_color(index)
+        set_field_content(_fields[index], str(color[index]))
 
-    # Blue
-    def _update(identifier, string):
-        value = read_number_from_string(string)
-        if value is not None: color[2] = int(value)%256
-        else: color[2] = 0
-        if on_update is not None: on_update()
-        _update_preview_color()
-        var2.set(color[2])
+    def __new_variable_update_lambda(index):
+        _var_updates.append(lambda : _var_update(index))
         
-    field2 = nice_field(f, width=3, update_handler=_update)
-    field2.insert(0, str(color[2]))
-    
-    def _var2_update():
-        color[2] = var2.get()
-        if on_update is not None: on_update()
-        _update_preview_color()
-        set_field_content(field2, str(color[2]))
-    var2 = integer_cycler(field2, 256, on_update=_var2_update, button=False)
-    var2.set(color[2])
-    #
-    
+    for i in range(len(color)):
+        field = nice_field(f, identifier=i, width=4, justify="center", update_handler=_update)
+        field.insert(0, str(color[i]))
+        _fields.append(field)
+        
+        __new_variable_update_lambda(i)
+        var = integer_cycler(_fields[i], 256, on_update=_var_updates[i], button=False)
+        var.set(color[i])
+        _vars.append(var)
+        
     return f
-
-def nice_RGBA_selector(frame, color, on_update=None):
-    f = nice_RGB_selector(frame, color, on_update)
-    preview = f.slaves()[0].slaves()[0]
-    
-    def _preview_update():
-        preview.configure(text=f"{int((color[3]/255)*100)}%")
-    
-    _preview_update()
-    
-    def _update(identifier, string):
-        value = read_number_from_string(string)
-        if value is not None: color[3] = int(value)%256
-        else: color[3] = 0
-        if on_update is not None: on_update()
-        _preview_update()
-        var.set(color[3])
-    field = nice_field(f, width=3, update_handler=_update)
-    field.insert(0, str(color[3]))
-    
-    def _var_update():
-        color[3] = var.get()
-        if on_update is not None: on_update()
-        _preview_update()
-        set_field_content(field, str(color[3]))
-    var = integer_cycler(field, 256, on_update=_var_update, button=False)
-    var.set(color[3])
-    
-    return color
 
 
 

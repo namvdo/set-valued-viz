@@ -35,12 +35,12 @@ class ModelInstance():
         self._figure_viewport_panel(mid)
         self._figure_drawing_panel(mid)
         
-        bot = nice_frame(win, side=tk.TOP, fill=tk.BOTH)
-        self._information_panel(bot)
+##        bot = nice_frame(win, side=tk.TOP, fill=tk.BOTH)
+##        self._information_panel(bot)
 
-    def _information_panel(self, root):
-        nice_label(root, text="asd", anchor="w")
-        pass
+##    def _information_panel(self, root):
+##        nice_label(root, text="asd", anchor="w")
+##        pass
         
 
     def _model_control_panel(self, root):
@@ -98,7 +98,7 @@ class ModelInstance():
         
         #
         width = 6
-        ff = nice_titled_frame(f, "noise", anchor="n", side=tk.TOP)
+        ff = nice_titled_frame(f, "noise", side=tk.TOP)
         
         def _update(identifier, string):
             value = read_number_from_string(string)
@@ -128,7 +128,7 @@ class ModelInstance():
         width = 10
         adjusable_parameters = self.model.function.required_constants()
         if len(adjusable_parameters)>0:
-            ff = nice_titled_frame(f, "parameters", side=tk.TOP, anchor="n")
+            ff = nice_titled_frame(f, "parameters", side=tk.TOP)
             for k in sorted(adjusable_parameters):
                 def _update(identifier, string):
                     value = read_number_from_string(string)
@@ -138,6 +138,12 @@ class ModelInstance():
                 field = nice_labeled_field(ff, k, width=width, anchor="ne", update_handler=_update)
                 v = self.model.function.constants.get(k)
                 if v is not None: field.insert(0, str(v))
+        #
+
+        #
+##        f = nice_frame(frame, side=tk.TOP, fill=tk.BOTH)
+        ff = nice_titled_frame(frame, "step data", anchor="n", side=tk.TOP)
+        nice_label(ff, text="asd", anchor="w")
         #
 
     def _figure_viewport_panel(self, root):
