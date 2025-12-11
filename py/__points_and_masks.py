@@ -1,4 +1,5 @@
 import numpy as np
+from __masspointscontainer import *
 
 # from arrayprc
 def distance(a, b):
@@ -6,6 +7,9 @@ def distance(a, b):
 
 def nearestpoint_i(a, *b):
     return np.argmin([distance(a, x) for x in b])
+
+def farthestpoint_i(a, *b):
+    return np.argmax([distance(a, x) for x in b])
 
 def nearestvalue_i(array, value):
     return np.argmin(np.abs(np.asarray(array)-value))
@@ -152,8 +156,7 @@ def simple_hausdorff_distance(source_mask, target_mask):
         steps += 1
     return steps
 
-##@function_timer
-def hausdorff_distance(source_mask, target_mask):
+def hausdorff_distance(source_mask, target_mask): # one way only
     source_floodable = source_mask.copy()
     steps = simple_hausdorff_distance(source_floodable, target_mask)
     if steps==0: return 0 # fully inside
@@ -164,16 +167,14 @@ def hausdorff_distance(source_mask, target_mask):
     indexes = calc_mask_indexes(source_mask)
     border_overlap_points = indexes[border_overlap]
     source_points = indexes[source_mask]
-
+    
     if source_points.shape[0]>1:
         # reject unimportant points
-##        print(source_points.shape[0])
         rejects = source_points[:,0]<(source_points[:,0].max()-1)
         rejects *= source_points[:,1]<(source_points[:,1].max()-1)
         rejects *= source_points[:,0]>(source_points[:,0].min()+1)
         rejects *= source_points[:,1]>(source_points[:,1].min()+1)
         source_points = source_points[~rejects]
-##        print("->", source_points.shape[0])
     
     max_distance = 0
     for p in border_overlap_points:
@@ -181,6 +182,65 @@ def hausdorff_distance(source_mask, target_mask):
         max_distance = max(max_distance, distance(p, source_points[i]))
     return max_distance
 
+def hausdorff_distance2(points1, points2): # both ways
+    # maximum distance of:
+    #   closest point in points1 to farthest point in points2
+    #   closest point in points2 to farthest point in points1
+    indexes1 = np.zeros(2, dtype=np.int32)
+    indexes2 = np.zeros(2, dtype=np.int32)
+    
+    distances1 = np.zeros(2)
+    distances2 = np.zeros(2)
+    
+    for i,p1 in enumerate(points1):
+        for j,p2 in enumerate(points2):
+            dist = np.linalg.norm(p1-p2)
+            
+            if i==0 and j==0:
+                distances1[:] = dist
+                distances2[:] = dist
+                continue
+            
+            if dist<distances1[0]:
+                distances1[0] = dist
+                indexes1[0] = i
+            elif dist>distances1[1]:
+                distances1[1] = dist
+                indexes1[1] = i
+            
+            if dist<distances2[0]:
+                distances2[0] = dist
+                indexes2[0] = j
+            elif dist>distances2[1]:
+                distances2[1] = dist
+                indexes2[1] = j
+    
+    dist = distance(points1[indexes1[0]], points2[indexes2[1]])
+    dist = max(dist, distance(points2[indexes2[0]], points1[indexes1[1]]))
+    return dist
+
+
+def hausdorff_distance3(points1, points2, float_precision=10000): # both ways # VERY FAST
+    mp1 = MassPointsFloat(float_precision=float_precision)
+    mp2 = MassPointsFloat(float_precision=float_precision)
+    for i,p in enumerate(points1): mp1.set(i, p)
+    for i,p in enumerate(points2): mp2.set(i, p)
+    
+    center1 = np.sum(points1, axis=0)/len(points1)
+    center2 = np.sum(points2, axis=0)/len(points2)
+    
+    in_between = (center1+center2)/2
+    nearest_index1 = list(mp1.nearest(in_between))[0]
+    nearest_index2 = list(mp2.nearest(in_between))[0]
+    nearest_point1 = points1[nearest_index1]
+    nearest_point2 = points2[nearest_index2]
+    
+    furthest_index1 = list(mp1.furthest(nearest_point2))[0]
+    furthest_index2 = list(mp2.furthest(nearest_point1))[0]
+    
+    dist = distance(nearest_point1, points2[furthest_index2])
+    dist = max(dist, distance(nearest_point2, points1[furthest_index1]))
+    return dist
 
 
 def image_shape(resolution, max_x, max_y):

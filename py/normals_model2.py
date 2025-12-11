@@ -302,17 +302,15 @@ class ModelConfiguration(ModelBase):
                 drawing.lines(*self.get_prev_inner_normals())
         
         drawing.points(self._points, r=1)
-
-##        l = len(self)//4
-        drawing.circles(self._points[:1], self.epsilon/10, inside=self.epsilon/11, r=1)
-##        drawing.circles(self._points[l:l+1], self.epsilon/10, inside=-self.epsilon/20, r=0.75, b=0.25)
-##        drawing.circles(self._points[l*2:l*2+1], self.epsilon/10, inside=-self.epsilon/20, r=0.5, b=0.5)
-##        drawing.circles(self._points[l*3:l*3+1], self.epsilon/10, inside=-self.epsilon/20, r=0.25, b=0.75)
-##        drawing.circles(self._points[-1:], self.epsilon/10, inside=-self.epsilon/20, b=1)
+        
+##        drawing.circles(self._points[:1], self.epsilon/10, inside=self.epsilon/11, r=1)
         
         image = drawing.draw(resolution)
         return image, drawing.tl, drawing.br
 
+    @function_timer
+    def hausdorff_distance(self):
+        return hausdorff_distance3(self._points, self._prev_points)
 
 
 
@@ -356,6 +354,7 @@ if __name__ == "__main__":
         
         ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
         
+        print(timestep, "hausdorff:", config.hausdorff_distance())
         timestep += 1
 
 
