@@ -11,8 +11,8 @@ class MassPoints():
     right = 0
     def __init__(self, scaling=2):
         self.scaling = scaling
-        self.chunks = [{}] # chunks0 -> values, chunks1 -> chunks0, chunks2 -> chunks1
-        self.points = {} # value -> point
+        self.chunks = [{}] # chunks0 -> keys, chunks1 -> chunks0, chunks2 -> chunks1
+        self.points = {} # key -> point
 
     def distance(self, x1, y1, x2, y2):
         return math.sqrt(math.pow(x1-x2, 2)+math.pow(y1-y2, 2))
@@ -69,29 +69,29 @@ class MassPoints():
     
 ##    @timepck.function_timer
     def inrange(self, point, radius, as_points=False):
-        prev_values = set(self.chunks[-1].keys())
+        prev_keys = set(self.chunks[-1].keys())
         for i in range(len(self.chunks)-1, -1, -1):
-            values = set()
+            keys = set()
             scale = self.scaling*i
             origin = (point[0]>>scale, point[1]>>scale)
             r = radius>>scale
             if scale: r += 1
             
-            for target in prev_values:
+            for target in prev_keys:
                 dist = self.distance(*target,*origin)
                 if dist<(r+1):
                     if len(self.chunks[i][target]):
-                        if i==0 and as_points: values.add(target)
-                        else: values |= self.chunks[i][target]
-            prev_values = values
-        return values
+                        if i==0 and as_points: keys.add(target)
+                        else: keys |= self.chunks[i][target]
+            prev_keys = keys
+        return keys
 
 ##    @timepck.function_timer
     def inrange2(self, point, radius, as_points=False): # faster over large distances
         prev_bypass = set()
-        prev_values = set(self.chunks[-1].keys())
+        prev_keys = set(self.chunks[-1].keys())
         for i in range(len(self.chunks)-1, -1, -1):
-            values = set()
+            keys = set()
             bypass = set()
             scale = self.scaling*i
             origin = (point[0]>>scale, point[1]>>scale)
@@ -104,47 +104,50 @@ class MassPoints():
                 else:
                     bypass |= self.chunks[i][target]
             
-            for target in prev_values:
+            for target in prev_keys:
                 dist = self.distance(*target,*origin)
                 if i>0 and dist<max(r-2, 0):
                     # all sub-points here must be in range
                     bypass |= self.chunks[i][target]
                 elif dist<(r+1):
                     if len(self.chunks[i][target]):
-                        if i==0 and as_points: values.add(target)
-                        else: values |= self.chunks[i][target]
+                        if i==0 and as_points: keys.add(target)
+                        else: keys |= self.chunks[i][target]
                         
             prev_bypass = bypass
-            prev_values = values
-        return values|bypass
+            prev_keys = keys
+        return keys|bypass
 
 ##    @timepck.function_timer
     def nearest(self, point, as_points=False, _invert=False):
-        prev_values = set(self.chunks[-1].keys())
+        prev_keys = set(self.chunks[-1].keys())
         for i in range(len(self.chunks)-1, -1, -1):
-            values = set()
+            keys = set()
             scale = self.scaling*i
             origin = (point[0]>>scale, point[1]>>scale)
             
-            seeked_target = seeked_dist = None
-            for target in prev_values:
+            seeked_targets = seeked_dist = None
+            for target in prev_keys:
                 dist = self.distance(*target,*origin)
-                if seeked_target is None:
-                    seeked_target = target
+                dist = int(dist) # must be an integer (higher chunks introduce error to distances)
+                if seeked_targets is None:
+                    seeked_targets = [target]
                     seeked_dist = dist
                 elif (not _invert and dist<seeked_dist) or (_invert and dist>seeked_dist):
-                    seeked_target = target
+                    seeked_targets = [target]
                     seeked_dist = dist
-
-            if seeked_target is not None:
-                if len(self.chunks[i][target]):
-                    if i==0 and as_points: values.add(seeked_target)
-                    else: values |= self.chunks[i][seeked_target]
-            prev_values = values
-        return values
+                elif dist==seeked_dist:
+                    seeked_targets.append(target)
+            
+            if seeked_targets is not None:
+                for seeked_target in seeked_targets:
+                    if i==0 and as_points: keys.add(seeked_target)
+                    else: keys |= self.chunks[i][seeked_target]
+            prev_keys = keys
+        return keys
     
 ##    @timepck.function_timer
-    def furthest(self, *args, **kwargs):
+    def farthest(self, *args, **kwargs):
         return self.nearest(*args, _invert=True, **kwargs)
 
 
@@ -176,48 +179,50 @@ class MassPointsFloat(MassPoints):
     def inrange(self, point, radius, as_points=False):
         point = self.float_point_as_int_point(*point)
         radius *= self.float_precision
-        prev_values = set(self.chunks[-1].keys())
+        prev_keys = set(self.chunks[-1].keys())
         for i in range(len(self.chunks)-1, -1, -1):
-            values = set()
+            keys = set()
             scale = self.scaling*i
 
             origin = (point[0]>>scale, point[1]>>scale)
             r = radius>>scale
             if scale: r += 1
             
-            for target in prev_values:
+            for target in prev_keys:
                 dist = self.distance(*target,*origin)
                 if dist<(r+1):
                     if len(self.chunks[i][target]):
-                        if i==0 and as_points: values.add(self.int_point_as_float_point(*target))
-                        else: values |= self.chunks[i][target]
-            prev_values = values
-        return values
+                        if i==0 and as_points: keys.add(self.int_point_as_float_point(*target))
+                        else: keys |= self.chunks[i][target]
+            prev_keys = keys
+        return keys
 
 ##    @timepck.function_timer
     def nearest(self, point, as_points=False, _invert=False):
         point = self.float_point_as_int_point(*point)
-        prev_values = set(self.chunks[-1].keys())
+        prev_keys = set(self.chunks[-1].keys())
         for i in range(len(self.chunks)-1, -1, -1):
-            values = set()
+            keys = set()
             scale = self.scaling*i
             
             origin = (point[0]>>scale, point[1]>>scale)
-            seeked_target = seeked_dist = None
-            for target in prev_values:
+            seeked_targets = seeked_dist = None
+            for target in prev_keys:
                 dist = self.distance(*target,*origin)
-                if seeked_target is None:
-                    seeked_target = target
+                dist = int(dist) # must be an integer (higher chunks introduce error to distances)
+                if seeked_targets is None:
+                    seeked_targets = [target]
                     seeked_dist = dist
                 elif (not _invert and dist<seeked_dist) or (_invert and dist>seeked_dist):
-                    seeked_target = target
+                    seeked_targets = [target]
                     seeked_dist = dist
+                elif (not _invert and dist<(seeked_dist+1)) or (_invert and dist>(seeked_dist-1)):
+                    seeked_targets.append(target)
             
-            if seeked_target is not None:
-                if len(self.chunks[i][target]):
-                    if i==0 and as_points:
-                        values.add(self.int_point_as_float_point(*seeked_target))
-                    else: values |= self.chunks[i][seeked_target]
-            prev_values = values
-        return values
+            if seeked_targets is not None:
+                for seeked_target in seeked_targets:
+                    if i==0 and as_points: keys.add(self.int_point_as_float_point(*seeked_target))
+                    else: keys |= self.chunks[i][seeked_target]
+            prev_keys = keys
+        return keys
 

@@ -151,23 +151,28 @@ class ModelConfiguration(ModelBase):
 
 
     def _gap_detection_loops(self):
+        point_delta = 0
         for i in range(self.precision_increase_attempts):
             gaps = self._too_sparse_mask()
             if gaps.any():
-                if self.printing: self.print_func(f"points: +{gaps.sum()}")
+                point_delta += gaps.sum()
                 self._increase_precision(gaps)
             else: break
         
         for i in range(self.precision_decrease_attempts):
             nogaps = self._too_dense_mask()
             if nogaps.any():
-                if self.printing: self.print_func(f"points: -{nogaps.sum()}")
+                point_delta -= nogaps.sum()
+##                
                 self._remove_items_with_mask(nogaps)
             else: break
 
         inside = self._points_inside_the_boundary_mask()
         if not inside.all() and inside.any():
+            point_delta -= inside.sum()
             self._remove_items_with_mask(inside)
+
+        if self.printing: self.print_func(f"points: {point_delta:+d}")
 
         
     def _start(self, to_timestep:int):
@@ -238,6 +243,7 @@ class ModelConfiguration(ModelBase):
             points += normals
             
             if points is self._points: # every point is being processed
+                
                 self._timestep += 1 # increase early so that precision increase can catch up to correct step
                 
                 self._gap_detection_loops()
@@ -275,7 +281,7 @@ class ModelConfiguration(ModelBase):
         if self.printing: self.print_func(f"\ndrawing: {self._timestep}")
         
         #
-        draw_prev_points = 0
+        draw_prev_points = 1
         draw_prev_normals = 0
         draw_boundary_lines = 1
         draw_outer_normals = 0
@@ -302,6 +308,9 @@ class ModelConfiguration(ModelBase):
                 drawing.lines(*self.get_prev_inner_normals())
         
         drawing.points(self._points, r=1)
+
+        dist, line = self.hausdorff_distance()
+        drawing.lines([line[0]], [line[1]], r=1, g=.5)
         
 ##        drawing.circles(self._points[:1], self.epsilon/10, inside=self.epsilon/11, r=1)
         
@@ -347,14 +356,14 @@ if __name__ == "__main__":
 
     
     resolution = 2000
-    timestep = 0
-    for ax_target in test_plotting_grid(2, 2, timestep):
+    timestep = 15
+    for ax_target in test_plotting_grid(1, 1, timestep):
         config.process(timestep)
         image,tl,br = config.draw(resolution)
         
         ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
         
-        print(timestep, "hausdorff:", config.hausdorff_distance())
+##        print(timestep, "hausdorff:", config.hausdorff_distance())
         timestep += 1
 
 

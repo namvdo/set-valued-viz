@@ -5,11 +5,11 @@ from __masspointscontainer import *
 def distance(a, b):
     return np.linalg.norm(np.subtract(a, b), axis=-1) # n-dimensional point to point distance
 
-def nearestpoint_i(a, *b):
-    return np.argmin([distance(a, x) for x in b])
+def nearestpoint_i(point, points):
+    return np.argmin(np.linalg.norm(points-point, axis=1))
 
-def farthestpoint_i(a, *b):
-    return np.argmax([distance(a, x) for x in b])
+def farthestpoint_i(point, points):
+    return np.argmax(np.linalg.norm(points-point, axis=1))
 
 def nearestvalue_i(array, value):
     return np.argmin(np.abs(np.asarray(array)-value))
@@ -178,70 +178,104 @@ def hausdorff_distance(source_mask, target_mask): # one way only
     
     max_distance = 0
     for p in border_overlap_points:
-        i = nearestpoint_i(p, *source_points)
+        i = nearestpoint_i(p, source_points)
         max_distance = max(max_distance, distance(p, source_points[i]))
     return max_distance
+    
 
-def hausdorff_distance2(points1, points2): # both ways
-    # maximum distance of:
-    #   closest point in points1 to farthest point in points2
-    #   closest point in points2 to farthest point in points1
-    indexes1 = np.zeros(2, dtype=np.int32)
-    indexes2 = np.zeros(2, dtype=np.int32)
+def overlap_box(tl1, br1, tl2, br2):
+    tl = np.max([tl1,tl2], axis=0)
+    br = np.min([br1,br2], axis=0)
+    if (tl<br).all(): return tl, br
+
+def points_inside_box(points, tl, br):
+    mask = (points[:,0]>tl[0])*(points[:,0]<br[0])
+    mask *= (points[:,1]>tl[1])*(points[:,1]<br[1])
+    return mask
+
+def array_slices(array, size):
+    i = 0
+    while 1:
+        x = array[size*i:size*(i+1)]
+        if len(x)==0: break
+        yield x
+        i += 1
+
+def hausdorff_distance3(points1, points2, float_precision=10000):
+    # both ways
+    # VERY FAST
+    overlap = overlap_box(*bounding_box(points1), *bounding_box(points2))
+    if overlap is not None: # there is overlap -> slower method
+        # find the nearest point per point in the other object
+        temp_dist = 0
+        for pp in points1:
+            p = points2[nearestpoint_i(pp, points2)]
+            dist = np.linalg.norm(p-pp)
+            if dist>temp_dist:
+                temp_dist = dist
+                farthest_point1 = pp
+                nearest_point2 = p
+        temp_dist = 0
+        for pp in points2:
+            p = points1[nearestpoint_i(pp, points1)]
+            dist = np.linalg.norm(p-pp)
+            if dist>temp_dist:
+                temp_dist = dist
+                farthest_point2 = pp
+                nearest_point1 = p
+        
+    else: # no overlap -> fast method
+        # inaccurate when there is significant overlap between objects
+        mp1 = MassPointsFloat(float_precision=float_precision)
+        mp2 = MassPointsFloat(float_precision=float_precision)
+        for i,p in enumerate(points1): mp1.set(i, p)
+        for i,p in enumerate(points2): mp2.set(i, p)
+
+        # find object center
+        nearest_point1 = np.add(*bounding_box(points1))/2
+        nearest_point2 = np.add(*bounding_box(points2))/2
+        
+        # find the farthest point from the other nearest point
+        farthest1 = mp1.farthest(nearest_point2)
+        farthest2 = mp2.farthest(nearest_point1)
+        farthest_point1 = points1[list(farthest1)[0]]
+        farthest_point2 = points2[list(farthest2)[0]]
+        
+        # find the nearest point in the other object from the farthest point
+        nearest1 = mp1.nearest(farthest_point2)
+        nearest2 = mp2.nearest(farthest_point1)
+        nearest_point1 = points1[list(nearest1)[0]]
+        nearest_point2 = points2[list(nearest2)[0]]
     
-    distances1 = np.zeros(2)
-    distances2 = np.zeros(2)
-    
-    for i,p1 in enumerate(points1):
-        for j,p2 in enumerate(points2):
-            dist = np.linalg.norm(p1-p2)
-            
-            if i==0 and j==0:
-                distances1[:] = dist
-                distances2[:] = dist
-                continue
-            
-            if dist<distances1[0]:
-                distances1[0] = dist
-                indexes1[0] = i
-            elif dist>distances1[1]:
-                distances1[1] = dist
-                indexes1[1] = i
-            
-            if dist<distances2[0]:
-                distances2[0] = dist
-                indexes2[0] = j
-            elif dist>distances2[1]:
-                distances2[1] = dist
-                indexes2[1] = j
-    
-    dist = distance(points1[indexes1[0]], points2[indexes2[1]])
-    dist = max(dist, distance(points2[indexes2[0]], points1[indexes1[1]]))
-    return dist
+    dist1 = distance(nearest_point1, farthest_point2)
+    dist2 = distance(nearest_point2, farthest_point1)
+    if dist1>dist2: return dist1, (nearest_point1, farthest_point2)
+    return dist2, (nearest_point2, farthest_point1)
 
 
-def hausdorff_distance3(points1, points2, float_precision=10000): # both ways # VERY FAST
-    mp1 = MassPointsFloat(float_precision=float_precision)
-    mp2 = MassPointsFloat(float_precision=float_precision)
-    for i,p in enumerate(points1): mp1.set(i, p)
-    for i,p in enumerate(points2): mp2.set(i, p)
+##def hausdorff_distance4(points1, points2):
+##    nearest_point1 = nearest_point2 = None
+##    farthest_point1 = farthest_point2 = None
+##    
+##    points1_10th = [np.sum(points, axis=0)/10 for points in array_slices(points1, 10)]
+##    points2_10th = [np.sum(points, axis=0)/10 for points in array_slices(points2, 10)]
+##
+##    nearest_points = []
+##    for p in points1_10th:
+##        nearest_dist = None
+##        nearest_pp = None
+##        for pp in points2_10th:
+##            dist = np.linalg.norm(p-pp)
+##            if nearest_dist is None or dist<nearest_dist:
+##                nearest_dist = dist
+##                nearest_pp = pp
+##        nearest_points.append(nearest_pp)
+##    
+##    dist1 = distance(nearest_point1, farthest_point2)
+##    dist2 = distance(nearest_point2, farthest_point1)
+##    if dist1>dist2: return dist1, (nearest_point1, farthest_point2)
+##    return dist2, (nearest_point2, farthest_point1)
     
-    center1 = np.sum(points1, axis=0)/len(points1)
-    center2 = np.sum(points2, axis=0)/len(points2)
-    
-    in_between = (center1+center2)/2
-    nearest_index1 = list(mp1.nearest(in_between))[0]
-    nearest_index2 = list(mp2.nearest(in_between))[0]
-    nearest_point1 = points1[nearest_index1]
-    nearest_point2 = points2[nearest_index2]
-    
-    furthest_index1 = list(mp1.furthest(nearest_point2))[0]
-    furthest_index2 = list(mp2.furthest(nearest_point1))[0]
-    
-    dist = distance(nearest_point1, points2[furthest_index2])
-    dist = max(dist, distance(nearest_point2, points1[furthest_index1]))
-    return dist
-
 
 def image_shape(resolution, max_x, max_y):
     # resolution -> length of the longest side

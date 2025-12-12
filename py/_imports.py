@@ -209,7 +209,7 @@ class ImageDrawing:
         return image
 
 
-def test_plotting_grid(width=1, height=1, timestep=0, figsize=(9,9)):
+def test_plotting_grid(width=1, height=1, timestep=0, figsize=(8,8)):
     while 1:
         fig,ax = plt.subplots(height, width, figsize=figsize)
         for i in range(width):

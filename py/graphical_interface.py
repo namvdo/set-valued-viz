@@ -36,11 +36,6 @@ class ModelInstance():
         self._figure_drawing_panel(mid)
         
 ##        bot = nice_frame(win, side=tk.TOP, fill=tk.BOTH)
-##        self._information_panel(bot)
-
-##    def _information_panel(self, root):
-##        nice_label(root, text="asd", anchor="w")
-##        pass
         
 
     def _model_control_panel(self, root):
@@ -139,11 +134,10 @@ class ModelInstance():
                 v = self.model.function.constants.get(k)
                 if v is not None: field.insert(0, str(v))
         #
-
+        
         #
-##        f = nice_frame(frame, side=tk.TOP, fill=tk.BOTH)
         ff = nice_titled_frame(frame, "step data", anchor="n", side=tk.TOP)
-        nice_label(ff, text="asd", anchor="w")
+        nice_label(ff, text="hausdorff: \netc.", anchor="w")
         #
 
     def _figure_viewport_panel(self, root):
@@ -172,7 +166,7 @@ class ModelInstance():
         def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.resolution = max(int(value), 2)
-        field = nice_field(fff, width=7, update_handler=_update)
+        field = nice_field(fff, width=8, justify="center", update_handler=_update)
         field.insert(0, str(self.resolution))
         
         #
