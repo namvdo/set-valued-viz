@@ -193,14 +193,6 @@ def points_inside_box(points, tl, br):
     mask *= (points[:,1]>tl[1])*(points[:,1]<br[1])
     return mask
 
-def array_slices(array, size):
-    i = 0
-    while 1:
-        x = array[size*i:size*(i+1)]
-        if len(x)==0: break
-        yield x
-        i += 1
-
 def hausdorff_distance3(points1, points2, float_precision=10000):
     # both ways
     # VERY FAST
@@ -209,18 +201,20 @@ def hausdorff_distance3(points1, points2, float_precision=10000):
         # find the nearest point per point in the other object
         temp_dist = 0
         for pp in points1:
-            p = points2[nearestpoint_i(pp, points2)]
-            dist = np.linalg.norm(p-pp)
-            if dist>temp_dist:
-                temp_dist = dist
+            dists = np.linalg.norm(pp-points2, axis=1)
+            i = np.argmin(dists)
+            p = points2[i]
+            if dists[i]>temp_dist:
+                temp_dist = dists[i]
                 farthest_point1 = pp
                 nearest_point2 = p
         temp_dist = 0
         for pp in points2:
-            p = points1[nearestpoint_i(pp, points1)]
-            dist = np.linalg.norm(p-pp)
-            if dist>temp_dist:
-                temp_dist = dist
+            dists = np.linalg.norm(pp-points1, axis=1)
+            i = np.argmin(dists)
+            p = points1[i]
+            if dists[i]>temp_dist:
+                temp_dist = dists[i]
                 farthest_point2 = pp
                 nearest_point1 = p
         
@@ -253,28 +247,38 @@ def hausdorff_distance3(points1, points2, float_precision=10000):
     return dist2, (nearest_point2, farthest_point1)
 
 
-##def hausdorff_distance4(points1, points2):
-##    nearest_point1 = nearest_point2 = None
-##    farthest_point1 = farthest_point2 = None
-##    
-##    points1_10th = [np.sum(points, axis=0)/10 for points in array_slices(points1, 10)]
-##    points2_10th = [np.sum(points, axis=0)/10 for points in array_slices(points2, 10)]
-##
-##    nearest_points = []
-##    for p in points1_10th:
-##        nearest_dist = None
-##        nearest_pp = None
-##        for pp in points2_10th:
-##            dist = np.linalg.norm(p-pp)
-##            if nearest_dist is None or dist<nearest_dist:
-##                nearest_dist = dist
-##                nearest_pp = pp
-##        nearest_points.append(nearest_pp)
-##    
-##    dist1 = distance(nearest_point1, farthest_point2)
-##    dist2 = distance(nearest_point2, farthest_point1)
-##    if dist1>dist2: return dist1, (nearest_point1, farthest_point2)
-##    return dist2, (nearest_point2, farthest_point1)
+
+def hausdorff_distance4(points1, points2): # presumes that points are in order, EVEN FASTER
+    def find_pair(ps1, ps2):
+        index1 = index2 = 0
+        temp_dist = 0
+        for i,p1 in enumerate(ps1):
+            dists = np.linalg.norm(p1-ps2, axis=1)
+            j = np.argmin(dists)
+            if dists[j]>temp_dist:
+                temp_dist = dists[j]
+                index1 = i
+                index2 = j
+        return index1, index2
+
+    def quick_find_pair(ps1, ps2):
+        step = max(int(np.sqrt(len(ps1))), 1)
+        index1, index2 = find_pair(ps1[::step], ps2)
+        if step==1: return ps1[index1], ps2[index2]
+        start = max(index1-1, 0)*step
+        end = (index1+1)*step+1
+        index3, index2 = find_pair(ps1[start:end], ps2)
+        index1 = start+index3
+        return ps1[index1], ps2[index2]
+    
+    line1 = quick_find_pair(points1, points2)
+    line2 = quick_find_pair(points2, points1)
+    
+    dist1 = distance(*line1)
+    dist2 = distance(*line2)
+    if dist1>dist2: return dist1, line1
+    return dist2, line2
+
     
 
 def image_shape(resolution, max_x, max_y):

@@ -36,7 +36,7 @@ class ModelConfiguration(ModelBase):
     printing = True
     print_func = print
     
-    precision = 10 # point density (relative to epsilon)
+    precision = 20 # point density (relative to epsilon)
     precision_ceiling = 500 # soft ceiling for points (increases allowed distance between points after the ceiling)
     precision_ceiling_hardness = 1 # increase to harshen the ceiling effect
     
@@ -81,7 +81,8 @@ class ModelConfiguration(ModelBase):
     def _too_sparse_mask(self):
         d = self._min_distance_between_points()
         dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
-        return dist>d*2
+        mask = dist>d*2
+        return mask
 
     def _too_dense_mask(self):
         d = self._min_distance_between_points()
@@ -93,13 +94,13 @@ class ModelConfiguration(ModelBase):
 
     
     def _points_inside_the_boundary_mask(self):
-        allowed_distance = self.epsilon*.98
+        d = self.epsilon*.95
         if self.noise_geometry is not None:
-            allowed_distance *= noise_geometry_multipliers(self._normals, self.noise_geometry).min()
+            d *= noise_geometry_multipliers(self._normals, self.noise_geometry).min()
         inner_points = self._points-self._normals
         inner_points = np.repeat(np.expand_dims(inner_points, axis=0), len(self._points), axis=0)
         diffs = np.subtract(inner_points, np.expand_dims(self._points, axis=1))
-        return np.any(np.linalg.norm(diffs, axis=2)<allowed_distance, axis=1)
+        return np.any(np.linalg.norm(diffs, axis=2)<d, axis=1)
 
     ##
     def update_noise_geometry(self, sides=None, rotation=None):
@@ -163,7 +164,6 @@ class ModelConfiguration(ModelBase):
             nogaps = self._too_dense_mask()
             if nogaps.any():
                 point_delta -= nogaps.sum()
-##                
                 self._remove_items_with_mask(nogaps)
             else: break
 
@@ -172,7 +172,7 @@ class ModelConfiguration(ModelBase):
             point_delta -= inside.sum()
             self._remove_items_with_mask(inside)
 
-        if self.printing: self.print_func(f"points: {point_delta:+d}")
+        if self.printing: self.print_func(f"point delta: {point_delta:+d}")
 
         
     def _start(self, to_timestep:int):
@@ -194,7 +194,7 @@ class ModelConfiguration(ModelBase):
         self._points[:,0], self._points[:,1] = self.function(self._points[:,0], self._points[:,1])
         self._points += self._normals
         
-        self._gap_detection_loops()
+##        self._gap_detection_loops()
         
         self._continue(to_timestep=to_timestep)
 
@@ -319,7 +319,7 @@ class ModelConfiguration(ModelBase):
 
     @function_timer
     def hausdorff_distance(self):
-        return hausdorff_distance3(self._points, self._prev_points)
+        return hausdorff_distance4(self._points, self._prev_points)
 
 
 
