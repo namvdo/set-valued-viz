@@ -31,6 +31,11 @@ def read_number_from_string(string):
         if value==int(value): value = int(value)
         return value
 
+def readable_float(value:float, rounding=6):
+    if value==int(value): return str(int(value))
+    rounded_value = round(value, rounding)
+    return "~"*int(rounded_value!=value)+str(rounded_value)
+
 def color_as_hex(color):
     return "#"+"".join([hex(i%256)[2:].rjust(2, "0") for i in color[:3]])
 def opposite_color_as_hex(color):
@@ -54,7 +59,7 @@ def set_colors(obj, fg, bg):
 def set_padding(obj, x=DEFAULT_PADDING_WIDTH, y=DEFAULT_PADDING_HEIGHT):
     if isinstance(obj, tk.Entry): pass
     else: obj.configure(padx=x, pady=y)
-
+    
 def set_random_colors(obj): # for debugging
     foreground = color_as_hex(np.random.randint(0, 255, 3))
     background = color_as_hex(np.random.randint(0, 255, 3))
@@ -271,15 +276,17 @@ def padded_frame(frame, *args, **kwargs):
 def raised_frame(frame, *args, border=1, **kwargs):
     f = nice_frame(frame, *args, **kwargs)
     set_passive_colors_inverted(f)
-    return nice_frame(f, padx=border, pady=border, fill=tk.BOTH)
+    set_padding(f, border, border)
+    return nice_frame(f, side=tk.TOP, fill=tk.BOTH)
 
-def nice_titled_frame(frame, title, *args, fill=tk.NONE, **kwargs):
-    f = padded_frame(frame, *args, fill=fill, **kwargs)
-    ff = raised_frame(f, border=1, fill=tk.BOTH)
-    nice_title(ff, title)
-    fff = nice_frame(ff, fill=tk.BOTH)
-    set_padding(fff)
-    return fff
+def nice_titled_frame(frame, title, *args, side=tk.TOP, border=1, fill=tk.BOTH, **kwargs):
+    f = nice_frame(frame, *args, side=side, fill=fill, **kwargs)
+    set_padding(f)
+    nice_title(f, title, side=tk.TOP, fill=tk.BOTH)
+    ff = raised_frame(f, side=tk.TOP, fill=tk.BOTH, border=border)
+    set_padding(ff)
+##    set_random_colors(f)
+    return ff
 
 
 
@@ -332,9 +339,6 @@ def nice_RGBA_selector(frame, color, on_update=None): # both RGBA and RGB work f
         _vars.append(var)
         
     return f
-
-
-
 
 
 

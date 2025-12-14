@@ -10,7 +10,7 @@ SAVEDIR = os.path.join(WORKDIR, "saves")
 class ModelInstance():
     key = None
     model = None
-    step = -1
+    step = 0
     
     resolution = 512
 
@@ -47,32 +47,40 @@ class ModelInstance():
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
         def _press():
             self.step += 1
-            self.model.process(self.step)
-            set_field_content(step_field, str(self.step))
+            self.model.process(self.step-1)
+            self.refresh_gui()
             self.refresh_figure()
         b = nice_button(ff, text="Next Step", command=_press)
         
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None:
-                self.step = max(int(value), -1)
-                
-        step_field = nice_field(ff, side=tk.RIGHT, width=6, justify="center", update_handler=_update)
-        step_field.insert(0, str(self.step))
+##        def _update(identifier, string):
+##            value = read_number_from_string(string)
+##            if value is not None:
+##                self.step = max(int(value), 0)
+##      
+        self.step_field = nice_field(ff, side=tk.RIGHT, width=6, justify="center") # , update_handler=_update
         
         def _press():
-            self.model.process(self.step)
-            set_field_content(step_field, str(self.step))
-            self.refresh_figure()
+            value = read_number_from_string(self.step_field.get())
+            if value is not None:
+                self.step = value
+                self.model.process(value-1) # gui steps are 1...inf, model's are 0...inf
+                self.refresh_gui()
+                self.refresh_figure()
+            
         b = nice_button(ff, text="Go to Step", command=_press)
         
         def _press():
             self.model.reset()
-            self.step = -1
-            set_field_content(step_field, str(self.step))
+            self.step = 0
+            self.refresh_gui()
             self.refresh_figure()
         b = nice_button(f, text="Reset", command=_press)
+        #
+        
+        #
+        ff = nice_titled_frame(frame, "step info", anchor="n", side=tk.TOP)
+        self.step_info = nice_label(ff, width=8, justify="left", anchor="w")
         #
 
         #
@@ -135,17 +143,16 @@ class ModelInstance():
                 if v is not None: field.insert(0, str(v))
         #
         
-        #
-        ff = nice_titled_frame(frame, "step data", anchor="n", side=tk.TOP)
-        nice_label(ff, text="hausdorff: \netc.", anchor="w")
-        #
+        self.refresh_gui()
+        
 
     def _figure_viewport_panel(self, root):
-        middle = nice_titled_frame(root, "figure") # , anchor="n"
+        f = nice_frame(root)
+        ff = nice_titled_frame(f, "figure")
         def _mouse_handler(event):
 ##            print(event)
             pass
-        self.canvas, self.fig, self.subplot = create_figure(middle, _mouse_handler, 512, 512)
+        self.canvas, self.fig, self.subplot = create_figure(ff, _mouse_handler, 512, 512)
         
         
     def _figure_drawing_panel(self, root):
@@ -161,8 +168,8 @@ class ModelInstance():
 
         #
         f = nice_titled_frame(frame, "figure settings")
-        ff = nice_frame(f, side=tk.TOP)
-        fff = nice_titled_frame(ff, "resolution", anchor="nw", side=tk.LEFT)
+        ff = nice_frame(f, side=tk.TOP, fill=tk.BOTH)
+        fff = nice_titled_frame(ff, "resolution", side=tk.LEFT)
         def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.resolution = max(int(value), 2)
@@ -170,7 +177,7 @@ class ModelInstance():
         field.insert(0, str(self.resolution))
         
         #
-        fff = nice_titled_frame(ff, "extend limits", anchor="nw", side=tk.LEFT)
+        fff = nice_titled_frame(ff, "extend limits", side=tk.RIGHT)
         
         ffff = nice_frame(fff, anchor="c", side=tk.TOP)
         
@@ -206,7 +213,7 @@ class ModelInstance():
         #
 
         #
-        ff = nice_titled_frame(f, "colors", side=tk.TOP, anchor="ne")
+        ff = nice_titled_frame(f, "colors", side=tk.TOP)
         
         self.colors = {
             "background": [255,255,255,255],
@@ -214,7 +221,8 @@ class ModelInstance():
             "points": [255,0,0,255],
             "boundary": [0,255,0,255],
             "normals": [0,0,0,127],
-            "prev_points": [0,0,255,0],
+            "prev. points": [0,0,255,0],
+            "hausdorff line": [255,127,0,0],
             }
 ##        longest_name_len = len(max(self.colors.keys(), key=len))
         for name,color in self.colors.items():
@@ -235,12 +243,18 @@ class ModelInstance():
         color = np.divide(self.colors["normals"], 255)
         if color[3]>0: drawing.lines(*self.model.get_inner_normals(), *color)
         
-        color = np.divide(self.colors["prev_points"], 255)
+        color = np.divide(self.colors["prev. points"], 255)
         if color[3]>0: drawing.points(self.model._prev_points, *color)
         
         color = np.divide(self.colors["points"], 255)
         if color[3]>0: drawing.points(self.model._points, *color)
         
+        color = np.divide(self.colors["hausdorff line"], 255)
+        if color[3]>0:
+            dist, line = self.model.hausdorff_distance()
+            drawing.lines([line[0]], [line[1]], *color)
+        
+        # extend limits
         if self.min_x is not None: drawing.tl[0] = min(drawing.tl[0], self.min_x)
         if self.max_x is not None: drawing.br[0] = max(drawing.br[0], self.max_x)
         if self.min_y is not None: drawing.tl[1] = min(drawing.tl[1], self.min_y)
@@ -260,13 +274,34 @@ class ModelInstance():
         
     def refresh_figure(self):
         self.subplot.clear()
-        if self.step>=0:
+        if self.step>0:
             image, tl, br = self.draw()
             self.subplot.imshow(image, extent=(tl[0], br[0], tl[1], br[1]))
             title = f"step: {self.step}, image: {image.shape}"
             title += f"\n{len(self.model)} points"
             self.subplot.set_title(title)
         self.canvas.draw()
+
+    def refresh_gui(self):
+        set_field_content(self.step_field, str(self.step+1))
+        
+        data = {}
+        data["step"] = self.step
+        data["hausdorff"] = 0
+        
+        if self.step>0:
+            try:
+                dist, line = self.model.hausdorff_distance()
+                x = readable_float(dist, 6)
+            except: x = "error"
+            data["hausdorff"] = x
+        
+        text = ""
+        for k,v in data.items():
+            if len(text)>0: text += "\n"
+            text += f"{k}: {v}"
+        
+        self.step_info.configure(text=text)
 
 class Interface():
     instances_created = 0
@@ -281,32 +316,38 @@ class Interface():
         set_padding(self.window)
         
         leftside = nice_frame(self.window, side=tk.LEFT, fill=tk.BOTH)
-        rightside = nice_titled_frame(self.window, "log", side=tk.LEFT)
-        self._logbox = nice_textbox(rightside, 36, 12)
         
-        # main window content
+        # buttons
         f = padded_frame(leftside, side=tk.TOP, fill=tk.BOTH)
         b = nice_button(f, text="New Instance", side=tk.TOP, command=self.start_model_instance)
-        
-        ff = nice_titled_frame(leftside, "function", side=tk.TOP, fill=tk.BOTH, anchor="ne")
+        #
+
+        #
+        ff = nice_titled_frame(leftside, "function", side=tk.TOP, fill=tk.NONE)
         def _update(identifier, string):
             getattr(self.model_base.function, identifier).string = string
-        field_fx = nice_labeled_field(ff, "fx", update_handler=_update)
-        field_fy = nice_labeled_field(ff, "fy", update_handler=_update)
+        field_fx = nice_labeled_field(ff, "fx", anchor="ne", update_handler=_update)
+        field_fy = nice_labeled_field(ff, "fy", anchor="ne", update_handler=_update)
         field_fx.insert(0, self.model_base.function.fx.string)
         field_fy.insert(0, self.model_base.function.fy.string)
         
-        ff = nice_titled_frame(leftside, "starting point", side=tk.TOP, anchor="ne")
+        ff = nice_titled_frame(leftside, "start point", side=tk.TOP, fill=tk.NONE, anchor="ne")
         def _update_x(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.model_base.start_point.x = value
         def _update_y(identifier, string):
             value = read_number_from_string(string)
             if value is not None: self.model_base.start_point.y = value
-        field_start_x = nice_labeled_field(ff, "x", width=8, update_handler=_update_x)
-        field_start_y = nice_labeled_field(ff, "y", width=8, update_handler=_update_y)
+        field_start_x = nice_labeled_field(ff, "x", width=8, anchor="ne", update_handler=_update_x)
+        field_start_y = nice_labeled_field(ff, "y", width=8, anchor="ne", update_handler=_update_y)
         field_start_x.insert(0, str(self.model_base.start_point.x))
         field_start_y.insert(0, str(self.model_base.start_point.y))
+        #
+        
+        f = nice_titled_frame(self.window, "log", side=tk.LEFT)
+        self._logbox = nice_textbox(f, 36, 12)
+
+        
         
         
     def log(self, string):

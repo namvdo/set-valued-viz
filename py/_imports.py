@@ -139,7 +139,7 @@ class ImageDrawing:
         
         image = np.zeros((*image_shape(resolution, *limits), len(self.background)))
         image[:,:] = self.background
-
+        
         def color_blend_on_array(array, color):
             if color[3]<1:
                 array[:,:3] = color[:3]*color[3] + array[:,:3]*array[:,3:4]*(1-color[3])

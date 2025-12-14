@@ -317,7 +317,7 @@ class ModelConfiguration(ModelBase):
         image = drawing.draw(resolution)
         return image, drawing.tl, drawing.br
 
-    @function_timer
+##    @function_timer
     def hausdorff_distance(self):
         return hausdorff_distance4(self._points, self._prev_points)
 
