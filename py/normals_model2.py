@@ -36,16 +36,16 @@ class ModelConfiguration(ModelBase):
     printing = True
     print_func = print
     
-    precision = 20 # point density (relative to epsilon)
-    precision_ceiling = 500 # soft ceiling for points (increases allowed distance between points after the ceiling)
-    precision_ceiling_hardness = 1 # increase to harshen the ceiling effect
-    
     precision_increase_attempts = 10
     precision_decrease_attempts = 10
     
     noise_geometry = None
     noise_geometry_sides = 0
     noise_geometry_rotation = 0
+    
+    point_density = 10 # point density (relative to epsilon)
+    point_ceiling = 100 # soft ceiling for points (increases allowed distance between points after the ceiling)
+    point_ceiling_hardness = 2 # increase to harshen the ceiling effect
     
     def __init__(self):
         super().__init__()
@@ -60,6 +60,39 @@ class ModelConfiguration(ModelBase):
         self._normals = np.zeros((0,2))
         self._prev_points = np.zeros((0,2))
         self._prev_normals = np.zeros((0,2))
+
+    def copy(self):
+        new = type(self)()
+        attrs = [
+            "epsilon",
+            "start_point",
+            "function",
+            
+            "printing",
+            "print_func",
+            
+            "precision_increase_attempts",
+            "precision_decrease_attempts",
+
+            "noise_geometry",
+            "noise_geometry_sides",
+            "noise_geometry_rotation",
+
+            "tij",
+            "_timestep",
+            
+            "_points",
+            "_normals",
+            "_prev_points",
+            "_prev_normals",
+
+            "point_density",
+            "point_ceiling",
+            "point_ceiling_hardness",
+            ]
+        for attr in attrs:
+            new.copyattr(self, attr)
+        return new
     
     def _remove_items_with_mask(self, removal_mask):
         self._points = self._points[~removal_mask]
@@ -69,19 +102,21 @@ class ModelConfiguration(ModelBase):
 
     def _min_distance_between_points(self):
         n = len(self._points)
-        c = self.precision_ceiling
-        over_the_ceiling_ratio = max((n-c)/c, 0)
         e = self.epsilon
-        e /= self.precision
-        if over_the_ceiling_ratio>0:
-            over_the_ceiling_ratio *= self.precision_ceiling_hardness
-            e *= 1+over_the_ceiling_ratio**2
+        e /= self.point_density
+
+        c = self.point_ceiling
+        over = max(n-c, 0)
+        if over>0:
+            over *= self.point_ceiling_hardness
+            ratio = over/c
+            e *= 1+ratio
         return e
     
     def _too_sparse_mask(self):
         d = self._min_distance_between_points()
         dist = np.linalg.norm(np.diff(self._points, axis=0, append=self._points[:1]), axis=1)
-        mask = dist>d*2
+        mask = dist>(d*2)
         return mask
 
     def _too_dense_mask(self):
@@ -116,6 +151,13 @@ class ModelConfiguration(ModelBase):
         if self.noise_geometry is not None:
             normals *= noise_geometry_multipliers(normals, self.noise_geometry)
     ##
+
+
+##    ##
+##    def update_point_density(self, density=None, ceiling=None):
+##        if density is not None: self.point_density = min(max(density, 2), 100)
+####        if ceiling is not None: self.point_ceiling = max(ceiling, self.point_density)
+##    ##
 
     
     
@@ -179,7 +221,7 @@ class ModelConfiguration(ModelBase):
         self.reset()
         self._timestep = 0
         
-        radians = np.linspace(0, np.pi*2, 128)[:-1]
+        radians = np.linspace(0, np.pi*2, self.point_density*10)[:-1]
         
         self._points = np.repeat([self.start_point.as_tuple()], radians.size, axis=0).astype(np.float64)
         self._prev_points = self._points.copy()
@@ -194,7 +236,7 @@ class ModelConfiguration(ModelBase):
         self._points[:,0], self._points[:,1] = self.function(self._points[:,0], self._points[:,1])
         self._points += self._normals
         
-##        self._gap_detection_loops()
+        self._gap_detection_loops()
         
         self._continue(to_timestep=to_timestep)
 

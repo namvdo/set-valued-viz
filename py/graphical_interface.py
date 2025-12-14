@@ -2,7 +2,7 @@ from _imports import *
 from __gui import *
 
 from normals_model2 import ModelConfiguration as NormalsModel
-from mask_model2 import ModelConfiguration as MaskModel
+##from mask_model2 import ModelConfiguration as MaskModel
 
 SAVEDIR = os.path.join(WORKDIR, "saves")
 
@@ -10,6 +10,7 @@ SAVEDIR = os.path.join(WORKDIR, "saves")
 class ModelInstance():
     key = None
     model = None
+    model_prev = None # copied model
     step = 0
     
     resolution = 512
@@ -44,38 +45,18 @@ class ModelInstance():
         # buttons
         f = padded_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
         
-        ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        def _press():
-            self.step += 1
-            self.model.process(self.step-1)
-            self.refresh_gui()
-            self.refresh_figure()
-        b = nice_button(ff, text="Next Step", command=_press)
+        b = nice_button(f, text="Recalc Step", command=self.model_recalculate)
         
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
-##        def _update(identifier, string):
-##            value = read_number_from_string(string)
-##            if value is not None:
-##                self.step = max(int(value), 0)
-##      
         self.step_field = nice_field(ff, side=tk.RIGHT, width=6, justify="center") # , update_handler=_update
-        
         def _press():
             value = read_number_from_string(self.step_field.get())
             if value is not None:
                 self.step = value
-                self.model.process(value-1) # gui steps are 1...inf, model's are 0...inf
-                self.refresh_gui()
-                self.refresh_figure()
-            
+                self.model_process()
         b = nice_button(ff, text="Go to Step", command=_press)
         
-        def _press():
-            self.model.reset()
-            self.step = 0
-            self.refresh_gui()
-            self.refresh_figure()
-        b = nice_button(f, text="Reset", command=_press)
+        b = nice_button(f, text="Reset", command=self.model_reset)
         #
         
         #
@@ -100,28 +81,38 @@ class ModelInstance():
 ##        var1 = integer_cycler(label, 256, on_update=_update)
         
         #
+        ff = nice_frame(f, anchor="nw", side=tk.LEFT)
         width = 6
-        ff = nice_titled_frame(f, "noise", side=tk.TOP)
+        fff = nice_titled_frame(ff, "precision", side=tk.TOP)
+        def _update(identifier, string):
+            value = read_number_from_string(string)
+            if value is not None:
+                self.model.point_density = min(max(value, 2), 100)
+        field = nice_labeled_field(fff, "density", width=width, anchor="ne", update_handler=_update)
+        field.insert(0, str(self.model.point_density))
+        
+        
+        fff = nice_titled_frame(ff, "noise", side=tk.TOP)
         
         def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None: sides = abs(value)
             else: sides = 0
             self.model.update_noise_geometry(sides=sides)
-        field = nice_labeled_field(ff, "vertices", width=width, anchor="ne", update_handler=_update)
+        field = nice_labeled_field(fff, "vertices", width=width, anchor="ne", update_handler=_update)
         
         def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None: rotation = (value%360)/180*np.pi
             else: rotation = 0
             self.model.update_noise_geometry(rotation=rotation)
-        field = nice_labeled_field(ff, "rotation", width=width, anchor="ne", update_handler=_update)
+        field = nice_labeled_field(fff, "rotation", width=width, anchor="ne", update_handler=_update)
         
         def _update(identifier, string):
             value = read_number_from_string(string)
             if value is not None:
                 self.model.epsilon = abs(value)
-        field = nice_labeled_field(ff, "distance", width=width, anchor="ne", update_handler=_update)
+        field = nice_labeled_field(fff, "distance", width=width, anchor="ne", update_handler=_update)
         field.insert(0, str(self.model.epsilon))
         #
 
@@ -131,7 +122,7 @@ class ModelInstance():
         width = 10
         adjusable_parameters = self.model.function.required_constants()
         if len(adjusable_parameters)>0:
-            ff = nice_titled_frame(f, "parameters", side=tk.TOP)
+            ff = nice_titled_frame(f, "constants", anchor="nw", side=tk.LEFT)
             for k in sorted(adjusable_parameters):
                 def _update(identifier, string):
                     value = read_number_from_string(string)
@@ -147,7 +138,7 @@ class ModelInstance():
         
 
     def _figure_viewport_panel(self, root):
-        f = nice_frame(root)
+        f = nice_frame(root, anchor="nw")
         ff = nice_titled_frame(f, "figure")
         def _mouse_handler(event):
 ##            print(event)
@@ -271,16 +262,30 @@ class ModelInstance():
         makedirs(path)
         image, _, _ = self.draw()
         PIL_image_from_array(image).save(path, optimize=True)
+
+
+    def model_reset(self):
+        self.model_prev = None
+        self.model.reset()
+        self.step = 0
+        self.refresh_gui()
+        self.refresh_figure()
+
+    def model_checkpoint(self):
+        self.model_prev = self.model.copy()
         
-    def refresh_figure(self):
-        self.subplot.clear()
+    def model_recalculate(self): # recalculate current step with changes applied
+        if self.model_prev is not None:
+            for attr in ["_points","_normals","_prev_points","_prev_normals","_timestep","tij"]:
+                self.model.copyattr(self.model_prev, attr)
+            self.model_process()
+        
+    def model_process(self):
         if self.step>0:
-            image, tl, br = self.draw()
-            self.subplot.imshow(image, extent=(tl[0], br[0], tl[1], br[1]))
-            title = f"step: {self.step}, image: {image.shape}"
-            title += f"\n{len(self.model)} points"
-            self.subplot.set_title(title)
-        self.canvas.draw()
+            self.model_checkpoint()
+            self.model.process(self.step-1) # gui steps are 1...inf, model's are 0...inf
+            self.refresh_gui()
+            self.refresh_figure()
 
     def refresh_gui(self):
         set_field_content(self.step_field, str(self.step+1))
@@ -302,12 +307,22 @@ class ModelInstance():
             text += f"{k}: {v}"
         
         self.step_info.configure(text=text)
+        
+    def refresh_figure(self):
+        self.subplot.clear()
+        if self.step>0:
+            image, tl, br = self.draw()
+            self.subplot.imshow(image, extent=(tl[0], br[0], tl[1], br[1]))
+            title = f"step: {self.step}, image: {image.shape}"
+            title += f"\n{len(self.model)} points"
+            self.subplot.set_title(title)
+        self.canvas.draw()
 
 class Interface():
     instances_created = 0
     
     def __init__(self):
-        self.model_base = ModelBase()
+        self.model_base = NormalsModel()
         self.model_instances = {}
         self._init_main_window()
 
@@ -363,12 +378,11 @@ class Interface():
                 self.log(f"destroyed {key}")
             except: pass
         
-        normals_model = NormalsModel()
+        normals_model = self.model_base.copy()
         normals_model.printing = False
         def _print(string):
             self.log(f"{key} "+string)
         normals_model.print_func = _print
-        normals_model.copy_attributes_from(self.model_base)
         
         instance = ModelInstance(on_destroy, model=normals_model, key=key)
         self.model_instances[key] = instance

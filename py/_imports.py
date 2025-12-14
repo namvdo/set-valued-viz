@@ -27,12 +27,13 @@ class ModelBase():
         self.function = MappingFunction2D("1-a*x*x+y", "b*x")
         self.function.set_constants(a=1.4, b=0.3)
 
-    def copy_attributes_from(self, obj):
-        for attr in ["epsilon","start_point","function"]:
-            if hasattr(obj, attr):
-                value = getattr(obj, attr)
-                if hasattr(value, "copy"): value = value.copy()
-                setattr(self, attr, value)
+    def copyattr(self, target, attr):
+        if hasattr(target, attr):
+            value = getattr(target, attr)
+            if hasattr(value, "copy"): value = value.copy()
+            setattr(self, attr, value)
+            return True
+        return False
     
     def copy(self):
         new = type(self)()
