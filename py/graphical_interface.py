@@ -12,15 +12,21 @@ class ModelInstance():
     model = None
     model_prev = None # copied model
     step = 0
-    
-    resolution = 512
 
+    # adjustables
+    fig_resolution = 512
+    png_resolution = 5120
     min_x = max_x = None
     min_y = max_y = None
+    colors = None # -> dict
+    #
     
     canvas = None
     fig = None
     subplot = None
+
+    step_info = None # -> label
+    step_field = None # -> entry field
     
     def __init__(self, on_destroy, **kwargs):
         for k,v in kwargs.items():
@@ -157,19 +163,26 @@ class ModelInstance():
         b = nice_button(ff, text="Save PNG", command=self.save_png)
         #
 
-        #
         f = nice_titled_frame(frame, "figure settings")
         ff = nice_frame(f, side=tk.TOP, fill=tk.BOTH)
+        
+        #
         fff = nice_titled_frame(ff, "resolution", side=tk.LEFT)
         def _update(identifier, string):
             value = read_number_from_string(string)
-            if value is not None: self.resolution = max(int(value), 2)
-        field = nice_field(fff, width=8, justify="center", update_handler=_update)
-        field.insert(0, str(self.resolution))
+            if value is not None: self.fig_resolution = max(int(value), 2)
+        field = nice_labeled_field(fff, "figure", width=8, anchor="ne", justify="center", update_handler=_update)
+        field.insert(0, str(self.fig_resolution))
         
+        def _update(identifier, string):
+            value = read_number_from_string(string)
+            if value is not None: self.png_resolution = max(int(value), 2)
+        field = nice_labeled_field(fff, "PNG", width=8, anchor="ne", justify="center", update_handler=_update)
+        field.insert(0, str(self.png_resolution))
+        #
+
         #
         fff = nice_titled_frame(ff, "extend limits", side=tk.RIGHT)
-        
         ffff = nice_frame(fff, anchor="c", side=tk.TOP)
         
         def _update(identifier, string):
@@ -222,7 +235,7 @@ class ModelInstance():
             nice_RGBA_selector(fff, color)
         #
 
-    def draw(self):
+    def draw(self, resolution:int):
         if not self.model.can_draw(): self.model.process(self.step)
         
         color = np.divide(self.colors["background"], 255)
@@ -254,13 +267,13 @@ class ModelInstance():
         color = np.divide(self.colors["grid"], 255)
         if color[3]>0: drawing.grid((0,0), self.model.epsilon, *color)
         
-        image = drawing.draw(self.resolution)
+        image = drawing.draw(resolution)
         return image, drawing.tl, drawing.br
         
     def save_png(self):
         path = os.path.join(SAVEDIR, "test.png")
         makedirs(path)
-        image, _, _ = self.draw()
+        image, _, _ = self.draw(self.png_resolution)
         PIL_image_from_array(image).save(path, optimize=True)
 
 
@@ -311,7 +324,7 @@ class ModelInstance():
     def refresh_figure(self):
         self.subplot.clear()
         if self.step>0:
-            image, tl, br = self.draw()
+            image, tl, br = self.draw(self.fig_resolution)
             self.subplot.imshow(image, extent=(tl[0], br[0], tl[1], br[1]))
             title = f"step: {self.step}, image: {image.shape}"
             title += f"\n{len(self.model)} points"

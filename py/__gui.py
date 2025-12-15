@@ -250,11 +250,11 @@ def set_field_content(field, string):
     field.delete(0, tk.END)
     field.insert(0, string)
 
-def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, fill=tk.X, update_handler=None, **kwargs):
+def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, fill=tk.X, update_handler=None, justify="left", **kwargs):
     subframe = nice_frame(frame, side=side, **kwargs)
     if text:
         label = nice_label(subframe, text=text, side=tk.LEFT, anchor="c") # , width=len(text)
-    field = nice_field(subframe, identifier=text, width=width, side=tk.LEFT, update_handler=update_handler)
+    field = nice_field(subframe, identifier=text, width=width, side=tk.LEFT, justify=justify, update_handler=update_handler)
     return field
 
 def nice_button(frame, *args, side=tk.TOP, fill=tk.BOTH, **kwargs):

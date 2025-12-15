@@ -42,6 +42,13 @@ def vectors_to_radians(vectors):
 def bounding_box(points):
     return np.min(points, axis=0), np.max(points, axis=0)
 
+def bounding_box_corners(points):
+    tl, br = np.min(points, axis=0), np.max(points, axis=0)
+    asd = np.concatenate([tl,br[::-1]], axis=0)
+    bl = asd[::2]
+    tr = asd[::-2]
+    return tl, tr, br, bl
+
 def point_normals(points):
     diff = np.diff(points, prepend=points[-1:], axis=0)
     return vectors_to_radians(diff)-np.pi/2
@@ -379,6 +386,11 @@ def center_rotate_points(points, rotation):
     offsets[:,1] = temp*np.sin(rotation)+offsets[:,1]*np.cos(rotation)
     return center+offsets
 
+def rotated_vectors(vectors, rotation):
+    rotated = vectors.copy()
+    rotated[:,0] = vectors[:,0]*np.cos(rotation)-vectors[:,1]*np.sin(rotation)
+    rotated[:,1] = vectors[:,0]*np.sin(rotation)+vectors[:,1]*np.cos(rotation)
+    return rotated
 
 def image_color_mask(image, color):
     return (image[:,:,0]==color[0])*(image[:,:,1]==color[1])*(image[:,:,2]==color[2])
@@ -460,22 +472,158 @@ def find_closed_areas(mask): # upgrade to fill_closed_areas
     return surrounded
 
 
+def lines_intersect(line1, line2, boolean=True):
+    linebox1 = bounding_box(line1)
+    linebox2 = bounding_box(line2)
+    # bounding boxes must have overlap
+    overlap = overlap_box(*linebox1, *linebox2)
+    if overlap is not None:
+        # lines must have an intersection
+        intersection = find_intersection(line1, line2)
+        if intersection is not None:
+            # intersection must be in the overlap
+            if points_inside_box(np.expand_dims(intersection, axis=0), *overlap).any():
+                if boolean: return True
+                return intersection
+    if boolean: return False
+
+def iterate_intersections(points):
+    l = len(points)
+    starts, ends = point_lines(points)
+    done = set()
+    for i in range(l):
+        line1 = starts[i], ends[i]
+        for j in range(l):
+            if (i==0 and j==(l-1)) or (j==0 and i==(l-1)): continue
+            if abs(j-i)<2: continue # lines must be atleast 1 apart
+            k1 = (i,j)
+            if (j,i) in done: continue
+            line2 = starts[j], ends[j]
+            intersection = lines_intersect(line1, line2, False)
+            if intersection is not None:
+                yield intersection, (i-1, i), (j-1, j) # intersection + lines as point indexes
+                done.add(k1)
+
+def sort_points_to_polygon(points): # crude and inaccurate
+    l = len(points)
+    unused = np.ones(l, dtype=np.bool_)
+    indexes = np.arange(l)
+    sorting = indexes.copy()
+
+    def get_nearest(p):
+        dists = np.linalg.norm(points[unused]-p, axis=1)
+        i = np.argmin(dists)
+        return indexes[unused][i], dists[i]
+    
+    count_right = count_left = 0
+    index_right = index_left = np.argmin(np.linalg.norm(np.diff(points, axis=0), axis=1))
+    while 1:
+        sorting[count_right] = index_right
+        unused[index_right] = False
+        sorting[count_left] = index_left
+        unused[index_left] = False
+        
+        if not unused.any(): break
+        index1, dist1 = get_nearest(points[index_right])
+        index2, dist2 = get_nearest(points[index_left])
+        if dist1<dist2:
+            index_right = index1
+            count_right += 1
+        else:
+            index_left = index2
+            count_left -= 1
+    points[:] = points[sorting]
+
+
+
+def sort_points_to_polygon3(points): # slow and dumb, but "works"
+    l = len(points)
+    indexes = np.arange(l)
+    
+    distances = np.zeros((l,l))
+    for i in range(l):
+        p = points[i]
+        distances[i] = np.linalg.norm(points-p, axis=1)
+    
+    def single_run(start):
+        sorting = indexes.copy()
+        valid = np.ones(l, dtype=np.bool_)
+        best_index = start
+        step = 0
+        sorting[step] = best_index
+        valid[best_index] = False
+        while valid.any():
+            step += 1
+            order = distances[best_index].argsort()
+            next_index = order[valid[order]][0]
+            best_index = next_index
+            sorting[step] = best_index
+            valid[best_index] = False
+        return sorting
+
+    
+    sorting = single_run(0)
+    while 1: # clean up intersections
+        points[:] = points[sorting]
+        sorting[:] = indexes
+        intersections = False
+        for x,ii,jj in iterate_intersections(points):
+            intersections = True
+            sorting[ii[1]] = jj[0]
+            sorting[jj[0]] = ii[1]
+            break
+        if not intersections: break
+    
+
 if __name__ == "__main__":
-    # test mask filling
-    mask = circle_mask(20)
-    mask *= np.random.random(mask.shape)>.5
-    
-    mask1 = mask.astype(np.uint8)+vertically_closed_areas(mask)/2
-    mask2 = mask.astype(np.uint8)+horizontally_closed_areas(mask)/2
-    mask3 = mask.astype(np.uint8)+find_closed_areas(mask)/2
-    
     import matplotlib.pyplot as plt
+    from _imports import ImageDrawing
     
-    fig, ax = plt.subplots(1, 4, figsize=(12,5))
-    ax[0].imshow(mask)
-    ax[1].imshow(mask1)
-    ax[2].imshow(mask2)
-    ax[3].imshow(mask3)
+    points1 = np.random.random((100,2))
+    points1[:len(points1)//2] += 1
+    
+    drawing = ImageDrawing(*np.ones(3))
+##    drawing.lines(*point_lines(points1), r=1)
+    drawing.circles(points1, 0.005)
+    
+    points2 = points1.copy()
+    sort_points_to_polygon(points2)
+    drawing.lines(*point_lines(points2), g=1, a=0.5)
+    
+    points3 = points1.copy()
+##    intersections = []
+##    starts = []
+##    ends = []
+##    for x,ii,jj in iterate_intersections(points3):
+##        intersections.append(x)
+##        starts.append(points3[ii[0]])
+##        starts.append(points3[jj[0]])
+##        ends.append(points3[ii[1]])
+##        ends.append(points3[jj[1]])
+##    if intersections:
+##        drawing.lines(starts, ends, b=1, a=.5)
+##        drawing.circles(intersections, 0.01, r=1, a=.5)
+    
+    sort_points_to_polygon3(points3)
+    drawing.lines(*point_lines(points3), r=1, b=1)
+    
+    image = drawing.draw(1000)
+    plt.imshow(image, extent=drawing.get_extent())
     plt.show()
+    
+####    # test mask filling
+####    mask = circle_mask(20)
+####    mask *= np.random.random(mask.shape)>.5
+####    
+####    mask1 = mask.astype(np.uint8)+vertically_closed_areas(mask)/2
+####    mask2 = mask.astype(np.uint8)+horizontally_closed_areas(mask)/2
+####    mask3 = mask.astype(np.uint8)+find_closed_areas(mask)/2
+####    
+####    fig, ax = plt.subplots(1, 4, figsize=(12,5))
+####    ax[0].imshow(mask)
+####    ax[1].imshow(mask1)
+####    ax[2].imshow(mask2)
+####    ax[3].imshow(mask3)
+####    plt.show()
     pass
 

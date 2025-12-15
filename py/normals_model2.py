@@ -44,8 +44,7 @@ class ModelConfiguration(ModelBase):
     noise_geometry_rotation = 0
     
     point_density = 10 # point density (relative to epsilon)
-    point_ceiling = 100 # soft ceiling for points (increases allowed distance between points after the ceiling)
-    point_ceiling_hardness = 2 # increase to harshen the ceiling effect
+    point_ceiling = 500 # soft ceiling for points (increases allowed distance between points after the ceiling)
     
     def __init__(self):
         super().__init__()
@@ -88,7 +87,6 @@ class ModelConfiguration(ModelBase):
 
             "point_density",
             "point_ceiling",
-            "point_ceiling_hardness",
             ]
         for attr in attrs:
             new.copyattr(self, attr)
@@ -101,16 +99,13 @@ class ModelConfiguration(ModelBase):
         self._prev_normals = self._prev_normals[~removal_mask]
 
     def _min_distance_between_points(self):
-        n = len(self._points)
         e = self.epsilon
-        e /= self.point_density
-
+        
+        n = len(self._points)
         c = self.point_ceiling
-        over = max(n-c, 0)
-        if over>0:
-            over *= self.point_ceiling_hardness
-            ratio = over/c
-            e *= 1+ratio
+        e *= n/c
+        
+        e /= self.point_density
         return e
     
     def _too_sparse_mask(self):
