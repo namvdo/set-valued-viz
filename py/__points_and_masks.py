@@ -560,7 +560,6 @@ def sort_points_to_polygon3(points): # slow and dumb, but "works"
             sorting[step] = best_index
             valid[best_index] = False
         return sorting
-
     
     sorting = single_run(0)
     while 1: # clean up intersections
@@ -573,13 +572,42 @@ def sort_points_to_polygon3(points): # slow and dumb, but "works"
             sorting[jj[0]] = ii[1]
             break
         if not intersections: break
-    
+
+
+
+def small_triangles_from_points(points):
+    l = len(points)
+    indexes = np.arange(l)
+    valid = np.ones(l, dtype=np.bool_)
+
+    def smallest_triangle(index):
+        dists = distance(points, points[index])
+        dists[index] = dists.max()+1
+        
+        i = np.argmin(dists)
+        dists[i] = dists.max()
+        i = indexes[i]
+        
+        j = np.argmin(dists)
+        j = indexes[j]
+        
+        return i, j
+
+    visited = set()
+    for i in range(l):
+        if i not in visited:
+            j, k = smallest_triangle(i)
+            visited |= {i,j,k}
+            yield np.array([points[i],points[j],points[k]])
+        
+
+
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     from _imports import ImageDrawing
     
-    points1 = np.random.random((100,2))
+    points1 = np.random.random((50,2))
     points1[:len(points1)//2] += 1
     
     drawing = ImageDrawing(*np.ones(3))
@@ -591,21 +619,11 @@ if __name__ == "__main__":
     drawing.lines(*point_lines(points2), g=1, a=0.5)
     
     points3 = points1.copy()
-##    intersections = []
-##    starts = []
-##    ends = []
-##    for x,ii,jj in iterate_intersections(points3):
-##        intersections.append(x)
-##        starts.append(points3[ii[0]])
-##        starts.append(points3[jj[0]])
-##        ends.append(points3[ii[1]])
-##        ends.append(points3[jj[1]])
-##    if intersections:
-##        drawing.lines(starts, ends, b=1, a=.5)
-##        drawing.circles(intersections, 0.01, r=1, a=.5)
     
-    sort_points_to_polygon3(points3)
-    drawing.lines(*point_lines(points3), r=1, b=1)
+##    sort_points_to_polygon3(points3)
+    
+    for triangle in small_triangles_from_points(points3):
+        drawing.lines(*point_lines(triangle), r=1, b=1)
     
     image = drawing.draw(1000)
     plt.imshow(image, extent=drawing.get_extent())

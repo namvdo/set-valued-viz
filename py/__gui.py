@@ -140,6 +140,29 @@ def string_cycler(obj, options, on_update=None, button=True, scroll=True):
     return var
 
 
+def integer_selector(obj, start=0, low=None, high=None, on_update=None, button=True, scroll=True):
+    var = tk.IntVar(value=start)
+    def button_handler(event):
+        match event.num:
+            case 1:
+                val = var.get()+1
+                if high is not None: val = min(val, high)
+                var.set(val)
+            case 3:
+                val = var.get()-1
+                if low is not None: val = max(val, low)
+                var.set(val)
+            case _: return
+        if on_update is not None: on_update()
+    def wheel_handler(event):
+        val = (var.get()+scroll_delta_translate(event.delta))
+        if high is not None: val = min(val, high)
+        if low is not None: val = max(val, low)
+        var.set(val)
+        if on_update is not None: on_update()
+    if button: obj.bind("<Button>", button_handler, add="+")
+    if scroll: obj.bind("<MouseWheel>", wheel_handler, add="+")
+    return var
 
 
 
@@ -341,6 +364,28 @@ def nice_RGBA_selector(frame, color, on_update=None): # both RGBA and RGB work f
     return f
 
 
+
+class IntegerField:
+    var = None
+    field = None
+    def __init__(self, root, *args, val=0, low=None, high=None, on_update=None, **kwargs):
+        def update_handler(identifier, string):
+            val = read_number_from_string(string)
+            if val is not None:
+                if high is not None: val = min(val, high)
+                if low is not None: val = max(val, low)
+                self.set(int(val), True)
+                if on_update is not None: on_update()
+        self.field = nice_field(root, *args, update_handler=update_handler, **kwargs)
+        self.var = integer_selector(self.field, val, low=low, high=high, on_update=self.refresh, button=False)
+        self.refresh()
+    def __str__(self): return self.field.get()
+    
+    def refresh(self): set_field_content(self.field, str(self.get()))
+    def get(self): return self.var.get()
+    def set(self, value:int, refresh=True):
+        self.var.set(value)
+        if refresh: self.refresh()
 
 
 

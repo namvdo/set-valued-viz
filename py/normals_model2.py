@@ -52,6 +52,10 @@ class ModelConfiguration(ModelBase):
 
     def __len__(self): return len(self._points)
 
+    def active(self): return self._timestep is not None
+    
+    def has_points(self): return self._points.size>0
+    
     def reset(self):
         self.tij = None
         self._timestep = None
@@ -299,8 +303,6 @@ class ModelConfiguration(ModelBase):
             self.print_func(f"processing: {self._timestep} -> {to_timestep}")
         if self._timestep is None or self._timestep>to_timestep: self._start(to_timestep)
         else: self._continue(to_timestep)
-    
-    def can_draw(self): return self._points.size!=0
     
     def get_boundary_lines(self):
         return point_lines(self._points)

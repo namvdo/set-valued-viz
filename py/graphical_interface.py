@@ -11,7 +11,6 @@ class ModelInstance():
     key = None
     model = None
     model_prev = None # copied model
-    step = 0
 
     # adjustables
     fig_resolution = 512
@@ -24,9 +23,9 @@ class ModelInstance():
     canvas = None
     fig = None
     subplot = None
-
+    
+    step = None # -> IntegerField
     step_info = None # -> label
-    step_field = None # -> entry field
     
     def __init__(self, on_destroy, **kwargs):
         for k,v in kwargs.items():
@@ -54,15 +53,19 @@ class ModelInstance():
         b = nice_button(f, text="Recalc Step", command=self.model_recalculate)
         
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        self.step_field = nice_field(ff, side=tk.RIGHT, width=6, justify="center") # , update_handler=_update
+        
+        self.step = IntegerField(ff, val=1, low=0, side=tk.RIGHT, width=6, justify="center")
+        
+        b = nice_button(ff, text="Reset", side=tk.LEFT, width=6, command=self.model_reset)
+        
         def _press():
-            value = read_number_from_string(self.step_field.get())
-            if value is not None:
-                self.step = value
-                self.model_process()
+            step = self.step.get()
+            if step>0: self.model_process(step)
+            else: self.model_reset()
         b = nice_button(ff, text="Go to Step", command=_press)
         
-        b = nice_button(f, text="Reset", command=self.model_reset)
+        b = nice_button(f, text="Run Until Stable (WIP)", command=None)
+        b = nice_button(f, text="Find Periodic Points (WIP)", command=None)
         #
         
         #
@@ -236,7 +239,6 @@ class ModelInstance():
         #
 
     def draw(self, resolution:int):
-        if not self.model.can_draw(): self.model.process(self.step)
         
         color = np.divide(self.colors["background"], 255)
         drawing = ImageDrawing(*color)
@@ -276,11 +278,10 @@ class ModelInstance():
         image, _, _ = self.draw(self.png_resolution)
         PIL_image_from_array(image).save(path, optimize=True)
 
-
     def model_reset(self):
         self.model_prev = None
         self.model.reset()
-        self.step = 0
+        self.step.set(1)
         self.refresh_gui()
         self.refresh_figure()
 
@@ -291,23 +292,23 @@ class ModelInstance():
         if self.model_prev is not None:
             for attr in ["_points","_normals","_prev_points","_prev_normals","_timestep","tij"]:
                 self.model.copyattr(self.model_prev, attr)
-            self.model_process()
-        
-    def model_process(self):
-        if self.step>0:
-            self.model_checkpoint()
-            self.model.process(self.step-1) # gui steps are 1...inf, model's are 0...inf
-            self.refresh_gui()
-            self.refresh_figure()
+            self.model_process(self.step.get()-1) # do previous step again
+
+    def model_process(self, step:int):
+        self.model_checkpoint()
+        self.model.process(step-1)
+        self.step.set(step) # for gui stuff
+        self.refresh_gui()
+        self.refresh_figure()
+        self.step.set(step+1) # display next step in the field
 
     def refresh_gui(self):
-        set_field_content(self.step_field, str(self.step+1))
-        
         data = {}
-        data["step"] = self.step
+        data["step"] = 0
         data["hausdorff"] = 0
         
-        if self.step>0:
+        if self.model.has_points():
+            data["step"] = self.step.get()
             try:
                 dist, line = self.model.hausdorff_distance()
                 x = readable_float(dist, 6)
@@ -323,10 +324,10 @@ class ModelInstance():
         
     def refresh_figure(self):
         self.subplot.clear()
-        if self.step>0:
+        if self.model.has_points():
             image, tl, br = self.draw(self.fig_resolution)
             self.subplot.imshow(image, extent=(tl[0], br[0], tl[1], br[1]))
-            title = f"step: {self.step}, image: {image.shape}"
+            title = f"step: {self.step.get()}, image: {image.shape}"
             title += f"\n{len(self.model)} points"
             self.subplot.set_title(title)
         self.canvas.draw()
