@@ -11,14 +11,12 @@ class ModelInstance():
     key = None
     model = None
     model_prev = None # copied model
-
-    # adjustables
-    fig_resolution = 512
-    png_resolution = 5120
-    min_x = max_x = None
-    min_y = max_y = None
+    
+    fig_resolution = None # -> IntegerField
+    png_resolution = None # -> IntegerField
+    min_x = max_x = None # -> FloatFields
+    min_y = max_y = None # -> FloatFields
     colors = None # -> dict
-    #
     
     canvas = None
     fig = None
@@ -54,7 +52,7 @@ class ModelInstance():
         
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
         
-        self.step = IntegerField(ff, val=1, low=0, side=tk.RIGHT, width=6, justify="center")
+        self.step = IntegerField(ff, val=1, low=0, high=None, side=tk.RIGHT, width=6, justify="center")
         
         b = nice_button(ff, text="Reset", side=tk.LEFT, width=6, command=self.model_reset)
         
@@ -91,56 +89,42 @@ class ModelInstance():
         
         #
         ff = nice_frame(f, anchor="nw", side=tk.LEFT)
-        width = 6
+        width = 4
         fff = nice_titled_frame(ff, "precision", side=tk.TOP)
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None:
-                self.model.point_density = min(max(value, 2), 100)
-        field = nice_labeled_field(fff, "density", width=width, anchor="ne", update_handler=_update)
-        field.insert(0, str(self.model.point_density))
+        
+        def on_update(): self.model.point_density = self.point_density.get()
+        self.point_density = IntegerField(fff, val=self.model.point_density, low=1, high=100, width=width, label_text="density", justify="center", on_update=on_update)
         
         
         fff = nice_titled_frame(ff, "noise", side=tk.TOP)
         
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: sides = abs(value)
-            else: sides = 0
-            self.model.update_noise_geometry(sides=sides)
-        field = nice_labeled_field(fff, "vertices", width=width, anchor="ne", update_handler=_update)
+        def on_update(): self.model.update_noise_geometry(sides=self.noice_vertices.get())
+        self.noice_vertices = IntegerField(fff, val=0, low=0, high=None, width=width, label_text="vertices", justify="center", on_update=on_update)
         
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: rotation = (value%360)/180*np.pi
-            else: rotation = 0
-            self.model.update_noise_geometry(rotation=rotation)
-        field = nice_labeled_field(fff, "rotation", width=width, anchor="ne", update_handler=_update)
+        def on_update(): self.model.update_noise_geometry(rotation=self.noice_rotation.get())
+        self.noice_rotation = IntegerField(fff, val=0, low=0, mod=360, width=width, label_text="rotation", justify="center", on_update=on_update)
         
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None:
-                self.model.epsilon = abs(value)
-        field = nice_labeled_field(fff, "distance", width=width, anchor="ne", update_handler=_update)
-        field.insert(0, str(self.model.epsilon))
+        def on_update(): self.model.epsilon = self.noice_distance.get()
+        self.noice_distance = FloatField(fff, val=self.model.epsilon, low=0, high=None, step=1, width=width*2, label_text="distance", on_update=on_update)
         #
 
         #
-        def on_update():
-            pass
         width = 10
-        adjusable_parameters = self.model.function.required_constants()
-        if len(adjusable_parameters)>0:
+        required_constants = self.model.function.required_constants()
+        if len(required_constants)>0:
+            self.constant_fields = {}
+            on_updates = {}
+            def on_update(k): self.model.function.constants[k] = self.constant_fields[k].get()
+            def new_on_update(k): on_updates[k] = lambda : on_update(k)
+            
             ff = nice_titled_frame(f, "constants", anchor="nw", side=tk.LEFT)
-            for k in sorted(adjusable_parameters):
-                def _update(identifier, string):
-                    value = read_number_from_string(string)
-                    if value is not None:
-                        self.model.function.constants[identifier] = value
-                        if on_update is not None: on_update()
-                field = nice_labeled_field(ff, k, width=width, anchor="ne", update_handler=_update)
+            
+            for k in sorted(required_constants):
                 v = self.model.function.constants.get(k)
-                if v is not None: field.insert(0, str(v))
+                new_on_update(k)
+                
+                obj = FloatField(ff, val=v, low=None, high=None, step=1, width=width, label_text=k, on_update=on_updates[k])
+                self.constant_fields[k] = obj
         #
         
         self.refresh_gui()
@@ -170,53 +154,25 @@ class ModelInstance():
         ff = nice_frame(f, side=tk.TOP, fill=tk.BOTH)
         
         #
+        width = 8
         fff = nice_titled_frame(ff, "resolution", side=tk.LEFT)
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.fig_resolution = max(int(value), 2)
-        field = nice_labeled_field(fff, "figure", width=8, anchor="ne", justify="center", update_handler=_update)
-        field.insert(0, str(self.fig_resolution))
-        
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.png_resolution = max(int(value), 2)
-        field = nice_labeled_field(fff, "PNG", width=8, anchor="ne", justify="center", update_handler=_update)
-        field.insert(0, str(self.png_resolution))
+        self.fig_resolution = IntegerField(fff, val=512, low=32, high=None, width=width, label_text="figure", justify="center")
+        self.png_resolution = IntegerField(fff, val=5120, low=32, high=None, width=width, label_text="PNG", justify="center")
         #
 
         #
+        width = 5
         fff = nice_titled_frame(ff, "extend limits", side=tk.RIGHT)
+        
         ffff = nice_frame(fff, anchor="c", side=tk.TOP)
-        
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.min_x = value
-            else: self.min_x = None
-        field = nice_field(ffff, side=tk.LEFT, width=5, update_handler=_update)
-        
+        self.min_x = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, justify="center", width=width)
         nice_label(ffff, text="<= x <=", side=tk.LEFT)
-        
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.max_x = value
-            else: self.max_x = None
-        field = nice_field(ffff, side=tk.LEFT, width=5, update_handler=_update)
+        self.max_x = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, justify="center", width=width)
         
         ffff = nice_frame(fff, anchor="c", side=tk.TOP)
-        
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.min_y = value
-            else: self.min_y = None
-        field = nice_field(ffff, side=tk.LEFT, width=5, update_handler=_update)
-        
+        self.min_y = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, justify="center", width=width)
         nice_label(ffff, text="<= y <=", side=tk.LEFT)
-        
-        def _update(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.max_y = value
-            else: self.max_y = None
-        field = nice_field(ffff, side=tk.LEFT, width=5, update_handler=_update)
+        self.max_y = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, justify="center", width=width)
         #
 
         #
@@ -261,10 +217,14 @@ class ModelInstance():
             drawing.lines([line[0]], [line[1]], *color)
         
         # extend limits
-        if self.min_x is not None: drawing.tl[0] = min(drawing.tl[0], self.min_x)
-        if self.max_x is not None: drawing.br[0] = max(drawing.br[0], self.max_x)
-        if self.min_y is not None: drawing.tl[1] = min(drawing.tl[1], self.min_y)
-        if self.max_y is not None: drawing.br[1] = max(drawing.br[1], self.max_y)
+        min_x = self.min_x.get()
+        max_x = self.max_x.get()
+        min_y = self.min_y.get()
+        max_y = self.max_y.get()
+        if min_x is not None: drawing.tl[0] = min(drawing.tl[0], min_x)
+        if max_x is not None: drawing.br[0] = max(drawing.br[0], max_x)
+        if min_y is not None: drawing.tl[1] = min(drawing.tl[1], min_y)
+        if max_y is not None: drawing.br[1] = max(drawing.br[1], max_y)
         
         color = np.divide(self.colors["grid"], 255)
         if color[3]>0: drawing.grid((0,0), self.model.epsilon, *color)
@@ -275,7 +235,7 @@ class ModelInstance():
     def save_png(self):
         path = os.path.join(SAVEDIR, "test.png")
         makedirs(path)
-        image, _, _ = self.draw(self.png_resolution)
+        image, _, _ = self.draw(self.png_resolution.get())
         PIL_image_from_array(image).save(path, optimize=True)
 
     def model_reset(self):
@@ -325,10 +285,10 @@ class ModelInstance():
     def refresh_figure(self):
         self.subplot.clear()
         if self.model.has_points():
-            image, tl, br = self.draw(self.fig_resolution)
+            image, tl, br = self.draw(self.fig_resolution.get())
             self.subplot.imshow(image, extent=(tl[0], br[0], tl[1], br[1]))
-            title = f"step: {self.step.get()}, image: {image.shape}"
-            title += f"\n{len(self.model)} points"
+            title = f"{len(self.model)} points"
+            title += f"\nimage: {image.shape[:2]}"
             self.subplot.set_title(title)
         self.canvas.draw()
 
@@ -352,6 +312,7 @@ class Interface():
         #
 
         #
+        width = 8
         ff = nice_titled_frame(leftside, "function", side=tk.TOP, fill=tk.NONE)
         def _update(identifier, string):
             getattr(self.model_base.function, identifier).string = string
@@ -361,16 +322,11 @@ class Interface():
         field_fy.insert(0, self.model_base.function.fy.string)
         
         ff = nice_titled_frame(leftside, "start point", side=tk.TOP, fill=tk.NONE, anchor="ne")
-        def _update_x(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.model_base.start_point.x = value
-        def _update_y(identifier, string):
-            value = read_number_from_string(string)
-            if value is not None: self.model_base.start_point.y = value
-        field_start_x = nice_labeled_field(ff, "x", width=8, anchor="ne", update_handler=_update_x)
-        field_start_y = nice_labeled_field(ff, "y", width=8, anchor="ne", update_handler=_update_y)
-        field_start_x.insert(0, str(self.model_base.start_point.x))
-        field_start_y.insert(0, str(self.model_base.start_point.y))
+        
+        def on_update_x(): self.model_base.start_point.x = self.start_x.get()
+        def on_update_y(): self.model_base.start_point.y = self.start_y.get()
+        self.start_x = FloatField(ff, val=0, low=None, high=None, on_update=on_update_x, label_text="x", width=width)
+        self.start_y = FloatField(ff, val=0, low=None, high=None, on_update=on_update_y, label_text="y", width=width)
         #
         
         f = nice_titled_frame(self.window, "log", side=tk.LEFT)

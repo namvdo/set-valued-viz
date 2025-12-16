@@ -140,22 +140,77 @@ def string_cycler(obj, options, on_update=None, button=True, scroll=True):
     return var
 
 
-def integer_selector(obj, start=0, low=None, high=None, on_update=None, button=True, scroll=True):
-    var = tk.IntVar(value=start)
+
+
+
+
+
+
+class IntVar(tk.IntVar):
+    can_disable = True
+    disabled = False # True -> returns None with .get()
+    def __init__(self, value, can_disable=True, **kwargs):
+        self.can_disable = can_disable
+        super().__init__(value=0, **kwargs)
+        self.set(value)
+    def get(self):
+        if self.disabled: return None
+        return super().get()
+    def set(self, value):
+        if value is None:
+            if self.can_disable: self.disabled = True
+        else:
+            if self.disabled: self.disabled = False
+            super().set(value)
+
+def float_precision2(f:float, maximum:int=12):
+    c = 0
+    while not f.is_integer():
+        f = round(f*10, maximum)
+        c += 1
+    return c
+
+class FloatVar(IntVar):
+    precision = 0
+    def get(self):
+        val = super().get()
+        if val is not None:
+            f = float(val)
+            f /= 10**self.precision
+            return f
+        
+    def set(self, f, set_precision=True):
+        if f is None: self.disabled = True
+        else:
+            if set_precision: self.precision = float_precision2(f)
+            return super().set(round(f*10**self.precision))
+
+
+def integer_selector(obj, start=0, low=None, high=None, mod=None, step=1, on_update=None, button=True, scroll=True, can_disable=False):
+    var = IntVar(value=start, can_disable=can_disable)
     def button_handler(event):
+        if var.disabled: return
         match event.num:
             case 1:
-                val = var.get()+1
+                val = var.get()+step
+                if mod is not None: val %= mod
                 if high is not None: val = min(val, high)
+                if low is not None: val = max(val, low)
                 var.set(val)
             case 3:
-                val = var.get()-1
+                val = var.get()-step
+                if mod is not None: val %= mod
+                if high is not None: val = min(val, high)
                 if low is not None: val = max(val, low)
                 var.set(val)
             case _: return
         if on_update is not None: on_update()
     def wheel_handler(event):
-        val = (var.get()+scroll_delta_translate(event.delta))
+        if var.disabled: return
+        i = scroll_delta_translate(event.delta)
+        i *= step
+        val = var.get()+i
+        if mod is not None: val %= mod
         if high is not None: val = min(val, high)
         if low is not None: val = max(val, low)
         var.set(val)
@@ -165,6 +220,42 @@ def integer_selector(obj, start=0, low=None, high=None, on_update=None, button=T
     return var
 
 
+
+
+def float_selector(obj, start=0., low=None, high=None, mod=None, step=1, on_update=None, button=True, scroll=True, can_disable=False):
+    # step increments are relative to current float precision
+    # and float precision in the var cannot be changed by just incremental step adjustments
+    var = FloatVar(value=start, can_disable=can_disable)
+    def button_handler(event):
+        if var.disabled: return
+        match event.num:
+            case 1:
+                val = var.get()+step/10**var.precision
+                if mod is not None: val %= mod
+                if high is not None: val = min(val, high)
+                if low is not None: val = max(val, low)
+                var.set(val, False)
+            case 3:
+                val = var.get()-step/10**var.precision
+                if mod is not None: val %= mod
+                if high is not None: val = min(val, high)
+                if low is not None: val = max(val, low)
+                var.set(val, False)
+            case _: return
+        if on_update is not None: on_update()
+    def wheel_handler(event):
+        if var.disabled: return
+        i = scroll_delta_translate(event.delta)
+        i *= step/10**var.precision
+        val = var.get()+i
+        if mod is not None: val %= mod
+        if high is not None: val = min(val, high)
+        if low is not None: val = max(val, low)
+        var.set(val, False)
+        if on_update is not None: on_update()
+    if button: obj.bind("<Button>", button_handler, add="+")
+    if scroll: obj.bind("<MouseWheel>", wheel_handler, add="+")
+    return var
 
 
 
@@ -273,7 +364,7 @@ def set_field_content(field, string):
     field.delete(0, tk.END)
     field.insert(0, string)
 
-def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, fill=tk.X, update_handler=None, justify="left", **kwargs):
+def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, update_handler=None, justify="left", **kwargs):
     subframe = nice_frame(frame, side=side, **kwargs)
     if text:
         label = nice_label(subframe, text=text, side=tk.LEFT, anchor="c") # , width=len(text)
@@ -365,27 +456,63 @@ def nice_RGBA_selector(frame, color, on_update=None): # both RGBA and RGB work f
 
 
 
+
+
+def nice_left_label(root, text):
+    f = nice_frame(root, side=tk.TOP, anchor="ne")
+    nice_label(f, text=text, side=tk.LEFT)
+    return f
+
 class IntegerField:
     var = None
     field = None
-    def __init__(self, root, *args, val=0, low=None, high=None, on_update=None, **kwargs):
+    on_update = None
+    def __init__(self, root, val=0, low=None, high=None, mod=None, step=1, can_disable=False, on_update=None, label_text=None, **kwargs):
         def update_handler(identifier, string):
-            val = read_number_from_string(string)
-            if val is not None:
-                if high is not None: val = min(val, high)
-                if low is not None: val = max(val, low)
-                self.set(int(val), True)
-                if on_update is not None: on_update()
-        self.field = nice_field(root, *args, update_handler=update_handler, **kwargs)
-        self.var = integer_selector(self.field, val, low=low, high=high, on_update=self.refresh, button=False)
+            if len(string)==0 and not can_disable:
+                # reset because in this case there must be a value in the field
+                if low is not None: val = low
+                elif mod is not None: val = mod
+                elif high is not None: val = high
+                else: val = self.get()
+                self.set(val)
+            else:
+                val = read_number_from_string(string)
+                if val is not None:
+                    if mod is not None: val %= mod
+                    if high is not None: val = min(val, high)
+                    if low is not None: val = max(val, low)
+                self.set(val, False)
+                if self.on_update is not None: self.on_update()
+        if label_text is not None: root = nice_left_label(root, label_text)
+        self.field = nice_field(root, update_handler=update_handler, **kwargs)
+        self.init_var(val, low, high, mod, step, can_disable=can_disable)
         self.refresh()
+        self.on_update = on_update
+
+    def init_var(self, *args, **kwargs):
+        self.var = integer_selector(self.field, *args, on_update=self.refresh, button=False, **kwargs)
+        
     def __str__(self): return self.field.get()
     
-    def refresh(self): set_field_content(self.field, str(self.get()))
+    def refresh(self):
+        val = self.get()
+        if val is not None: set_field_content(self.field, str(val))
+        if self.on_update is not None: self.on_update()
     def get(self): return self.var.get()
-    def set(self, value:int, refresh=True):
+    def set(self, value, refresh=True):
         self.var.set(value)
         if refresh: self.refresh()
+
+
+class FloatField(IntegerField):
+    def init_var(self, *args, **kwargs):
+        self.var = float_selector(self.field, *args, on_update=self.refresh, button=False, **kwargs)
+
+
+
+
+
 
 
 
