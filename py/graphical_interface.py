@@ -125,7 +125,8 @@ class ModelInstance():
                 
                 obj = FloatField(ff, val=v, low=None, high=None, step=1, width=width, label_text=k, on_update=on_updates[k])
                 self.constant_fields[k] = obj
-        #
+
+                if v is None: self.model.function.constants[k] = obj.get()
         
         self.refresh_gui()
         

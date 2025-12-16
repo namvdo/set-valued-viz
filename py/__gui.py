@@ -180,7 +180,8 @@ class FloatVar(IntVar):
             return f
         
     def set(self, f, set_precision=True):
-        if f is None: self.disabled = True
+        if f is None:
+            if self.can_disable: self.disabled = True
         else:
             if set_precision: self.precision = float_precision2(f)
             return super().set(round(f*10**self.precision))
