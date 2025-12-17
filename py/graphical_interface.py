@@ -23,22 +23,20 @@ class ModelInstance():
     subplot = None
     
     step = None # -> IntegerField
-    step_info = None # -> label
+    step_data_label = None # -> label
     
     def __init__(self, on_destroy, **kwargs):
         for k,v in kwargs.items():
             if hasattr(self, k): setattr(self, k, v)
+        
         win = nice_window(self.key, on_destroy=on_destroy)
         set_padding(win)
-        
 ##        top = nice_frame(win, side=tk.TOP, fill=tk.BOTH)
 ##        nice_label(top, text="asd", anchor="w")
-        
         mid = nice_frame(win, side=tk.TOP)
         self._model_control_panel(mid)
         self._figure_viewport_panel(mid)
         self._figure_drawing_panel(mid)
-        
 ##        bot = nice_frame(win, side=tk.TOP, fill=tk.BOTH)
         
 
@@ -67,8 +65,8 @@ class ModelInstance():
         #
         
         #
-        ff = nice_titled_frame(frame, "step info", anchor="n", side=tk.TOP)
-        self.step_info = nice_label(ff, width=8, justify="left", anchor="w")
+        ff = nice_titled_frame(frame, "step data", anchor="n", side=tk.TOP)
+        self.step_data_label = nice_label(ff, width=8, justify="left", anchor="w")
         #
 
         #
@@ -93,19 +91,19 @@ class ModelInstance():
         fff = nice_titled_frame(ff, "precision", side=tk.TOP)
         
         def on_update(): self.model.point_density = self.point_density.get()
-        self.point_density = IntegerField(fff, val=self.model.point_density, low=1, high=100, width=width, label_text="density", justify="center", on_update=on_update)
+        self.point_density = IntegerField(fff, val=self.model.point_density, low=1, high=100, width=width, label_text="point density", justify="center", on_update=on_update)
         
         
         fff = nice_titled_frame(ff, "noise", side=tk.TOP)
         
-        def on_update(): self.model.update_noise_geometry(sides=self.noice_vertices.get())
-        self.noice_vertices = IntegerField(fff, val=0, low=0, high=None, width=width, label_text="vertices", justify="center", on_update=on_update)
+        def on_update(): self.model.update_noise_geometry(sides=self.noise_vertices.get())
+        self.noise_vertices = IntegerField(fff, val=0, low=0, high=None, width=width, label_text="vertices", justify="center", on_update=on_update)
         
-        def on_update(): self.model.update_noise_geometry(rotation=self.noice_rotation.get())
-        self.noice_rotation = IntegerField(fff, val=0, low=0, mod=360, width=width, label_text="rotation", justify="center", on_update=on_update)
+        def on_update(): self.model.update_noise_geometry(rotation=self.noise_rotation.get())
+        self.noise_rotation = IntegerField(fff, val=0, low=0, mod=360, width=width, label_text="rotation", justify="center", on_update=on_update)
         
-        def on_update(): self.model.epsilon = self.noice_distance.get()
-        self.noice_distance = FloatField(fff, val=self.model.epsilon, low=0, high=None, step=1, width=width*2, label_text="distance", on_update=on_update)
+        def on_update(): self.model.epsilon = self.noise_distance.get()
+        self.noise_distance = FloatField(fff, val=self.model.epsilon, low=0, high=None, step=1, width=width*2, label_text="distance", on_update=on_update)
         #
 
         #
@@ -214,7 +212,7 @@ class ModelInstance():
         
         color = np.divide(self.colors["hausdorff line"], 255)
         if color[3]>0:
-            dist, line = self.model.hausdorff_distance()
+            line = self.model.hausdorff_line
             drawing.lines([line[0]], [line[1]], *color)
         
         # extend limits
@@ -255,33 +253,24 @@ class ModelInstance():
                 self.model.copyattr(self.model_prev, attr)
             self.model_process(self.step.get()-1) # do previous step again
 
-    def model_process(self, step:int):
+    def model_process(self, target_step:int):
         self.model_checkpoint()
-        self.model.process(step-1)
-        self.step.set(step) # for gui stuff
-        self.refresh_gui()
+        for model_step in self.model.process(target_step-1): # model's steps are 1 less (starts from 0)
+            self.refresh_gui(model_step+1)
         self.refresh_figure()
-        self.step.set(step+1) # display next step in the field
-
-    def refresh_gui(self):
+        self.step.set(target_step+1) # to display next step in the field
+    
+    def refresh_gui(self, step:int = 0):
         data = {}
-        data["step"] = 0
-        data["hausdorff"] = 0
-        
-        if self.model.has_points():
-            data["step"] = self.step.get()
-            try:
-                dist, line = self.model.hausdorff_distance()
-                x = readable_float(dist, 6)
-            except: x = "error"
-            data["hausdorff"] = x
+        data["step"] = step
+        data["hausdorff distance"] = readable_float(self.model.hausdorff_dist, 6)
         
         text = ""
         for k,v in data.items():
             if len(text)>0: text += "\n"
             text += f"{k}: {v}"
         
-        self.step_info.configure(text=text)
+        self.step_data_label.configure(text=text)
         
     def refresh_figure(self):
         self.subplot.clear()

@@ -10,8 +10,8 @@ def noise_geometry_multipliers(normals, polygon):
         prev_vertex = polygon[-1]
         for vertex in polygon:
             if (dist:=np.linalg.norm((vertex*2+prev_vertex)/2-normal))<line_dist:
-                temp = find_intersection((prev_vertex, vertex), [origin, normal])
-                if (dist2:=np.linalg.norm(temp))<1:
+                intersection = find_intersection([prev_vertex, vertex], [origin, normal])
+                if intersection is not None and (dist2:=np.linalg.norm(intersection))<1:
                     result_dist = dist2
                     line_dist = dist
             prev_vertex = vertex
@@ -36,8 +36,7 @@ class ModelConfiguration(ModelBase):
     printing = True
     print_func = print
     
-    precision_increase_attempts = 10
-    precision_decrease_attempts = 10
+    gap_detection_attempts = 10
     
     noise_geometry = None
     noise_geometry_sides = 0
@@ -63,6 +62,8 @@ class ModelConfiguration(ModelBase):
         self._normals = np.zeros((0,2))
         self._prev_points = np.zeros((0,2))
         self._prev_normals = np.zeros((0,2))
+        self.hausdorff_dist = 0
+        self.hausdorff_line = None
 
     def copy(self):
         new = type(self)()
@@ -91,6 +92,9 @@ class ModelConfiguration(ModelBase):
 
             "point_density",
             "point_ceiling",
+            
+            "hausdorff_dist",
+            "hausdorff_line",
             ]
         for attr in attrs:
             new.copyattr(self, attr)
@@ -142,7 +146,8 @@ class ModelConfiguration(ModelBase):
         if rotation is not None: self.noise_geometry_rotation = rotation
         
         if self.noise_geometry_sides>2:
-            self.noise_geometry = even_sided_polygon(self.noise_geometry_sides, self.noise_geometry_rotation)
+            radians = -self.noise_geometry_rotation/180*np.pi
+            self.noise_geometry = even_sided_polygon(self.noise_geometry_sides, radians)
         else:
             self.noise_geometry = None
         
@@ -150,14 +155,6 @@ class ModelConfiguration(ModelBase):
         if self.noise_geometry is not None:
             normals *= noise_geometry_multipliers(normals, self.noise_geometry)
     ##
-
-
-##    ##
-##    def update_point_density(self, density=None, ceiling=None):
-##        if density is not None: self.point_density = min(max(density, 2), 100)
-####        if ceiling is not None: self.point_ceiling = max(ceiling, self.point_density)
-##    ##
-
     
     
     def _increase_precision(self, gap_mask):
@@ -177,7 +174,7 @@ class ModelConfiguration(ModelBase):
         prev_points = np.zeros_like(points)
         prev_normals = np.zeros_like(normals)
         
-        self._process(points, normals, prev_points, prev_normals, 1)
+        for _ in self._process(points, normals, prev_points, prev_normals, 1): pass
         
         sorting = np.arange(len(self._points)+len(more_points))
         l = len(self._points)
@@ -194,14 +191,14 @@ class ModelConfiguration(ModelBase):
 
     def _gap_detection_loops(self):
         point_delta = 0
-        for i in range(self.precision_increase_attempts):
+        for i in range(self.gap_detection_attempts):
             gaps = self._too_sparse_mask()
             if gaps.any():
                 point_delta += gaps.sum()
                 self._increase_precision(gaps)
             else: break
         
-        for i in range(self.precision_decrease_attempts):
+        for i in range(self.gap_detection_attempts):
             nogaps = self._too_dense_mask()
             if nogaps.any():
                 point_delta -= nogaps.sum()
@@ -236,14 +233,16 @@ class ModelConfiguration(ModelBase):
         self._points += self._normals
         
         self._gap_detection_loops()
+        self.__hausdorff_update(self._points, self._prev_points)
         
-        self._continue(to_timestep=to_timestep)
+        yield self._timestep
+        yield from self._continue(to_timestep=to_timestep)
 
     def _continue(self, to_timestep:int):
         catch_up_amount = to_timestep - self._timestep
         if catch_up_amount>0:
-            self._process(self._points, self._normals, self._prev_points, self._prev_normals, catch_up_amount)
-
+            yield from self._process(self._points, self._normals, self._prev_points, self._prev_normals, catch_up_amount)
+    
     def _process(self, points, normals, prev_points, prev_normals, amount:int):
         if points is self._points or self.tij is None:
             self.tij = self.function.transposed_inverse_jacobian()
@@ -284,25 +283,35 @@ class ModelConfiguration(ModelBase):
             points += normals
             
             if points is self._points: # every point is being processed
-                
                 self._timestep += 1 # increase early so that precision increase can catch up to correct step
                 
                 self._gap_detection_loops()
+                # hausdorff most effective here, where prev and current points exist in full
+                self.__hausdorff_update(self._points, prev_points)
+                
                 # amount of points might have changed -> reload
                 points = self._points
                 prev_points = self._prev_points
                 normals = self._normals
                 prev_normals = self._prev_normals
-                    
-                if self.printing:
-                    self.print_func(f"reached: {self._timestep}")
+                
+                yield self._timestep
+
+    def __hausdorff_update(self, points1, points2):
+        if points1.size>0 and points2.size>0:
+            dist, line = hausdorff_distance4(points1, points2)
+        else:
+            dist, line = 0, None
+        self.hausdorff_dist, self.hausdorff_line = dist, line
         
 
     def process(self, to_timestep:int):
         if self.printing:
             self.print_func(f"processing: {self._timestep} -> {to_timestep}")
-        if self._timestep is None or self._timestep>to_timestep: self._start(to_timestep)
-        else: self._continue(to_timestep)
+        if self._timestep is None or self._timestep>to_timestep:
+            yield from self._start(to_timestep)
+        else:
+            yield from self._continue(to_timestep)
     
     def get_boundary_lines(self):
         return point_lines(self._points)
@@ -348,7 +357,7 @@ class ModelConfiguration(ModelBase):
         
         drawing.points(self._points, r=1)
 
-        dist, line = self.hausdorff_distance()
+        line = self.hausdorff_line
         drawing.lines([line[0]], [line[1]], r=1, g=.5)
         
 ##        drawing.circles(self._points[:1], self.epsilon/10, inside=self.epsilon/11, r=1)
@@ -356,9 +365,9 @@ class ModelConfiguration(ModelBase):
         image = drawing.draw(resolution)
         return image, drawing.tl, drawing.br
 
-##    @function_timer
-    def hausdorff_distance(self):
-        return hausdorff_distance4(self._points, self._prev_points)
+####    @function_timer
+##    def hausdorff_distance(self):
+##        return hausdorff_distance4(self._points, self._prev_points)
 
 
 
@@ -397,12 +406,10 @@ if __name__ == "__main__":
     resolution = 2000
     timestep = 15
     for ax_target in test_plotting_grid(1, 1, timestep):
-        config.process(timestep)
+        for i in config.process(timestep): pass
         image,tl,br = config.draw(resolution)
         
         ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
-        
-##        print(timestep, "hausdorff:", config.hausdorff_distance())
         timestep += 1
 
 

@@ -1,6 +1,60 @@
 import math
 import numpy as np
 
+class Queue2():
+    head = 0
+    tail = 0
+    size = 0
+    overwrite = True
+    def __init__(self, capacity:int):
+        self.list = [None]*capacity
+
+    def resize(self, new_capacity:int):
+        old_cap = len(self.list)
+        diff = new_capacity-old_cap
+        if diff==0: return False
+        h = self.head
+        t = self.tail
+        if diff>0: # bigger
+            if h<t:
+                self.list = self.list[h:t]
+            else:
+                self.list = self.list[h:]+self.list[:t]
+            self.head = 0
+            self.tail = self.size%new_capacity
+            self.list.extend([None]*diff)
+        else: # smaller
+            free_space = old_cap-self.size
+            d = max((old_cap-new_capacity)-free_space, 0)
+            h += d # move head forward closer to tail
+            h %= old_cap
+            if h<t:
+                self.list = self.list[h:t]
+            else:
+                self.list = self.list[h:]+self.list[:t]
+            self.head = 0
+            self.size -= d
+            self.tail = self.size%new_capacity
+        return True
+    
+    def add(self, x):
+        if not self.overwrite and self.size==len(self.list): return
+        if self.size>0 and self.tail == self.head:
+            self.head = (self.head+1)%len(self.list)
+        self.list[self.tail] = x
+        self.tail = (self.tail+1)%len(self.list)
+        if self.size<len(self.list): self.size += 1
+    
+    def take(self):
+        if self.size==0: return
+        x = self.list[self.head]
+        self.head = (self.head+1)%len(self.list)
+        self.size -= 1
+        return x
+    
+    def take_all(self):
+        while self.size>0: yield self.take()
+
 
 class MassPoints():
     # calculate points in range at a massive scale

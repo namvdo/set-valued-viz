@@ -1,5 +1,5 @@
 import numpy as np
-from __masspointscontainer import *
+from __containers import *
 
 # from arrayprc
 def distance(a, b):
