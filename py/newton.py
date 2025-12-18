@@ -1264,6 +1264,199 @@ def visualize_sampled_next_positions(
     return ax
 
 
+def visualize_long_term_evolution(
+    starting_point: Tuple[float, float],
+    P: sparse.csr_matrix,
+    grid: ProbabilityGrid,
+    num_iterations,
+    henon_a: float = A,
+    henon_b: float = B
+):
+    """
+    Visualize how probability distribution evolves over many iterations.
+    
+    This shows how an initially localized probability distribution (all mass
+    at one point) spreads out over the attractor region as iterations progress.
+    
+    Args:
+        starting_point: Initial (x, y) position
+        P: Transition matrix
+        grid: The probability grid
+        num_iterations: Total number of iterations to run
+        henon_a, henon_b: Hénon map parameters
+    """
+    
+    # Find the starting cell
+    x_curr, y_curr = starting_point
+    source_cell = grid.point_to_cell(x_curr, y_curr)
+    
+    if source_cell is None:
+        print(f"Error: Starting point {starting_point} is outside the grid!")
+        return
+    
+    # Initialize probability distribution: all mass at starting cell
+    n_cells = grid.nx_cells * grid.ny_cells
+    p_current = np.zeros(n_cells)
+    p_current[source_cell] = 1.0
+    
+    print(f"\nStarting evolution from ({x_curr:.3f}, {y_curr:.3f})")
+    print(f"Running {num_iterations} iterations...")
+    print(f"This computes: p^(n) = (P^T)^n * p^(0)\n")
+    
+    # Metrics tracking
+    entropies = [compute_entropy(p_current)]
+    num_occupied_cells = [np.sum(p_current > 1e-10)]
+    max_probabilities = [np.max(p_current)]
+    
+    # Iteratively apply the transition matrix
+    for iteration in range(1, num_iterations + 1):
+        # One step: p^(n+1) = P^T * p^(n)
+        p_current = P.T @ p_current
+        
+        # Renormalize to handle numerical drift (should stay close to 1.0)
+        p_sum = np.sum(p_current)
+        if p_sum > 0:
+            p_current = p_current / p_sum
+        
+        # Track metrics
+        entropies.append(compute_entropy(p_current))
+        num_occupied_cells.append(np.sum(p_current > 1e-10))
+        max_probabilities.append(np.max(p_current))
+        
+    
+    print("\nEvolution complete! Generating visualizations...\n")
+    
+    fig3, ax3 = plt.subplots(figsize=(12, 10))
+    
+    # Plot final probability distribution
+    prob_2d_final = p_current.reshape((grid.ny_cells, grid.nx_cells))
+    im3 = ax3.imshow(
+        prob_2d_final,
+        extent=[grid.x_min, grid.x_max, grid.y_min, grid.y_max],
+        origin='lower',
+        cmap='hot',
+        aspect='auto',
+        alpha=0.7,
+        interpolation='bilinear'
+    )
+    
+    # Sample points from final distribution to show where particles would be
+    sampled_points = sample_from_distribution(p_current, grid, n_samples=2000)
+    if len(sampled_points) > 0:
+        xs, ys = zip(*sampled_points)
+        ax3.scatter(xs, ys, s=1, c='cyan', alpha=0.4, label='Sampled positions')
+    
+    # Mark starting point
+    ax3.plot(x_curr, y_curr, 'wo', markersize=12, 
+             markeredgecolor='blue', markeredgewidth=2,
+             label='Starting point', zorder=10)
+    
+    plt.colorbar(im3, ax=ax3, label='Probability')
+    ax3.set_xlabel('x', fontsize=12)
+    ax3.set_ylabel('y', fontsize=12)
+    ax3.set_title(f'Final Distribution after {num_iterations} Iterations\n'
+                  f'Entropy: {entropies[-1]:.2f}, '
+                  f'Occupied cells: {int(num_occupied_cells[-1])}',
+                  fontsize=14, fontweight='bold')
+    ax3.legend(loc='upper right')
+    ax3.set_aspect('equal')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return entropies, num_occupied_cells, max_probabilities
+
+
+def compute_entropy(p: np.ndarray) -> float:
+    """
+    Compute Shannon entropy: H = -Σ p_i log(p_i)
+    
+    Entropy measures uncertainty or spread in the distribution:
+    - H = 0: all probability in one cell (complete certainty)
+    - H = log(N): uniform distribution over N cells (maximum uncertainty)
+    """
+    # Only include non-zero probabilities
+    p_nonzero = p[p > 1e-15]
+    if len(p_nonzero) == 0:
+        return 0.0
+    return -np.sum(p_nonzero * np.log(p_nonzero))
+
+
+def sample_from_distribution(
+    p: np.ndarray, 
+    grid: ProbabilityGrid, 
+    n_samples: int = 1000
+) -> List[Tuple[float, float]]:
+    """
+    Sample (x, y) points according to probability distribution p.
+    
+    This converts the discrete cell probabilities back into continuous
+    coordinates by:
+    1. Sampling cells according to their probabilities
+    2. Sampling uniformly within each chosen cell
+    """
+    # Find cells with non-zero probability
+    nonzero_cells = np.where(p > 1e-10)[0]
+    if len(nonzero_cells) == 0:
+        return []
+    
+    nonzero_probs = p[nonzero_cells]
+    nonzero_probs = nonzero_probs / np.sum(nonzero_probs)  # Normalize
+    
+    # Sample cells
+    sampled_cells = np.random.choice(
+        nonzero_cells,
+        size=n_samples,
+        p=nonzero_probs
+    )
+    
+    # Sample points within cells
+    points = []
+    for cell in sampled_cells:
+        x_min, x_max, y_min, y_max = grid.get_cell_bounds(cell)
+        x = np.random.uniform(x_min, x_max)
+        y = np.random.uniform(y_min, y_max)
+        points.append((x, y))
+    
+    return points
+
+
+def main_long_term_evolution_demo():
+    print("\n" + "="*70)
+    print("LONG-TERM PROBABILITY EVOLUTION VISUALIZATION")
+    print("="*70)
+    
+    print("\nStep 1: Creating probability grid...")
+    grid = ProbabilityGrid(
+        x_min=-1.5, x_max=1.5,
+        y_min=-0.5, y_max=0.5,
+        nx_cells=50,
+        ny_cells=50
+    )
+    print(f"Grid: {grid.nx_cells}×{grid.ny_cells} = {grid.nx_cells * grid.ny_cells} cells")
+    
+    print("\nStep 2: Computing transition matrix...")
+    P = compute_transition_matrix_sparse(
+        grid,
+        henon_a=A,
+        henon_b=B,
+        noise_radius=0.02,
+        samples_per_cell=5000
+    )
+    
+    starting_point = (0.6, -0.2) 
+    
+    print("\nStep 3: Computing probability evolution...")
+    results = visualize_long_term_evolution(
+        starting_point=starting_point,
+        P=P,
+        grid=grid,
+        num_iterations=1000,  
+        henon_a=A,
+        henon_b=B
+    )
+    
+
 
 def main_transition_matrix_demo():
     print("=== Transition Matrix Visualization Demo ===\n")
@@ -1285,7 +1478,7 @@ def main_transition_matrix_demo():
         henon_a=A,
         henon_b=B,
         noise_radius=0.02,
-        samples_per_cell=500  # Use 500 samples per cell for reasonable accuracy
+        samples_per_cell=500  
     )
     print("\nTransition matrix ready!\n")
     
@@ -1300,7 +1493,7 @@ def main_transition_matrix_demo():
         current_point=starting_point,
         P=P,
         grid=grid,
-        n_samples=1000,  # Sample 1000 possible next positions
+        n_samples=10000,  
         henon_a=A,
         henon_b=B,
         ax=ax
@@ -1312,4 +1505,4 @@ def main_transition_matrix_demo():
     plt.show()
 
 if __name__ == "__main__":
-    main_transition_matrix_demo()
+    main_long_term_evolution_demo()
