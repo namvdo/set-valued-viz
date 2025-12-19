@@ -1243,6 +1243,15 @@ impl Utils {
 }
 
 
+struct ShootingMethod {
+    fn shoot_boundary_points(
+        initial_boundary: Vec<(f64, f64)>,
+        target_density: usize,
+        n_iterations: usize
+    ) -> Vec<(f64, f64)>
+}
+
+
 
 #[wasm_bindgen(start)]
 pub fn main() {
