@@ -183,7 +183,7 @@ class MassPoints():
             seeked_targets = seeked_dist = None
             for target in prev_keys:
                 dist = self.distance(*target,*origin)
-                dist = int(dist)+_invert # must be an integer (higher chunks introduce error to distances); +1 if searching for fartest instead
+                dist = int(dist) # must be an integer (higher chunks introduce error to distances)
                 if seeked_targets is None:
                     seeked_targets = [target]
                     seeked_dist = dist
@@ -263,7 +263,7 @@ class MassPointsFloat(MassPoints):
             seeked_targets = seeked_dist = None
             for target in prev_keys:
                 dist = self.distance(*target,*origin)
-                dist = int(dist) # must be an integer (higher chunks introduce error to distances)
+                dist = int(dist)+_invert # must be an integer (higher chunks introduce error to distances); +1 if searching for fartest instead
                 if seeked_targets is None:
                     seeked_targets = [target]
                     seeked_dist = dist
@@ -279,4 +279,3 @@ class MassPointsFloat(MassPoints):
                     else: keys |= self.chunks[i][seeked_target]
             prev_keys = keys
         return keys
-

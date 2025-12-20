@@ -286,6 +286,36 @@ def hausdorff_distance4(points1, points2): # presumes that points are in order, 
     if dist1>dist2: return dist1, line1
     return dist2, line2
 
+
+def hausdorff_distance5(points1, points2): # NOT QUITE AS FAST AS 4, but indifferent to point order
+    distance_matrix = np.zeros((len(points1), len(points2)))
+    
+    index1 = index2 = 0
+    temp_dist = 0
+    for i,p1 in enumerate(points1): # go through first points and build the distance matrix
+        distance_matrix[i] = np.linalg.norm(p1-points2, axis=1)
+        j = np.argmin(distance_matrix[i])
+        if distance_matrix[i,j]>temp_dist:
+            temp_dist = distance_matrix[i,j]
+            index1 = i
+            index2 = j
+    
+    line1 = points1[index1], points2[index2]
+    
+    temp_dist = 0
+    for i,j in enumerate(np.argmin(distance_matrix, axis=0)): # go through the distance matrix columns
+        if distance_matrix[j,i]>temp_dist:
+            temp_dist = distance_matrix[j,i]
+            index1 = i
+            index2 = j
+    
+    line2 = points2[index1], points1[index2]
+    
+    dist1 = distance(*line1)
+    dist2 = distance(*line2)
+    if dist1>dist2: return dist1, line1
+    return dist2, line2
+
     
 
 def image_shape(resolution, max_x, max_y):
@@ -319,7 +349,7 @@ def pointify_pixels(pixels, topleft, bottomright, resolution):
     return points+topleft
 
 
-def circle_mask(r, inner=0, border=0):
+def circle_mask(r, inner=0):
     x = np.expand_dims(np.arange(-r, r+1), axis=1)
     y = np.expand_dims(np.arange(-r, r+1), axis=0)
     x *= x
@@ -328,7 +358,7 @@ def circle_mask(r, inner=0, border=0):
     mask = dist_from_center<=r
     if inner>0: mask *= dist_from_center>inner
     elif inner<0: mask *= dist_from_center>r+inner
-    return np.pad(mask, (border, border))
+    return mask
 
 def line_mask(start, end): # mask_line
     offset = np.subtract(end, start).astype(np.float64)
@@ -605,8 +635,8 @@ def small_triangles_from_points(points):
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    from _imports import ImageDrawing
     
+    from _imports import ImageDrawing
     points1 = np.random.random((50,2))
     points1[:len(points1)//2] += 1
     
@@ -629,19 +659,19 @@ if __name__ == "__main__":
     plt.imshow(image, extent=drawing.get_extent())
     plt.show()
     
-####    # test mask filling
-####    mask = circle_mask(20)
-####    mask *= np.random.random(mask.shape)>.5
-####    
-####    mask1 = mask.astype(np.uint8)+vertically_closed_areas(mask)/2
-####    mask2 = mask.astype(np.uint8)+horizontally_closed_areas(mask)/2
-####    mask3 = mask.astype(np.uint8)+find_closed_areas(mask)/2
-####    
-####    fig, ax = plt.subplots(1, 4, figsize=(12,5))
-####    ax[0].imshow(mask)
-####    ax[1].imshow(mask1)
-####    ax[2].imshow(mask2)
-####    ax[3].imshow(mask3)
-####    plt.show()
+##    # test mask filling
+##    mask = circle_mask(20)
+##    mask *= np.random.random(mask.shape)>.5
+##    
+##    mask1 = mask.astype(np.uint8)+vertically_closed_areas(mask)/2
+##    mask2 = mask.astype(np.uint8)+horizontally_closed_areas(mask)/2
+##    mask3 = mask.astype(np.uint8)+find_closed_areas(mask)/2
+##    
+##    fig, ax = plt.subplots(1, 4, figsize=(12,5))
+##    ax[0].imshow(mask)
+##    ax[1].imshow(mask1)
+##    ax[2].imshow(mask2)
+##    ax[3].imshow(mask3)
+##    plt.show()
     pass
 

@@ -183,7 +183,7 @@ class FloatVar(IntVar):
         if f is None:
             if self.can_disable: self.disabled = True
         else:
-            if set_precision: self.precision = float_precision2(f)
+            if set_precision: self.precision = float_precision2(float(f))
             return super().set(round(f*10**self.precision))
 
 
@@ -459,9 +459,9 @@ def nice_RGBA_selector(frame, color, on_update=None): # both RGBA and RGB work f
 
 
 
-def nice_left_label(root, text):
-    f = nice_frame(root, side=tk.TOP, anchor="ne")
-    nice_label(f, text=text, side=tk.LEFT)
+def nice_left_label(root, text, side=tk.TOP, fill=tk.BOTH):
+    f = nice_frame(root, side=side, anchor="ne", fill=fill)
+    nice_label(f, text=text, anchor="w", justify="left", side=tk.LEFT, fill=tk.BOTH)
     return f
 
 class IntegerField:
@@ -485,7 +485,10 @@ class IntegerField:
                     if low is not None: val = max(val, low)
                 self.set(val, False)
                 if self.on_update is not None: self.on_update()
-        if label_text is not None: root = nice_left_label(root, label_text)
+        if label_text is not None:
+            root = nice_left_label(root, label_text, side=kwargs.get("side", tk.TOP), fill=kwargs.get("fill", tk.BOTH))
+            kwargs["side"] = tk.RIGHT
+            kwargs["fill"] = tk.BOTH
         self.field = nice_field(root, update_handler=update_handler, **kwargs)
         self.init_var(val, low, high, mod, step, can_disable=can_disable)
         self.refresh()
@@ -512,6 +515,39 @@ class FloatField(IntegerField):
 
 
 
+class BooleanSwitch():
+    value = False
+    text = None
+    button = None
+    def __init__(self, root, value=False, text=None, on_update=None, label_text=None, **kwargs):
+        if label_text is not None:
+            root = nice_left_label(root, label_text, side=kwargs.get("side", tk.TOP), fill=kwargs.get("fill", tk.BOTH))
+            kwargs["side"] = tk.TOP
+            kwargs["fill"] = tk.BOTH
+        def on_press():
+            self.set(not self.get())
+            if on_update is not None: on_update()
+        kwargs["width"] = 4
+        if text is not None: kwargs["width"] += len(text)
+        self.button = nice_button(root, command=on_press, **kwargs)
+        self.value = value
+        self.text = text
+        self.update_visuals()
+
+    def update_visuals(self):
+        if self.value:
+            set_hover_colors(self.button, set_active_colors, set_active_colors_inverted)
+            self.button.configure(text=f"{self.text} - ON" if self.text else "ON")
+        else:
+            set_hover_colors(self.button, set_passive_colors_inverted, set_passive_colors)
+            self.button.configure(text=f"{self.text} - OFF" if self.text else "OFF")
+
+    def get(self): return self.value
+    
+    def set(self, value:bool):
+        if value!=self.value:
+            self.value = value
+            self.update_visuals()
 
 
 

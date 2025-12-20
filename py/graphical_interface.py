@@ -16,6 +16,7 @@ class ModelInstance():
     png_resolution = None # -> IntegerField
     min_x = max_x = None # -> FloatFields
     min_y = max_y = None # -> FloatFields
+    min_hausdorff = max_hausdorff = None # -> FloatFields
     colors = None # -> dict
     
     canvas = None
@@ -24,6 +25,7 @@ class ModelInstance():
     
     step = None # -> IntegerField
     step_data_label = None # -> label
+    auto_extend = None # -> BooleanSwitch
     
     def __init__(self, on_destroy, **kwargs):
         for k,v in kwargs.items():
@@ -59,9 +61,17 @@ class ModelInstance():
             if step>0: self.model_process(step)
             else: self.model_reset()
         b = nice_button(ff, text="Go to Step", command=_press)
-        
-        b = nice_button(f, text="Run Until Stable (WIP)", command=None)
-        b = nice_button(f, text="Find Periodic Points (WIP)", command=None)
+
+##        b = nice_button(f, text="Find Periodic Points (WIP)", command=None)
+        #
+
+        #
+        width = 8
+        ff = nice_titled_frame(frame, "hausdorff distance range", side=tk.TOP)
+        fff = nice_frame(ff, anchor="c", side=tk.TOP)
+        self.min_hausdorff = FloatField(fff, val=None, low=0, high=None, can_disable=True, width=width, side=tk.LEFT, justify="center")
+        nice_label(fff, text="<= dist <=", side=tk.LEFT)
+        self.max_hausdorff = FloatField(fff, val=None, low=0, high=None, can_disable=True, width=width, side=tk.LEFT, justify="center")
         #
         
         #
@@ -126,7 +136,7 @@ class ModelInstance():
 
                 if v is None: self.model.function.constants[k] = obj.get()
         
-        self.refresh_gui()
+        self.refresh_stepdata()
         
 
     def _figure_viewport_panel(self, root):
@@ -172,6 +182,8 @@ class ModelInstance():
         self.min_y = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, justify="center", width=width)
         nice_label(ffff, text="<= y <=", side=tk.LEFT)
         self.max_y = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, justify="center", width=width)
+
+        self.auto_extend = BooleanSwitch(fff, text="Auto Extend", side=tk.TOP)
         #
 
         #
@@ -214,16 +226,27 @@ class ModelInstance():
         if color[3]>0:
             line = self.model.hausdorff_line
             drawing.lines([line[0]], [line[1]], *color)
+            
         
         # extend limits
+        auto = self.auto_extend.get()
+        auto_rounding = 3
         min_x = self.min_x.get()
         max_x = self.max_x.get()
         min_y = self.min_y.get()
         max_y = self.max_y.get()
-        if min_x is not None: drawing.tl[0] = min(drawing.tl[0], min_x)
-        if max_x is not None: drawing.br[0] = max(drawing.br[0], max_x)
-        if min_y is not None: drawing.tl[1] = min(drawing.tl[1], min_y)
-        if max_y is not None: drawing.br[1] = max(drawing.br[1], max_y)
+        if min_x is not None:
+            drawing.tl[0] = min(drawing.tl[0], min_x)
+            if auto: self.min_x.set(round(drawing.tl[0], auto_rounding))
+        if max_x is not None:
+            drawing.br[0] = max(drawing.br[0], max_x)
+            if auto: self.max_x.set(round(drawing.br[0], auto_rounding))
+        if min_y is not None:
+            drawing.tl[1] = min(drawing.tl[1], min_y)
+            if auto: self.min_y.set(round(drawing.tl[1], auto_rounding))
+        if max_y is not None:
+            drawing.br[1] = max(drawing.br[1], max_y)
+            if auto: self.max_y.set(round(drawing.br[1], auto_rounding))
         
         color = np.divide(self.colors["grid"], 255)
         if color[3]>0: drawing.grid((0,0), self.model.epsilon, *color)
@@ -241,7 +264,7 @@ class ModelInstance():
         self.model_prev = None
         self.model.reset()
         self.step.set(1)
-        self.refresh_gui()
+        self.refresh_stepdata()
         self.refresh_figure()
 
     def model_checkpoint(self):
@@ -256,11 +279,20 @@ class ModelInstance():
     def model_process(self, target_step:int):
         self.model_checkpoint()
         for model_step in self.model.process(target_step-1): # model's steps are 1 less (starts from 0)
-            self.refresh_gui(model_step+1)
+            self.refresh_stepdata(model_step+1)
+
+            # check if hausdorff distance is out of range
+            target_step = model_step+1
+            min_hdr = self.min_hausdorff.get()
+            if min_hdr is not None and self.model.hausdorff_dist<min_hdr: break
+            max_hdr = self.max_hausdorff.get()
+            if max_hdr is not None and self.model.hausdorff_dist>max_hdr: break
+            #
+            
         self.refresh_figure()
         self.step.set(target_step+1) # to display next step in the field
     
-    def refresh_gui(self, step:int = 0):
+    def refresh_stepdata(self, step:int = 0):
         data = {}
         data["step"] = step
         data["hausdorff distance"] = readable_float(self.model.hausdorff_dist, 6)
