@@ -671,16 +671,6 @@ def points_in_gridlike_shape(topleft, bottomright, shape):
     return grid
 
 
-class Point2D:
-    x = y = 0
-    def __init__(self, x, y):
-        self.x, self.y = x, y
-    def copy(self): return type(self)(self.x, self.y)
-    def __str__(self):
-        return f"({self.x}, {self.y})"
-
-    def as_tuple(self): return self.x, self.y
-
 class PeriodicPointDetector():
     threshold = 0.1 # atleast this close to be considered the same point
     

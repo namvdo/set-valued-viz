@@ -549,20 +549,116 @@ def transpose_matrix(matrix):
             matrix[i][j] = matrix[j][i]
             matrix[j][i] = temp
 
-class MappingFunction2D:
-    def __init__(self, fx:str, fy:str):
-        self.fx = EquationObject(fx)
-        self.fy = EquationObject(fy)
-        self.constants = {}
+##class MappingFunction2D:
+##    def __init__(self, fx:str, fy:str):
+##        self.fx = EquationObject(fx)
+##        self.fy = EquationObject(fy)
+##        self.constants = {}
+##
+##    def set_constants(self, **values):
+##        self.constants.update(values)
+##        
+##    def required_constants(self): # return a set of keyword arguments __call__ requires
+##        need = self.fx.required_inputs()
+##        need |= self.fy.required_inputs()
+##        if "x" in need: need.remove("x")
+##        if "y" in need: need.remove("y")
+##        return need
+##
+##    def missing_constants(self):
+##        return self.required_constants()-set(self.constants.keys())
+##
+##    def trim_excess_constants(self):
+##        required = self.required_constants()
+##        for k in list(self.constants.keys()):
+##            if k not in required: del self.constants[k]
+##
+##    def copy(self):
+##        new = type(self)(self.fx.string, self.fy.string)
+##        new.constants = self.constants.copy()
+##        return new
+##    
+##    def __str__(self):
+##        x = self.fx.string
+##        y = self.fy.string
+##        for k,v in self.constants.items():
+##            v = str(v)
+##            x = x.replace(k, v)
+##            y = y.replace(k, v)
+##        missing = self.missing_constants()
+##        return f"({x}, {y})" + (str(" (has undefined constants)") if missing else "")
+##    
+##    def __call__(self, x, y, **inputs):
+##        return (self.fx.solve(x=x, y=y, **self.constants|inputs),
+##                self.fy.solve(x=x, y=y, **self.constants|inputs))
+##
+##    def jacobian(self):
+##        return [
+##            [self.fx.derivative("x"), self.fx.derivative("y")],
+##            [self.fy.derivative("x"), self.fy.derivative("y")],
+##            ]
+##
+##    def tij2D(self): # T(L)^-1
+##        matrix = self.jacobian()
+##        transpose_matrix(matrix)
+##        
+##        # determinant
+##        det = f"({matrix[0][0].string})*({matrix[1][1].string})-({matrix[0][1].string})*({matrix[1][0].string})"
+##        det = expand(shrink(det))
+##        if det=="0":
+##            print("non invertible matrix")
+##            return None
+##        
+##        # inverse
+##        matrix[0][0], matrix[1][1] = matrix[1][1], matrix[0][0]
+##        matrix[0][1].string = f"-({matrix[0][1].string})"
+##        matrix[1][0].string = f"-({matrix[1][0].string})"
+##        for i in range(2):
+##            for j in range(2):
+##                o = matrix[i][j]
+##                o.string = f"({o.string})/({det})" # divide with the determinant
+##        return matrix
 
+
+
+class MappingFunction: # N-dimensional version of MappingFunction2D
+    def __init__(self, **functions):
+        self.constants = {}
+        self.symbols = []
+        for symbol,function_string in functions.items():
+            self.add(symbol, function_string)
+    
+    def add(self, symbol, function_string):
+        if not hasattr(self, symbol):
+            f = EquationObject(function_string)
+            setattr(self, symbol, f)
+            self.symbols.append(symbol)
+            self.constants[symbol] = 0 # placeholder value
+
+    def remove(self, symbol):
+        if symbol in self.symbols:
+            delattr(self, symbol)
+            self.symbols.remove(symbol)
+
+    def get(self, index):
+        k = self.symbols[index]
+        return k, getattr(self, k)
+    
+    def __len__(self):
+        return len(self.symbols)
+
+    def __iter__(self):
+        for k in self.symbols:
+            yield k, getattr(self, k)
+        
     def set_constants(self, **values):
         self.constants.update(values)
         
     def required_constants(self): # return a set of keyword arguments __call__ requires
-        need = self.fx.required_inputs()
-        need |= self.fy.required_inputs()
-        if "x" in need: need.remove("x")
-        if "y" in need: need.remove("y")
+        need = set()
+        for k,f in self: need |= f.required_inputs()
+        for k in self.symbols:
+            if k in need: need.remove(k)
         return need
 
     def missing_constants(self):
@@ -574,32 +670,72 @@ class MappingFunction2D:
             if k not in required: del self.constants[k]
 
     def copy(self):
-        new = type(self)(self.fx.string, self.fy.string)
+        new = type(self)(**{k:f.string for k,f in self})
         new.constants = self.constants.copy()
         return new
-    
+
     def __str__(self):
-        x = self.fx.string
-        y = self.fy.string
+        strings_dict = {k:f.string for k,f in self}
+        
         for k,v in self.constants.items():
             v = str(v)
-            x = x.replace(k, v)
-            y = y.replace(k, v)
-        missing = self.missing_constants()
-        return f"({x}, {y})" + (str(" (has undefined constants)") if missing else "")
+            for kk,vv in strings_dict.items():
+                strings_dict[kk] = vv.replace(k, v)
+        string = "MappingFunction("
+        i = 0
+        for k,v in strings_dict.items():
+            if i!=0: string += ", "
+            string += f"{k} = {v}"
+            i += 1
+        if bool(self.missing_constants()):
+            string += ", undefined constants"
+        string += ")"
+        return string
+
+    def __call__(self, **inputs):
+        outputs = []
+        for k,f in self:
+            outputs.append(f.solve(**self.constants|inputs))
+        return outputs
     
-    def __call__(self, x, y, **inputs):
-        return (self.fx.solve(x=x, y=y, **self.constants|inputs),
-                self.fy.solve(x=x, y=y, **self.constants|inputs))
+    def jacobian(self): # full matrix
+        matrix = []
+        l = len(self)
+        for i in range(l):
+            k, f = self.get(i)
+            row = []
+            for j in range(l):
+                row.append(f.derivative(self.symbols[j]))
+            matrix.append(row)
+        return matrix
+    
+    def jacobian2D(self): # limit to first 2 dimensions
+        matrix = []
+        l = min(len(self), 2)
+        for i in range(l):
+            k, f = self.get(i)
+            row = []
+            for j in range(l):
+                row.append(f.derivative(self.symbols[j]))
+            matrix.append(row)
+        return matrix
+    
+    def jacobian3D(self): # limit to first 3 dimensions
+        matrix = []
+        l = min(len(self), 3)
+        for i in range(l):
+            k, f = self.get(i)
+            row = []
+            for j in range(l):
+                row.append(f.derivative(self.symbols[j]))
+            matrix.append(row)
+        return matrix
 
-    def jacobian(self):
-        return [
-            [self.fx.derivative("x"), self.fx.derivative("y")],
-            [self.fy.derivative("x"), self.fy.derivative("y")],
-            ]
-
-    def transposed_inverse_jacobian(self): # T(L)^-1
-        matrix = self.jacobian()
+    def tij2D(self): # transposed_inverse_jacobian
+        # T(L)^-1
+        l = len(self)
+        if l<2: return None
+        matrix = self.jacobian2D()
         transpose_matrix(matrix)
         
         # determinant
@@ -618,127 +754,55 @@ class MappingFunction2D:
                 o = matrix[i][j]
                 o.string = f"({o.string})/({det})" # divide with the determinant
         return matrix
-
-
-
-class MappingFunction: # N-dimensional version of MappingFunction2D
-    def __init__(self, **functions):
-        self.constants = {}
-        self.functions = []
-        self.symbols = []
-        for symbol,function_string in functions.items():
-            self.functions.append(EquationObject(function_string))
-            self.symbols.append(symbol)
-    
-    def __len__(self):
-        return len(self.functions)
         
-    def set_constants(self, **values):
-        self.constants.update(values)
-        
-    def required_constants(self): # return a set of keyword arguments __call__ requires
-        need = set()
-        for f in self.functions:
-            need |= f.required_inputs()
-        for k in self.symbols:
-            if k in need: need.remove(k)
-        return need
-
-    def missing_constants(self):
-        return self.required_constants()-set(self.constants.keys())
-
-    def trim_excess_constants(self):
-        required = self.required_constants()
-        for k in list(self.constants.keys()):
-            if k not in required: del self.constants[k]
-
-    def copy(self):
-        new = type(self)(**{self.symbols[i]:self.functions[i].string for i in range(len(self))})
-        new.constants = self.constants.copy()
-        return new
-
-    def __str__(self):
-        strings_dict = {self.symbols[i]:self.functions[i].string for i in range(len(self))}
-        
-        for k,v in self.constants.items():
-            v = str(v)
-            for kk,vv in strings_dict.items():
-                strings_dict[kk] = vv.replace(k, v)
-        string = "MappingFunction("
-        i = 0
-        for k,v in strings_dict.items():
-            if i!=0: string += ", "
-            string += f"{k} = {v}"
-            i += 1
-        if bool(self.missing_constants()):
-            string += ", undefined constants"
-        string += ")"
-        return string
-
-    def __call__(self, **inputs):
-        l = len(self)
-        outputs = [None]*l
-        for i in range(l):
-            outputs[i] = self.functions[i].solve(**self.constants|inputs)
-        return outputs
     
-    def jacobian(self):
-        matrix = []
-        l = len(self)
-        for i in range(l):
-            row = []
-            for j in range(l):
-                row.append(self.functions[i].derivative(self.symbols[j]))
-            matrix.append(row)
-        return matrix
-    
-    def transposed_inverse_jacobian(self):
+    def tij3D(self): # transposed_inverse_jacobian
         # T(L)^-1
-        # implemented only for 2 and 3 dimensions
         l = len(self)
-        if l<2 or l>3:
-            return None
-        
-        matrix = self.jacobian()
+        if l<3: return None
+        matrix = self.jacobian3D()
         transpose_matrix(matrix)
         
         # determinant
-        if l==2:
-            det = f"({matrix[0][0].string})*({matrix[1][1].string})-({matrix[0][1].string})*({matrix[1][0].string})"
-        elif l==3:
-            # (rule of sarrus == only works with 3x3 matrices)
-            det = ""
-            for i in range(l*2):
-                temp = ""
-                for j in range(l):
-                    if len(temp)!=0: temp += "*"
-                    if i>=l: j = -j
-                    temp += "("+matrix[(i+j)%l][j].string+")"
-                    
-                if i>=l: det += "-"
-                elif i>0: det += "+"
-                det += temp
+        #   using "rule of sarrus" -> only works with 3x3 matrices
+        det = ""
+        for i in range(l*2):
+            temp = ""
+            for j in range(l):
+                if len(temp)!=0: temp += "*"
+                if i>=l: j = -j
+                temp += "("+matrix[(i+j)%l][j].string+")"
+                
+            if i>=l: det += "-"
+            elif i>0: det += "+"
+            det += temp
         det = expand(shrink(det))
         if det=="0":
             print("non invertible matrix")
             return None
         
         # inverse using the determinant
-        if l==2:
-            matrix[0][0], matrix[1][1] = matrix[1][1], matrix[0][0]
-            matrix[0][1].string = f"-({matrix[0][1].string})"
-            matrix[1][0].string = f"-({matrix[1][0].string})"
-            
-        elif l==3:
-            # tranpose again
-            transpose_matrix(matrix)
-        
+        transpose_matrix(matrix)
         for i in range(l):
             for j in range(l):
                 o = matrix[i][j]
                 o.string = f"({o.string})/({det})" # divide with the determinant
-        
         return matrix
+
+
+def solve_matrix(matrix, **inputs):
+    output = []
+    l = len(matrix)
+    for i in range(l):
+        temp = []
+        for j in range(l):
+            result = np.asarray(matrix[i][j].solve(**inputs))
+            np.nan_to_num(result, copy=False)
+            temp.append(result)
+        output.append(temp)
+    return output
+
+
 
 if __name__ == "__main__":
     points = np.random.random((3,2))
@@ -748,8 +812,6 @@ if __name__ == "__main__":
     
     mf = MappingFunction(x=fx, y=fy, z="x*y")
     print(mf)
-    mf2 = MappingFunction2D(fx, fy)
-    print(mf2)
     
     print(points)
     outputs = mf(x=points[:,0], y=points[:,1], a=.1) # , z=points[:,2]
@@ -757,8 +819,8 @@ if __name__ == "__main__":
     points[:,0] = outputs[0]
     points[:,1] = outputs[1]
     
-    for row in mf.transposed_inverse_jacobian(): print(row)
-    for row in mf2.transposed_inverse_jacobian(): print(row)
+    for row in mf.tij2D(): print(row)
+    for k,f in mf: print(k, f)
     
 ##    input_values = {
 ##        "x": np.linspace(-1,1,11),

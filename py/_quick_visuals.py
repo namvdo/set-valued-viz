@@ -188,6 +188,6 @@ class ImageDrawing:
 
 if __name__ == "__main__":
     drawing = ImageDrawing(r=1, g=1, b=1)
-    drawing.points(np.random.random((100,2)))
+    drawing.points(np.random.random((100,3)))
     drawing.test_draw(200)
     

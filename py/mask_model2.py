@@ -4,7 +4,7 @@ from _quick_visuals import *
 BG_COLOR = np.array([1,1,1])
 OBJ_COLOR = np.array([0,0,0])
 
-class ModelConfiguration(ModelBase):
+class Model(ModelBase):
     timestep = None
     drawing_prev = None
     drawing = None
@@ -12,7 +12,7 @@ class ModelConfiguration(ModelBase):
     def _firststep(self):
         self.timestep = -1
         self.drawing = ImageDrawing(*BG_COLOR)
-        self.drawing.points([self.start_point.as_tuple()], *OBJ_COLOR)
+        self.drawing.points([self.start_point], *OBJ_COLOR)
         
     def get_boundary_pixels(self, resolution:int):
         if self.drawing is None: self._firststep()
@@ -59,7 +59,7 @@ class ModelConfiguration(ModelBase):
         #
         
         # process the points using the function
-        points[:,0], points[:,1] = self.function(points[:,0], points[:,1])
+        points[:,0], points[:,1] = self.function(x=points[:,0], y=points[:,1])
         
         # place epsilon circles on a new drawing
         self.drawing_prev = self.drawing
@@ -87,23 +87,23 @@ class ModelConfiguration(ModelBase):
 
 
 if __name__ == "__main__":
-    config = ModelConfiguration()
-    config.start_point.x = 0
-    config.start_point.y = 0
-    config.epsilon = 0.0625
-    config.function.set_constants(a=0.6, b=0.3)
+    model = Model()
+    model.start_point[0] = 0
+    model.start_point[1] = 0
+    model.epsilon = 0.0625
+    model.function.set_constants(a=0.6, b=0.3)
     
     resolution = 300
-##    for _ in range(10): config.process(resolution)
+##    for _ in range(10): model.process(resolution)
     while 1:
         for ax_target in plotting_grid(2, 2):
-            config.process(resolution)
-            image, tl, br = config.draw(resolution)
+            model.process(resolution)
+            image, tl, br = model.draw(resolution)
             
-            ax_target.set_title(f"step: {config.timestep}")
+            ax_target.set_title(f"step: {model.timestep}")
             ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
             
-            print(config.timestep, config.hausdorff_distance(resolution))
+            print(model.timestep, model.hausdorff_distance(resolution))
 
         plt.show()
 

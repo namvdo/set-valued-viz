@@ -31,6 +31,14 @@ def readable_float(value:float, rounding=6):
     rounded_value = round(value, rounding)
     return "~"*int(rounded_value!=value)+str(rounded_value)
 
+def readable_point(point):
+    string = "("
+    for i,v in enumerate(point):
+        if i!=0: string += ", "
+        string += str(v)
+    string += ")"
+    return string
+
 def color_as_hex(color):
     return "#"+"".join([hex(i%256)[2:].rjust(2, "0") for i in color[:3]])
 def opposite_color_as_hex(color):

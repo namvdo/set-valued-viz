@@ -32,7 +32,7 @@ def noise_geometry_multipliers(normals, polygon):
 ##    return indexes
 
 
-class ModelConfiguration(ModelBase):
+class Model(ModelBase):
     printing = True
     print_func = print
     
@@ -234,7 +234,7 @@ class ModelConfiguration(ModelBase):
         # create the initial points & normals
         radians = np.linspace(0, np.pi*2, self.point_density*10)[:-1]
         
-        self._points = np.repeat([self.start_point.as_tuple()], radians.size, axis=0).astype(np.float64)
+        self._points = np.repeat([self.start_point], radians.size, axis=0).astype(np.float64)
         self._prev_points = self._points.copy()
         
         self._normals = radians_to_vectors(radians)
@@ -247,7 +247,8 @@ class ModelConfiguration(ModelBase):
         #
 
         # map the points using the function
-        self._points[:,0], self._points[:,1] = self.function(self._points[:,0], self._points[:,1])
+        self._points[:,0], self._points[:,1] = self.function(x=self._points[:,0], y=self._points[:,1])
+        
         self._points += self._normals # add the normals to extend the shape outwards
         
         self._gap_detection_loops()
@@ -267,35 +268,28 @@ class ModelConfiguration(ModelBase):
         if points is self._points or self.tij is None:
             # define transposed inverse jacobian matrix to model memory
             # -> wont have to redefine it every precision increase call, only every full step processing
-            self.tij = self.function.transposed_inverse_jacobian()
+            self.tij = self.function.tij2D()
         
+        solve_inputs = self.function.constants
         for i in range(amount):
             prev_points[:] = points
             prev_normals[:] = normals
-
+            
             # solve transposed inverse jacobian matrix for current points
             #   |[a, b]|
             #   |[c, d]|
-            x = points[:,0]
-            y = points[:,1]
-            a = self.tij[0][0].solve(x=x, y=y, **self.function.constants)
-            b = self.tij[0][1].solve(x=x, y=y, **self.function.constants)
-            c = self.tij[1][0].solve(x=x, y=y, **self.function.constants)
-            d = self.tij[1][1].solve(x=x, y=y, **self.function.constants)
+            solve_inputs["x"] = points[:,0]
+            solve_inputs["y"] = points[:,1]
             
-            a = np.nan_to_num(a, nan=0, posinf=1, neginf=-1)
-            b = np.nan_to_num(b, nan=0, posinf=1, neginf=-1)
-            c = np.nan_to_num(c, nan=0, posinf=1, neginf=-1)
-            d = np.nan_to_num(d, nan=0, posinf=1, neginf=-1)
+            output = solve_matrix(self.tij, **solve_inputs)
             
             # calculate new normals by rotating prev_normals using the solved matrix
-            normals[:,0] = (prev_normals[:,0]*a+prev_normals[:,1]*b)
-            normals[:,1] = (prev_normals[:,0]*c+prev_normals[:,1]*d)
+            normals[:,0] = (prev_normals[:,0]*output[0][0]+prev_normals[:,1]*output[0][1])
+            normals[:,1] = (prev_normals[:,0]*output[1][0]+prev_normals[:,1]*output[1][1])
             
             # scale the normals to unit length
-            lengths = np.linalg.norm(normals, axis=1)
-            normals[:,0] /= lengths
-            normals[:,1] /= lengths
+            lengths = np.expand_dims(np.linalg.norm(normals, axis=1), axis=1)
+            normals /= lengths
             
             self.try_to_apply_noise_geometry(normals)
             
@@ -303,7 +297,8 @@ class ModelConfiguration(ModelBase):
             normals *= self.epsilon
             
             # do the function mapping and add the normals to the mapped points
-            points[:,0], points[:,1] = self.function(x, y)
+            points[:,0], points[:,1] = self.function(x=points[:,0], y=points[:,1])
+            
             points += normals
             
             if points is self._points: # every point is being processed
@@ -395,28 +390,28 @@ if __name__ == "__main__":
         drawing.draw_to_plot(plot, resolution)
         
     
-    model = ModelConfiguration()
-    model.start_point.x = 0
-    model.start_point.y = 0
+    model = Model()
+    model.start_point[0] = 0
+    model.start_point[1] = 0
     model.epsilon = 0.0625
     model.function.set_constants(a=0.6, b=0.3)
 
     print(model.function)
     
-##    model.function.fx.string = "x/2+(1-y)/3*x/4"
-##    model.function.fy.string = "y/3+x/3"  # 
+##    model.function.x.string = "x/2+(1-y)/3*x/4"
+##    model.function.y.string = "y/3+x/3"  # 
     
-##    model.function.fx.string = "x/3+cos(y)**2"
-##    model.function.fy.string = "y/2+sin(x)**2"
+##    model.function.x.string = "x/3+cos(y)**2"
+##    model.function.y.string = "y/2+sin(x)**2"
     
-##    model.function.fx.string = "x/2-y/3"
-##    model.function.fy.string = "y/2+x/5"
+##    model.function.x.string = "x/2-y/3"
+##    model.function.y.string = "y/2+x/5"
     
-##    model.function.fx.string = "x/2-y/3"
-##    model.function.fy.string = "y/2+x/3"
+##    model.function.x.string = "x/2-y/3"
+##    model.function.y.string = "y/2+x/3"
     
-##    model.function.fx.string = "x/2+1/(y**2+1)"
-##    model.function.fy.string = "y/(x**2+1)"
+##    model.function.x.string = "x/2+1/(y**2+1)"
+##    model.function.y.string = "y/(x**2+1)"
 
 ##    tij = model.function.transposed_inverse_jacobian()
 ##    print(tij[0][0])
@@ -426,7 +421,7 @@ if __name__ == "__main__":
 ##    print("")
     
     resolution = 2000
-    timestep = 15
+    timestep = 1
     while 1:
         for plot in plotting_grid(2, 2):
             for i in model.process(timestep): pass

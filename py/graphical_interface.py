@@ -2,7 +2,7 @@ from _imports import *
 from _gui_matplotlib import *
 from _quick_visuals import *
 
-from normals_model2 import ModelConfiguration as NormalsModel
+from normals_model2 import Model as NormalsModel
 
 SAVEDIR = os.path.join(WORKDIR, "saves")
 
@@ -74,9 +74,9 @@ class ModelInstance():
         #
         f = nice_titled_frame(frame, "model configuration", side=tk.TOP)
         ff = padded_frame(f, anchor="nw", side=tk.TOP)
-        text = f"fx = {self.model.function.fx}"
-        text += f"\nfy = {self.model.function.fy}"
-        text += f"\nstart = {self.model.start_point}"
+        text = f"fx = {self.model.function.x}"
+        text += f"\nfy = {self.model.function.y}"
+        text += f"\nstart = {readable_point(self.model.start_point)}"
         label = nice_label(ff, text=text, anchor="nw", justify="left")
 
 ##        def _update():
@@ -324,15 +324,15 @@ class InterfaceMain():
         ff = nice_titled_frame(leftside, "function", side=tk.TOP, fill=tk.NONE)
         def _update(identifier, string):
             getattr(self.model_base.function, identifier).string = string
-        field_fx = nice_labeled_field(ff, "fx", anchor="ne", update_handler=_update)
-        field_fy = nice_labeled_field(ff, "fy", anchor="ne", update_handler=_update)
-        field_fx.insert(0, self.model_base.function.fx.string)
-        field_fy.insert(0, self.model_base.function.fy.string)
+        
+        for k,f in self.model_base.function:
+            field = nice_labeled_field(ff, k, anchor="ne", update_handler=_update)
+            field.insert(0, f.string)
         
         ff = nice_titled_frame(leftside, "start point", side=tk.TOP, fill=tk.NONE, anchor="ne")
         
-        def on_update_x(): self.model_base.start_point.x = self.start_x.get()
-        def on_update_y(): self.model_base.start_point.y = self.start_y.get()
+        def on_update_x(): self.model_base.start_point[0] = self.start_x.get()
+        def on_update_y(): self.model_base.start_point[1] = self.start_y.get()
         self.start_x = FloatField(ff, val=0, low=None, high=None, on_update=on_update_x, label_text="x", width=width)
         self.start_y = FloatField(ff, val=0, low=None, high=None, on_update=on_update_y, label_text="y", width=width)
         #

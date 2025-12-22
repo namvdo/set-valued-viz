@@ -6,14 +6,14 @@ from __points_and_masks import *
 
 WORKDIR, FILENAME = os.path.abspath(sys.argv[0]).rsplit(os.path.sep, 1)
 
-class ModelBase():
+class ModelBase(): # 2D
     epsilon = 0.01
     start_point = None
     function = None
     
     def __init__(self):
-        self.start_point = Point2D(0,0)
-        self.function = MappingFunction2D("1-a*x*x+y", "b*x")
+        self.start_point = [0,0]
+        self.function = MappingFunction(x="1-a*x*x+y", y="b*x")
         self.function.set_constants(a=1.4, b=0.3)
 
     def copyattr(self, target, attr):
@@ -31,3 +31,9 @@ class ModelBase():
         new.function = self.function.copy()
         return new
 
+
+class ModelBase3D(ModelBase):
+    def __init__(self):
+        self.start_point = [0,0,0]
+        self.function = MappingFunction(x="1-a*x*x+y", y="b*x", z="z")
+        self.function.set_constants(a=1.4, b=0.3)
