@@ -1,5 +1,5 @@
 from _imports import *
-
+from _quick_visuals import *
 
 BG_COLOR = np.array([1,1,1])
 OBJ_COLOR = np.array([0,0,0])
@@ -95,12 +95,17 @@ if __name__ == "__main__":
     
     resolution = 300
 ##    for _ in range(10): config.process(resolution)
-    for ax_target in test_plotting_grid(2, 2, timestep):
-        config.process(resolution)
-        image, tl, br = config.draw(resolution)
-        ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
-        print(config.timestep, config.hausdorff_distance(resolution))
+    while 1:
+        for ax_target in plotting_grid(2, 2):
+            config.process(resolution)
+            image, tl, br = config.draw(resolution)
+            
+            ax_target.set_title(f"step: {config.timestep}")
+            ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
+            
+            print(config.timestep, config.hausdorff_distance(resolution))
 
+        plt.show()
 
 
 

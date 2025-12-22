@@ -358,14 +358,18 @@ if __name__ == "__main__":
     
     resolution = 500
     timestep = 0
-    for ax_target in test_plotting_grid(2, 2, timestep):
-        config.process(timestep)
-        image,tl,br = config.draw(resolution)
+    while 1:
         
-        ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
-        
-        timestep += 1
+        for ax_target in plotting_grid(2, 2):
+            config.process(timestep)
+            image,tl,br = config.draw(resolution)
+            
+            ax_target.set_title(f"step: {timestep}")
+            ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
+            
+            timestep += 1
 
+        plt.show()
 
 
 

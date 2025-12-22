@@ -1,11 +1,10 @@
 from _imports import *
-from __gui import *
+from _gui_matplotlib import *
+from _quick_visuals import *
 
 from normals_model2 import ModelConfiguration as NormalsModel
-##from mask_model2 import ModelConfiguration as MaskModel
 
 SAVEDIR = os.path.join(WORKDIR, "saves")
-
 
 class ModelInstance():
     key = None
@@ -18,10 +17,8 @@ class ModelInstance():
     min_y = max_y = None # -> FloatFields
     min_hausdorff = max_hausdorff = None # -> FloatFields
     colors = None # -> dict
-    
-    canvas = None
-    fig = None
-    subplot = None
+
+    viewport = None # -> Viewport
     
     step = None # -> IntegerField
     step_data_label = None # -> label
@@ -36,32 +33,27 @@ class ModelInstance():
 ##        top = nice_frame(win, side=tk.TOP, fill=tk.BOTH)
 ##        nice_label(top, text="asd", anchor="w")
         mid = nice_frame(win, side=tk.TOP)
-        self._model_control_panel(mid)
-        self._figure_viewport_panel(mid)
-        self._figure_drawing_panel(mid)
+        self._init_model_control_panel(mid)
+        self._init_viewport_panel(mid)
+        self._init_viewport_settings_panel(mid)
 ##        bot = nice_frame(win, side=tk.TOP, fill=tk.BOTH)
         
 
-    def _model_control_panel(self, root):
+    def _init_model_control_panel(self, root):
         frame = nice_frame(root, anchor="nw")
         
         # buttons
         f = padded_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        
         b = nice_button(f, text="Recalc Step", command=self.model_recalculate)
-        
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        
         self.step = IntegerField(ff, val=1, low=0, high=None, side=tk.RIGHT, width=6, justify="center")
-        
         b = nice_button(ff, text="Reset", side=tk.LEFT, width=6, command=self.model_reset)
-        
         def _press():
             step = self.step.get()
             if step>0: self.model_process(step)
             else: self.model_reset()
         b = nice_button(ff, text="Go to Step", command=_press)
-
+        
 ##        b = nice_button(f, text="Find Periodic Points (WIP)", command=None)
         #
 
@@ -139,27 +131,23 @@ class ModelInstance():
         self.refresh_stepdata()
         
 
-    def _figure_viewport_panel(self, root):
+    def _init_viewport_panel(self, root):
         f = nice_frame(root, anchor="nw")
-        ff = nice_titled_frame(f, "figure")
-        def _mouse_handler(event):
-##            print(event)
-            pass
-        self.canvas, self.fig, self.subplot = create_figure(ff, _mouse_handler, 512, 512)
+        ff = nice_titled_frame(f, "viewport")
+        self.viewport = Viewport(ff)
         
-        
-    def _figure_drawing_panel(self, root):
+    def _init_viewport_settings_panel(self, root):
         frame = nice_frame(root, anchor="nw")
         
         # buttons
         f = padded_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        b = nice_button(ff, text="Refresh", command=self.refresh_figure) # Matplotlib Figure
+        b = nice_button(ff, text="Refresh", command=self.refresh_viewport) # Matplotlib Figure
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
         b = nice_button(ff, text="Save PNG", command=self.save_png)
         #
 
-        f = nice_titled_frame(frame, "figure settings")
+        f = nice_titled_frame(frame, "viewport settings")
         ff = nice_frame(f, side=tk.TOP, fill=tk.BOTH)
         
         #
@@ -226,7 +214,6 @@ class ModelInstance():
         if color[3]>0:
             line = self.model.hausdorff_line
             drawing.lines([line[0]], [line[1]], *color)
-            
         
         # extend limits
         auto = self.auto_extend.get()
@@ -259,13 +246,13 @@ class ModelInstance():
         makedirs(path)
         image, _, _ = self.draw(self.png_resolution.get())
         PIL_image_from_array(image).save(path, optimize=True)
-
+    
     def model_reset(self):
         self.model_prev = None
         self.model.reset()
         self.step.set(1)
         self.refresh_stepdata()
-        self.refresh_figure()
+        self.refresh_viewport()
 
     def model_checkpoint(self):
         self.model_prev = self.model.copy()
@@ -289,7 +276,7 @@ class ModelInstance():
             if max_hdr is not None and self.model.hausdorff_dist>max_hdr: break
             #
             
-        self.refresh_figure()
+        self.refresh_viewport()
         self.step.set(target_step+1) # to display next step in the field
     
     def refresh_stepdata(self, step:int = 0):
@@ -304,17 +291,16 @@ class ModelInstance():
         
         self.step_data_label.configure(text=text)
         
-    def refresh_figure(self):
-        self.subplot.clear()
+    def refresh_viewport(self):
         if self.model.has_points():
             image, tl, br = self.draw(self.fig_resolution.get())
-            self.subplot.imshow(image, extent=(tl[0], br[0], tl[1], br[1]))
             title = f"{len(self.model)} points"
             title += f"\nimage: {image.shape[:2]}"
-            self.subplot.set_title(title)
-        self.canvas.draw()
+            self.viewport.update(image, tl, br, title=title)
+        else:
+            self.viewport.clear()
 
-class Interface():
+class InterfaceMain():
     instances_created = 0
     
     def __init__(self):
@@ -386,4 +372,5 @@ class Interface():
         self.window.mainloop()
 
 
-Interface().start()
+if __name__ == "__main__":
+    InterfaceMain().start()

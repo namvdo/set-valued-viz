@@ -81,6 +81,20 @@ def getsize_folder(path):
     for i in list_files_recur(path):
         size += os.path.getsize(i)
     return size
+
+def delete_file(path):
+    if os.path.isfile(path):
+        os.remove(path)
+        return True
+    return False
+
+def delete_folder(path):
+    if os.path.isdir(path):
+        for x in list_files(path): delete_file(x)
+        for x in list_folders(path): delete_folder(x)
+        os.rmdir(path)
+        return True
+    return False
 #
 
 

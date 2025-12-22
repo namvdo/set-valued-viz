@@ -60,6 +60,8 @@ def apply_noise_geometry(normals, polygon):
 
 
 if __name__ == "__main__":
+    from _quick_visuals import *
+    
     resolution = 500
     radians = np.linspace(0, np.pi*2, resolution)[:-1]
     normals = radians_to_vectors(radians)

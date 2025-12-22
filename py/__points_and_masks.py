@@ -318,7 +318,7 @@ def hausdorff_distance5(points1, points2): # NOT QUITE AS FAST AS 4, but indiffe
 
     
 
-def image_shape(resolution, max_x, max_y):
+def image_shape(resolution, max_x, max_y, *args):
     # resolution -> length of the longest side
     aspect = max_x/max_y if max_y!=0 else 1
     width = int(resolution*min(aspect, 1))
@@ -407,6 +407,7 @@ def polygon_mask(points, resolution:int, fill=False):
     if fill: image |= horizontally_closed_areas(image)
     return image
 
+
 def center_rotate_points(points, rotation):
     topleft, bottomright = bounding_box(points)
     center = (bottomright+topleft)/2
@@ -415,12 +416,6 @@ def center_rotate_points(points, rotation):
     offsets[:,0] = temp*np.cos(rotation)-offsets[:,1]*np.sin(rotation)
     offsets[:,1] = temp*np.sin(rotation)+offsets[:,1]*np.cos(rotation)
     return center+offsets
-
-def rotated_vectors(vectors, rotation):
-    rotated = vectors.copy()
-    rotated[:,0] = vectors[:,0]*np.cos(rotation)-vectors[:,1]*np.sin(rotation)
-    rotated[:,1] = vectors[:,0]*np.sin(rotation)+vectors[:,1]*np.cos(rotation)
-    return rotated
 
 def image_color_mask(image, color):
     return (image[:,:,0]==color[0])*(image[:,:,1]==color[1])*(image[:,:,2]==color[2])
@@ -632,32 +627,148 @@ def small_triangles_from_points(points):
         
 
 
+def rotate_vectors(vectors, z=0):
+    rotated = np.zeros((len(vectors), 2))
+    cos_z = np.cos(z)
+    sin_z = np.sin(z)
+    rotated[:,0] = vectors[:,0]*cos_z-vectors[:,1]*sin_z
+    rotated[:,1] = vectors[:,0]*sin_z+vectors[:,1]*cos_z
+    return rotated
+
+def rotate_vectors_3d(vectors, x=0, y=0, z=0):
+    rotated = np.ones((len(vectors), 3))
+    vx = vectors[:,0]
+    vy = vectors[:,1]
+    vz = vectors[:,2]
+    
+    cos_x = np.cos(x)
+    sin_x = np.sin(x)
+    
+    cos_y = np.cos(y)
+    sin_y = np.sin(y)
+    
+    cos_z = np.cos(z)
+    sin_z = np.sin(z)
+    
+    rotated[:,0] = vx*cos_y*cos_z + vy*(sin_x*sin_y*cos_z-cos_x*sin_z) + vz*(cos_x*sin_y*cos_z + sin_x*sin_z)
+    rotated[:,1] = vx*cos_y*sin_z + vy*(sin_x*sin_y*sin_z + cos_x*cos_z) + vz*(cos_x*sin_y*sin_z - sin_x*cos_z)
+    rotated[:,2] = -vx*sin_y + vy*sin_x*cos_y + vz*cos_x*cos_y
+    return rotated
+
+
+
+
+
+def points_in_gridlike_shape(topleft, bottomright, shape):
+    grid = np.zeros((*shape, 2))
+    x = np.linspace(topleft[0], bottomright[0], int(shape[0]+1))[:-1]
+    y = np.linspace(topleft[1], bottomright[1], int(shape[1]+1))[:-1]
+    x += (x[1]-x[0])/2
+    y += (y[1]-y[0])/2
+    y, x = np.meshgrid(y, x)
+    grid[:,:,0] = x
+    grid[:,:,1] = y
+    return grid
+
+
+class Point2D:
+    x = y = 0
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+    def copy(self): return type(self)(self.x, self.y)
+    def __str__(self):
+        return f"({self.x}, {self.y})"
+
+    def as_tuple(self): return self.x, self.y
+
+class PeriodicPointDetector():
+    threshold = 0.1 # atleast this close to be considered the same point
+    
+    _index = 0
+    _last_period = None
+    _instability = 0
+    
+    def __init__(self, size):
+        self.size = size
+        self.buffer = np.zeros((size,2))
+
+    def __len__(self): return self.size
+
+    def reset(self):
+        self._index = 0
+        self.buffer = np.zeros((self.size,2))
+        self._last_period = None
+        self._instability = 0
+
+    def resize(self, size):
+        self.size = size
+        if size<len(self.buffer): # new size is smaller -> reset
+            self.reset()
+        else: # new buffer is bigger -> expand buffer
+            newbuffer = np.zeros((self.size,2))
+            newbuffer[:len(self.buffer)] = self.buffer
+            self.buffer = newbuffer
+    
+    def _check_period(self, point):
+        for i in range(-1, -self.size, -1):
+            dist = np.linalg.norm(point-self.buffer[(i+self._index)%self.size])
+            if dist<=self.threshold: # consider as the same point
+                return -i # period distance
+
+    def is_stable(self): # has been current period for atleast period amount of steps
+        return self._last_period is not None and self._instability==0
+        
+    def log(self, point):
+        period = self._check_period(point)
+        
+        if period is not None:
+            if period == self._last_period:
+                if self._instability>0: self._instability -= 1
+            else: self._instability = period # reset instability
+        self._last_period = period
+        
+        self.buffer[self._index] = point
+        self._index += 1
+        if self._index==self.size: self._index %= self.size
+        return period
+
+
+
+
+
+
+
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     
-    from _imports import ImageDrawing
-    points1 = np.random.random((50,2))
-    points1[:len(points1)//2] += 1
+    points = np.random.random((10,3))
+    points[:len(points)//2] += 1
     
-    drawing = ImageDrawing(*np.ones(3))
-##    drawing.lines(*point_lines(points1), r=1)
-    drawing.circles(points1, 0.005)
+##    points2 = points.copy()
+##    sort_points_to_polygon(points2)
     
-    points2 = points1.copy()
-    sort_points_to_polygon(points2)
-    drawing.lines(*point_lines(points2), g=1, a=0.5)
-    
-    points3 = points1.copy()
-    
+##    points3 = points.copy()
 ##    sort_points_to_polygon3(points3)
     
-    for triangle in small_triangles_from_points(points3):
-        drawing.lines(*point_lines(triangle), r=1, b=1)
+    plt.plot(points[:,0], points[:,1], color="#F0F")
+    center = np.mean(points, axis=0)
+
+    x = np.pi/4
+    y = 0#np.pi/4
+    z = 0#np.pi/4
+    points1 = rotate_vectors_3d(points-center, x, y, z)[:,:2]
+    points1 += center[:2]
+##    points1[:,1] += 1
+    plt.plot(points1[:,0], points1[:,1], color="#F00")
+        
+    points1 = rotate_vectors_3d(points-center, x*2, y*2, z*2)[:,:2]
+    points1 += center[:2]
+##    points1[:,1] -= 1
+    plt.plot(points1[:,0], points1[:,1], color="#00F") # *point_lines(points1)
     
-    image = drawing.draw(1000)
-    plt.imshow(image, extent=drawing.get_extent())
     plt.show()
+
     
 ##    # test mask filling
 ##    mask = circle_mask(20)

@@ -196,15 +196,19 @@ if __name__ == "__main__":
     
     timestep = 0
     for _ in range(timestep): config.nextstep()
-    for ax_target in test_plotting_grid(2, 2, timestep):
-        config.nextstep()
-        image, tl, br = config.image, config.topleft, config.bottomright
 
-        image = np.flip(image.swapaxes(0,1), axis=0)
-        ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
-        print(config.hausdorff_distance)
+    while 1:
+        
+        for ax_target in plotting_grid(2, 2):
+            config.nextstep()
+            image, tl, br = config.image, config.topleft, config.bottomright
+            
+            image = np.flip(image.swapaxes(0,1), axis=0)
+            ax_target.set_title(f"step: {config.timestep}")
+            ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
+            print(config.hausdorff_distance)
 
-
+        plt.show()
 
 
 

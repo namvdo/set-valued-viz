@@ -1,14 +1,9 @@
 import os, re
+import numpy as np
 import tkinter as tk
 from tkinter import messagebox, filedialog
-import numpy as np
 
 from PIL.Image import fromarray as PIL_image_from_array
-
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
-import matplotlib
-matplotlib.use("TkAgg")
 
 from __equation import RE_NUMBER
 
@@ -260,14 +255,6 @@ def float_selector(obj, start=0., low=None, high=None, mod=None, step=1, on_upda
 
 
 
-
-def create_figure(frame, mouse_handler, width, height):
-    figure = Figure(figsize=(width / 100, height / 100), dpi=100)
-    canvas = FigureCanvasTkAgg(figure, master=frame)
-    canvas.get_tk_widget().pack(side=tk.TOP)
-    canvas.mpl_connect("button_press_event", mouse_handler)
-    subplot = figure.add_subplot()
-    return canvas, figure, subplot
 
 def open_msg_window(title, message, error=False):
     if error: messagebox.showerror(title, message)
@@ -550,6 +537,11 @@ class BooleanSwitch():
             self.update_visuals()
 
 
+class ViewportTemplate:
+    def clear(self):
+        pass
+    def update(self, *args, **kwargs):
+        pass
 
 
 

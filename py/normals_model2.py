@@ -9,7 +9,7 @@ def noise_geometry_multipliers(normals, polygon):
         line_dist = 2
         prev_vertex = polygon[-1]
         for vertex in polygon:
-            if (dist:=np.linalg.norm((vertex*2+prev_vertex)/2-normal))<line_dist:
+            if (dist:=np.linalg.norm((vertex*2+prev_vertex)/3-normal))<line_dist:
                 intersection = find_intersection([prev_vertex, vertex], [origin, normal])
                 if intersection is not None and (dist2:=np.linalg.norm(intersection))<1:
                     result_dist = dist2
@@ -353,93 +353,88 @@ class ModelConfiguration(ModelBase):
     def get_prev_inner_normals(self, length=1):
         return self._prev_points, self._prev_points-self._prev_normals*length
     
-    def draw(self, resolution:int): # for testing
-        if self.printing: self.print_func(f"\ndrawing: {self._timestep}")
-        
+
+
+if __name__ == "__main__":
+    from _quick_visuals import *
+    
+    def test_draw(plot, model, resolution:int):
         #
         draw_prev_points = 1
         draw_prev_normals = 0
         draw_boundary_lines = 1
         draw_outer_normals = 0
         draw_inner_normals = 1
-        
         #
         
         drawing = ImageDrawing(r=1, g=1, b=1)
-
+        
 ##        drawing.circles([(0,0)], 1, *red)
         drawing.grid((0,0), .25, b=1, a=0.2)
         
         if draw_boundary_lines:
-            drawing.lines(*self.get_boundary_lines(), g=1)
+            drawing.lines(*model.get_boundary_lines(), g=1)
         
         if draw_inner_normals:
-            drawing.lines(*self.get_inner_normals())
+            drawing.lines(*model.get_inner_normals())
         if draw_outer_normals:
-            drawing.lines(*self.get_outer_normals())
+            drawing.lines(*model.get_outer_normals())
         
         if draw_prev_points:
-            drawing.points(self._prev_points, b=1)
+            drawing.points(model._prev_points, b=1)
             if draw_prev_normals:
-                drawing.lines(*self.get_prev_inner_normals())
+                drawing.lines(*model.get_prev_inner_normals())
         
-        drawing.points(self._points, r=1)
+        drawing.points(model._points, r=1)
 
-        line = self.hausdorff_line
+        line = model.hausdorff_line
         drawing.lines([line[0]], [line[1]], r=1, g=.5)
         
-##        drawing.circles(self._points[:1], self.epsilon/10, inside=self.epsilon/11, r=1)
+##        drawing.circles(model._points[:1], model.epsilon/10, inside=model.epsilon/11, r=1)
         
-        image = drawing.draw(resolution)
-        return image, drawing.tl, drawing.br
-
-####    @function_timer
-##    def hausdorff_distance(self):
-##        return hausdorff_distance4(self._points, self._prev_points)
-
-
-
-if __name__ == "__main__":
-    config = ModelConfiguration()
-    config.start_point.x = 0
-    config.start_point.y = 0
-    config.epsilon = 0.0625
-    config.function.set_constants(a=0.6, b=0.3)
-
-    print(config.function)
+        drawing.draw_to_plot(plot, resolution)
+        
     
-##    config.function.fx.string = "x/2+(1-y)/3*x/4"
-##    config.function.fy.string = "y/3+x/3"  # 
-    
-##    config.function.fx.string = "x/3+cos(y)**2"
-##    config.function.fy.string = "y/2+sin(x)**2"
-    
-##    config.function.fx.string = "x/2-y/3"
-##    config.function.fy.string = "y/2+x/5"
-    
-##    config.function.fx.string = "x/2-y/3"
-##    config.function.fy.string = "y/2+x/3"
-    
-##    config.function.fx.string = "x/2+1/(y**2+1)"
-##    config.function.fy.string = "y/(x**2+1)"
+    model = ModelConfiguration()
+    model.start_point.x = 0
+    model.start_point.y = 0
+    model.epsilon = 0.0625
+    model.function.set_constants(a=0.6, b=0.3)
 
-    tij = config.function.transposed_inverse_jacobian()
-    print(tij[0][0])
-    print(tij[0][1])
-    print(tij[1][0])
-    print(tij[1][1])
-    print("")
+    print(model.function)
+    
+##    model.function.fx.string = "x/2+(1-y)/3*x/4"
+##    model.function.fy.string = "y/3+x/3"  # 
+    
+##    model.function.fx.string = "x/3+cos(y)**2"
+##    model.function.fy.string = "y/2+sin(x)**2"
+    
+##    model.function.fx.string = "x/2-y/3"
+##    model.function.fy.string = "y/2+x/5"
+    
+##    model.function.fx.string = "x/2-y/3"
+##    model.function.fy.string = "y/2+x/3"
+    
+##    model.function.fx.string = "x/2+1/(y**2+1)"
+##    model.function.fy.string = "y/(x**2+1)"
 
+##    tij = model.function.transposed_inverse_jacobian()
+##    print(tij[0][0])
+##    print(tij[0][1])
+##    print(tij[1][0])
+##    print(tij[1][1])
+##    print("")
     
     resolution = 2000
     timestep = 15
-    for ax_target in test_plotting_grid(1, 1, timestep):
-        for i in config.process(timestep): pass
-        image,tl,br = config.draw(resolution)
-        
-        ax_target.imshow(image, extent=(tl[0],br[0],tl[1],br[1]))
-        timestep += 1
-
+    while 1:
+        for plot in plotting_grid(2, 2):
+            for i in model.process(timestep): pass
+            test_draw(plot, model, resolution)
+            plot.set_title(f"step: {timestep}")
+            timestep += 1
+        plt.show()
+    
 
 
 

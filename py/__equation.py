@@ -541,6 +541,14 @@ class EquationObject():
 
 
 
+def transpose_matrix(matrix):
+    l = len(matrix)
+    for i in range(0, l):
+        for j in range(i+1, l):
+            temp = matrix[i][j]
+            matrix[i][j] = matrix[j][i]
+            matrix[j][i] = temp
+
 class MappingFunction2D:
     def __init__(self, fx:str, fy:str):
         self.fx = EquationObject(fx)
@@ -591,83 +599,217 @@ class MappingFunction2D:
             ]
 
     def transposed_inverse_jacobian(self): # T(L)^-1
-        jacobian = self.jacobian()
-        # transpose
-        jacobian[1][0], jacobian[0][1] = jacobian[0][1], jacobian[1][0]
+        matrix = self.jacobian()
+        transpose_matrix(matrix)
         
         # determinant
-        det = f"({jacobian[0][0].string})*({jacobian[1][1].string})-({jacobian[0][1].string})*({jacobian[1][0].string})"
+        det = f"({matrix[0][0].string})*({matrix[1][1].string})-({matrix[0][1].string})*({matrix[1][0].string})"
         det = expand(shrink(det))
         if det=="0":
             print("non invertible matrix")
             return None
         
         # inverse
-        jacobian[0][0], jacobian[1][1] = jacobian[1][1], jacobian[0][0]
-        jacobian[0][1].string = f"-({jacobian[0][1].string})"
-        jacobian[1][0].string = f"-({jacobian[1][0].string})"
+        matrix[0][0], matrix[1][1] = matrix[1][1], matrix[0][0]
+        matrix[0][1].string = f"-({matrix[0][1].string})"
+        matrix[1][0].string = f"-({matrix[1][0].string})"
         for i in range(2):
             for j in range(2):
-                o = jacobian[i][j]
+                o = matrix[i][j]
                 o.string = f"({o.string})/({det})" # divide with the determinant
-        return jacobian
+        return matrix
 
 
 
+class MappingFunction: # N-dimensional version of MappingFunction2D
+    def __init__(self, **functions):
+        self.constants = {}
+        self.functions = []
+        self.symbols = []
+        for symbol,function_string in functions.items():
+            self.functions.append(EquationObject(function_string))
+            self.symbols.append(symbol)
+    
+    def __len__(self):
+        return len(self.functions)
+        
+    def set_constants(self, **values):
+        self.constants.update(values)
+        
+    def required_constants(self): # return a set of keyword arguments __call__ requires
+        need = set()
+        for f in self.functions:
+            need |= f.required_inputs()
+        for k in self.symbols:
+            if k in need: need.remove(k)
+        return need
 
+    def missing_constants(self):
+        return self.required_constants()-set(self.constants.keys())
 
+    def trim_excess_constants(self):
+        required = self.required_constants()
+        for k in list(self.constants.keys()):
+            if k not in required: del self.constants[k]
+
+    def copy(self):
+        new = type(self)(**{self.symbols[i]:self.functions[i].string for i in range(len(self))})
+        new.constants = self.constants.copy()
+        return new
+
+    def __str__(self):
+        strings_dict = {self.symbols[i]:self.functions[i].string for i in range(len(self))}
+        
+        for k,v in self.constants.items():
+            v = str(v)
+            for kk,vv in strings_dict.items():
+                strings_dict[kk] = vv.replace(k, v)
+        string = "MappingFunction("
+        i = 0
+        for k,v in strings_dict.items():
+            if i!=0: string += ", "
+            string += f"{k} = {v}"
+            i += 1
+        if bool(self.missing_constants()):
+            string += ", undefined constants"
+        string += ")"
+        return string
+
+    def __call__(self, **inputs):
+        l = len(self)
+        outputs = [None]*l
+        for i in range(l):
+            outputs[i] = self.functions[i].solve(**self.constants|inputs)
+        return outputs
+    
+    def jacobian(self):
+        matrix = []
+        l = len(self)
+        for i in range(l):
+            row = []
+            for j in range(l):
+                row.append(self.functions[i].derivative(self.symbols[j]))
+            matrix.append(row)
+        return matrix
+    
+    def transposed_inverse_jacobian(self):
+        # T(L)^-1
+        # implemented only for 2 and 3 dimensions
+        l = len(self)
+        if l<2 or l>3:
+            return None
+        
+        matrix = self.jacobian()
+        transpose_matrix(matrix)
+        
+        # determinant
+        if l==2:
+            det = f"({matrix[0][0].string})*({matrix[1][1].string})-({matrix[0][1].string})*({matrix[1][0].string})"
+        elif l==3:
+            # (rule of sarrus == only works with 3x3 matrices)
+            det = ""
+            for i in range(l*2):
+                temp = ""
+                for j in range(l):
+                    if len(temp)!=0: temp += "*"
+                    if i>=l: j = -j
+                    temp += "("+matrix[(i+j)%l][j].string+")"
+                    
+                if i>=l: det += "-"
+                elif i>0: det += "+"
+                det += temp
+        det = expand(shrink(det))
+        if det=="0":
+            print("non invertible matrix")
+            return None
+        
+        # inverse using the determinant
+        if l==2:
+            matrix[0][0], matrix[1][1] = matrix[1][1], matrix[0][0]
+            matrix[0][1].string = f"-({matrix[0][1].string})"
+            matrix[1][0].string = f"-({matrix[1][0].string})"
+            
+        elif l==3:
+            # tranpose again
+            transpose_matrix(matrix)
+        
+        for i in range(l):
+            for j in range(l):
+                o = matrix[i][j]
+                o.string = f"({o.string})/({det})" # divide with the determinant
+        
+        return matrix
 
 if __name__ == "__main__":
-    input_values = {
-        "x": np.linspace(-1,1,11),
-        "y": np.linspace(-1,1,11),
-        "i": 5,
-        "a": 1.4,
-        "b": 0.1,
-        }
-    
-    def single(orig, deriv, target="x"):
-        print("derivative of", orig)
-        print("should be equal to", deriv)
-        orig_deriv = derivative(orig, target)
-        print("is actually", orig_deriv)
-        solve_test(orig_deriv)
-        solve_test(deriv)
-        print("\n"*2)
+    points = np.random.random((3,2))
 
-    def solve_test(eq1):
-        print("\nsolving", eq1)
-        r1 = solve(eq1, **input_values)
-        r1 = np.nan_to_num(r1)
-        print("solved", r1)
+    fx = "x*2-a"
+    fy = "y**2"
     
-    testables = [
-##        ("x**2", "2*x"),
-##        ("x**3", "3*x**2"),
-##        ("(x**3)**x", "(x**3)**x*(ln(x**3)+3)"),
-##        ("3**ln(x)", "(ln(3)*3**ln(x))/x"),
-##        ("0**x+0*(1+x)", "0"),
-##        ("2**(x-1)**1+2*1/3+0*x+y**0+2**0+(x+2(y-1))**0", "2**(x-1)*ln(2)"),
-##        ("(y*2+1)**(x-1+(60+4-(5)))", "(2*y+1)**(x+58)*ln(2*y+1)"),
-##        ("sin(2x**2+1)-cos(y/3)+tan(i)", "4*x*cos(2*x**2+1)"),
-##        ("x**2**3", "8*x**7"),
-##        ("sin(x**2)", "2*x*cos(x**2)"),
-##        ("b*x*x", "2*b*x"),
-        ("1-a*x*x+y", "-2*a*x"),
-        ("-(-(1-a*x**2+y))", "-2*a*x"),
-        
-##        ("sin(x)*cos(x)+sin(x+1)+x*3+5*x", "-(sin(x)^2) + cos(x)^2 + cos(x + 1) + 8"),
-##        ("x/10", "1/10"),
-##        ("x*x*y*x", "3*x*x*y"),
-##        ("x/2+cos(x)**2", "-2*sin(x)*cos(x)+1/2"),
-##        ("y/2-cos(x)*2", "sin(x)*2"),
-##        ("cos(x)*-sin(x)*-cos(x)", "cos(x)**3-2*sin(x)**2*cos(x)"),
-##        ("12*x*-0**0", "12"),
-##        ("-(-(x+1))", "1"),
-##        ("-x**-2.3", "-2.3*-x**-3.3"),
-        ]
-    for eq,deq in testables:
-        solve_test(eq)
-        single(eq,deq)
+    mf = MappingFunction(x=fx, y=fy, z="x*y")
+    print(mf)
+    mf2 = MappingFunction2D(fx, fy)
+    print(mf2)
     
-    print(input_values)
+    print(points)
+    outputs = mf(x=points[:,0], y=points[:,1], a=.1) # , z=points[:,2]
+    print(outputs)
+    points[:,0] = outputs[0]
+    points[:,1] = outputs[1]
+    
+    for row in mf.transposed_inverse_jacobian(): print(row)
+    for row in mf2.transposed_inverse_jacobian(): print(row)
+    
+##    input_values = {
+##        "x": np.linspace(-1,1,11),
+##        "y": np.linspace(-1,1,11),
+##        "i": 5,
+##        "a": 1.4,
+##        "b": 0.1,
+##        }
+##    
+##    def single(orig, deriv, target="x"):
+##        print("derivative of", orig)
+##        print("should be equal to", deriv)
+##        orig_deriv = derivative(orig, target)
+##        print("is actually", orig_deriv)
+##        solve_test(orig_deriv)
+##        solve_test(deriv)
+##        print("\n"*2)
+##
+##    def solve_test(eq1):
+##        print("\nsolving", eq1)
+##        r1 = solve(eq1, **input_values)
+##        r1 = np.nan_to_num(r1)
+##        print("solved", r1)
+##    
+##    testables = [
+####        ("x**2", "2*x"),
+####        ("x**3", "3*x**2"),
+####        ("(x**3)**x", "(x**3)**x*(ln(x**3)+3)"),
+####        ("3**ln(x)", "(ln(3)*3**ln(x))/x"),
+####        ("0**x+0*(1+x)", "0"),
+####        ("2**(x-1)**1+2*1/3+0*x+y**0+2**0+(x+2(y-1))**0", "2**(x-1)*ln(2)"),
+####        ("(y*2+1)**(x-1+(60+4-(5)))", "(2*y+1)**(x+58)*ln(2*y+1)"),
+####        ("sin(2x**2+1)-cos(y/3)+tan(i)", "4*x*cos(2*x**2+1)"),
+####        ("x**2**3", "8*x**7"),
+####        ("sin(x**2)", "2*x*cos(x**2)"),
+####        ("b*x*x", "2*b*x"),
+##        ("1-a*x*x+y", "-2*a*x"),
+##        ("-(-(1-a*x**2+y))", "-2*a*x"),
+##        
+####        ("sin(x)*cos(x)+sin(x+1)+x*3+5*x", "-(sin(x)^2) + cos(x)^2 + cos(x + 1) + 8"),
+####        ("x/10", "1/10"),
+####        ("x*x*y*x", "3*x*x*y"),
+####        ("x/2+cos(x)**2", "-2*sin(x)*cos(x)+1/2"),
+####        ("y/2-cos(x)*2", "sin(x)*2"),
+####        ("cos(x)*-sin(x)*-cos(x)", "cos(x)**3-2*sin(x)**2*cos(x)"),
+####        ("12*x*-0**0", "12"),
+####        ("-(-(x+1))", "1"),
+####        ("-x**-2.3", "-2.3*-x**-3.3"),
+##        ]
+##    for eq,deq in testables:
+##        solve_test(eq)
+##        single(eq,deq)
+##    
+##    print(input_values)
