@@ -321,7 +321,9 @@ class Model(ModelBase):
     def __hausdorff_update(self, points1, points2):
         if points1.size>0 and points2.size>0:
 ##            dist, line = hausdorff_distance4(points1, points2)
-            dist, line = hausdorff_distance5(points1, points2)
+##            dist, line = hausdorff_distance5(points1, points2)
+##            dist, line = hausdorff_distance6(points1, points2)
+            dist, line = hausdorff_distance8(points1, points2)
         else:
             dist, line = 0, None
         self.hausdorff_dist, self.hausdorff_line = dist, line
@@ -426,7 +428,7 @@ if __name__ == "__main__":
         for plot in plotting_grid(2, 2):
             for i in model.process(timestep): pass
             test_draw(plot, model, resolution)
-            plot.set_title(f"step: {timestep}")
+            plot.set_title(f"step: {timestep}\ndist: {model.hausdorff_dist}")
             timestep += 1
         plt.show()
     

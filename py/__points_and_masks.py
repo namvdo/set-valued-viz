@@ -190,15 +190,31 @@ def hausdorff_distance(source_mask, target_mask): # one way only
     return max_distance
     
 
-def overlap_box(tl1, br1, tl2, br2):
+def overlap_box(tl1, br1, tl2, br2): # n-dimensional
     tl = np.max([tl1,tl2], axis=0)
     br = np.min([br1,br2], axis=0)
     if (tl<br).all(): return tl, br
 
-def points_inside_box(points, tl, br):
-    mask = (points[:,0]>tl[0])*(points[:,0]<br[0])
-    mask *= (points[:,1]>tl[1])*(points[:,1]<br[1])
+def points_inside_box(points, tl, br): # n-dimensional
+    mask = np.ones(points.shape[0], dtype=np.bool_)
+    for i in range(points.shape[1]):
+        mask *= (points[:,i]>tl[i])*(points[:,i]<br[i])
     return mask
+
+
+
+def find_hausdorff_pair(points1, points2): # n-dimensional
+    index1 = index2 = 0
+    temp_dist = 0
+    for i,p1 in enumerate(points1):
+        dists = np.linalg.norm(p1-points2, axis=1)
+        j = np.argmin(dists)
+        if dists[j]>temp_dist:
+            temp_dist = dists[j]
+            index1 = i
+            index2 = j
+    return index1, index2
+
 
 def hausdorff_distance3(points1, points2, float_precision=10000):
     # both ways
@@ -256,25 +272,13 @@ def hausdorff_distance3(points1, points2, float_precision=10000):
 
 
 def hausdorff_distance4(points1, points2): # presumes that points are in order, EVEN FASTER
-    def find_pair(ps1, ps2):
-        index1 = index2 = 0
-        temp_dist = 0
-        for i,p1 in enumerate(ps1):
-            dists = np.linalg.norm(p1-ps2, axis=1)
-            j = np.argmin(dists)
-            if dists[j]>temp_dist:
-                temp_dist = dists[j]
-                index1 = i
-                index2 = j
-        return index1, index2
-
     def quick_find_pair(ps1, ps2):
         step = max(int(np.sqrt(len(ps1))), 1)
-        index1, index2 = find_pair(ps1[::step], ps2)
+        index1, index2 = find_hausdorff_pair(ps1[::step], ps2)
         if step==1: return ps1[index1], ps2[index2]
         start = max(index1-1, 0)*step
         end = (index1+1)*step+1
-        index3, index2 = find_pair(ps1[start:end], ps2)
+        index3, index2 = find_hausdorff_pair(ps1[start:end], ps2)
         index1 = start+index3
         return ps1[index1], ps2[index2]
     
@@ -287,7 +291,7 @@ def hausdorff_distance4(points1, points2): # presumes that points are in order, 
     return dist2, line2
 
 
-def hausdorff_distance5(points1, points2): # NOT QUITE AS FAST AS 4, but indifferent to point order
+def hausdorff_distance5(points1, points2): # NOT QUITE AS FAST AS 4, but indifferent to point order; n-dimensional
     distance_matrix = np.zeros((len(points1), len(points2)))
     
     index1 = index2 = 0
@@ -316,7 +320,139 @@ def hausdorff_distance5(points1, points2): # NOT QUITE AS FAST AS 4, but indiffe
     if dist1>dist2: return dist1, line1
     return dist2, line2
 
+
     
+def divide_to_sectors(points): # n-dimensional
+    # yield batches of points based on what dimensional corner direction is the closest
+    ndim = points.shape[1]
+    tl, br = bounding_box(points)
+    mask = np.zeros(ndim, dtype=np.bool_)
+    
+    distance_matrix = np.zeros((ndim*2,len(points)))
+    index = 0
+    while 1:
+        corner = tl.copy()
+        corner[mask] = br[mask]
+        
+        distance_matrix[index] = np.linalg.norm(points-corner, axis=1)
+        index += 1
+        
+        if mask.all(): break
+        
+        j = np.argmin(mask)
+        mask[j] = True
+        mask[:j] = False
+    
+    sectors = np.argmin(distance_matrix, axis=0)
+    for i in range(ndim*2):
+        yield points[sectors==i]
+
+def hausdorff_distance6(points1, points2): # SUPER FAST, but inaccurate; n-dimensional
+    
+    def get_sectors_and_centers(points):
+        sectors = [ps for ps in divide_to_sectors(points) if ps.size>0]
+        centers = [np.mean(ps, axis=0) for ps in sectors]
+        return sectors, centers
+    
+    nearest_points1 = points1
+    nearest_points2 = points2
+    farthest_points1 = points1
+    farthest_points2 = points2
+    
+    while 1:
+        near_sectors1, near_centers1 = get_sectors_and_centers(nearest_points1)
+        near_sectors2, near_centers2 = get_sectors_and_centers(nearest_points2)
+        far_sectors1, far_centers1 = get_sectors_and_centers(farthest_points1)
+        far_sectors2, far_centers2 = get_sectors_and_centers(farthest_points2)
+        if len(far_sectors2)<2 and len(far_sectors1)<2 and len(near_sectors1)<2 and len(near_sectors2)<2: break
+        
+        far1,near2 = find_hausdorff_pair(far_centers1, near_centers2)
+        far2,near1 = find_hausdorff_pair(far_centers2, near_centers1)
+        
+        nearest_points1 = near_sectors1[near1]
+        nearest_points2 = near_sectors2[near2]
+        farthest_points1 = far_sectors1[far1]
+        farthest_points2 = far_sectors2[far2]
+    
+    # finish
+    far1,near2 = find_hausdorff_pair(farthest_points1, nearest_points2)
+    line1 = farthest_points1[far1], nearest_points2[near2]
+    
+    far2,near1 = find_hausdorff_pair(farthest_points2, nearest_points1)
+    line2 = farthest_points2[far2], nearest_points1[near1]
+    
+    dist1 = distance(*line1)
+    dist2 = distance(*line2)
+    if dist1>dist2: return dist1, line1
+    return dist2, line2
+
+def hausdorff_distance7(points1, points2): # BASELINE, checks every point against every point
+    far1,near2 = find_hausdorff_pair(points1, points2)
+    line1 = points1[far1], points2[near2]
+    
+    far2,near1 = find_hausdorff_pair(points2, points1)
+    line2 = points2[far2], points1[near1]
+    
+    dist1 = distance(*line1)
+    dist2 = distance(*line2)
+    if dist1>dist2: return dist1, line1
+    return dist2, line2
+
+def hausdorff_distance8(points1, points2): # SUPER FAST and accurate; n-dimensional
+    # same as baseline when no overlap at all -> TAKE SHORTCUT
+    # twice as fast to baseline when one object is fully overlapping another
+    # extremely fast when objects are very close to each other
+    box1 = bounding_box(points1)
+    box2 = bounding_box(points2)
+    
+    overlap1 = points_inside_box(points1, *box2)
+    overlap2 = points_inside_box(points2, *box1)
+    
+    if not overlap1.any() and not overlap2.any(): # no overlap at all
+        # SHORTCUT
+        center1 = np.mean(points1, axis=0)
+        near2 = np.argmin(np.linalg.norm(points2-center1, axis=1)) # find point nearest to center1
+        far1 = np.argmax(np.linalg.norm(points1-points2[near2], axis=1))
+        line1 = points1[far1], points2[near2]
+        dist1 = distance(*line1)
+        
+        center2 = np.mean(points2, axis=0)
+        near1 = np.argmin(np.linalg.norm(points1-center2, axis=1)) # find point nearest to center2
+        far2 = np.argmax(np.linalg.norm(points2-points1[near1], axis=1))
+        line2 = points2[far2], points1[near1]
+        dist2 = distance(*line2)
+        
+    else: # some overlap
+        farthest1 = points1[~overlap1] # ignore points that are inside the other shape
+        farthest2 = points2[~overlap2] # ignore points that are inside the other shape
+
+        # worst case:
+        #   both objects have very little overlap with each other -> near baseline
+        # best case:
+        #   objects overlap eachother almost fully -> near instant
+        
+        if farthest1.size>0:
+            far1,near2 = find_hausdorff_pair(farthest1, points2)
+            line1 = farthest1[far1], points2[near2]
+            dist1 = distance(*line1)
+        else:
+            line1 = points1[0], points1[0]
+            dist1 = 0
+
+        if farthest2.size>0:
+            far2,near1 = find_hausdorff_pair(farthest2, points1)
+            line2 = farthest2[far2], points1[near1]
+            dist2 = distance(*line2)
+        else:
+            line2 = line1
+            dist2 = dist1
+    
+    if dist1>dist2: return dist1, line1
+    return dist2, line2
+
+
+
+
 
 def image_shape(resolution, max_x, max_y, *args):
     # resolution -> length of the longest side
