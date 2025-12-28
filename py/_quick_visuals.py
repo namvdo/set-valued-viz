@@ -81,7 +81,7 @@ class ImageDrawing:
         obj.size = size
         self.objects.append(obj)
         self.colors.append(self._color_check(*args, **kwargs))
-
+    
     def draw(self, resolution:int, topright_is_the_positive_corner=True):
         pixels = []
         for x in self.objects:

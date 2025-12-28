@@ -216,6 +216,7 @@ def find_hausdorff_pair(points1, points2): # n-dimensional
     return index1, index2
 
 
+
 def hausdorff_distance3(points1, points2, float_precision=10000):
     # both ways
     # VERY FAST
@@ -398,6 +399,8 @@ def hausdorff_distance7(points1, points2): # BASELINE, checks every point agains
     if dist1>dist2: return dist1, line1
     return dist2, line2
 
+
+
 def hausdorff_distance8(points1, points2): # SUPER FAST and accurate; n-dimensional
     # same as baseline when no overlap at all -> TAKE SHORTCUT
     # twice as fast to baseline when one object is fully overlapping another
@@ -451,6 +454,15 @@ def hausdorff_distance8(points1, points2): # SUPER FAST and accurate; n-dimensio
     return dist2, line2
 
 
+##def find_hausdorff_pair_backandforth(points1, points2): # n-dimensional; inaccurate if there is overlap
+##    far_point = np.mean(points1, axis=0)
+##    far = near = None
+##    while 1:
+##        near = np.argmin(np.linalg.norm(points2-far_point, axis=1))
+##        i = np.argmax(np.linalg.norm(points1-points2[near], axis=1))
+##        if far==i: break # no change -> found the best pair
+##        far = i
+##    return far, near
 
 
 
