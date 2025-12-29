@@ -75,7 +75,7 @@ class AppOgl(OpenGLFrame):
         self.primitive_points(vertices, size=10, color=(1,0,0))
         self.primitive_polygon(vertices, size=5, color=(0,0,1))
 
-class Viewport(ViewportTemplate):
+class Viewport():
     frame = None
     def __init__(self, root, side=tk.TOP, fill=tk.BOTH, **kwargs):
         self.frame = AppOgl(root, **kwargs)

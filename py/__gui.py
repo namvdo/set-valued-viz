@@ -545,11 +545,3 @@ class BooleanSwitch():
             self.update_visuals()
 
 
-class ViewportTemplate:
-    def clear(self):
-        pass
-    def update(self, *args, **kwargs):
-        pass
-
-
-

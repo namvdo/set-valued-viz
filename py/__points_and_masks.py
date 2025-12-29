@@ -39,7 +39,7 @@ def radians_to_vectors(radians):
 def vectors_to_radians(vectors):
     return np.arctan2(vectors[:,1], vectors[:,0])
 
-def bounding_box(points):
+def bounding_box(points): # n-dimensional
     return np.min(points, axis=0), np.max(points, axis=0)
 
 def bounding_box_corners(points):
@@ -48,6 +48,22 @@ def bounding_box_corners(points):
     bl = asd[::2]
     tr = asd[::-2]
     return tl, tr, br, bl
+
+def bounding_corners(points): # n-dimensional
+    # iterate every dimensional corner
+    # 2D -> 4
+    # 3D -> 8
+    ndim = points.shape[1]
+    tl, br = bounding_box(points)
+    mask = np.zeros(ndim, dtype=np.bool_)
+    while 1:
+        corner = tl.copy()
+        corner[mask] = br[mask]
+        yield corner
+        if mask.all(): break
+        j = np.argmin(mask)
+        mask[j] = True
+        mask[:j] = False
 
 def point_normals(points):
     diff = np.diff(points, prepend=points[-1:], axis=0)
@@ -320,8 +336,6 @@ def hausdorff_distance5(points1, points2): # NOT QUITE AS FAST AS 4, but indiffe
     dist2 = distance(*line2)
     if dist1>dist2: return dist1, line1
     return dist2, line2
-
-
     
 def divide_to_sectors(points): # n-dimensional
     # yield batches of points based on what dimensional corner direction is the closest
@@ -475,7 +489,7 @@ def image_shape(resolution, max_x, max_y, *args):
     elif width<height: width += 1
     return width, height
 
-def pixelize_points(points, topleft, bottomright, resolution):
+def pixelize_points(points, topleft, bottomright, resolution): # n-dimensional
     pixels = points-topleft
     scale = (bottomright-topleft).max()
     if scale!=0: pixels /= scale
@@ -489,7 +503,7 @@ def pixelize_distances(values, topleft, bottomright, resolution):
     pixels *= resolution-1
     return pixels.astype(np.int32)
 
-def pointify_pixels(pixels, topleft, bottomright, resolution):
+def pointify_pixels(pixels, topleft, bottomright, resolution): # n-dimensional
     points = pixels.astype(np.float64)
     points -= .5
     points /= resolution-1
@@ -508,8 +522,8 @@ def circle_mask(r, inner=0):
     elif inner<0: mask *= dist_from_center>r+inner
     return mask
 
-def line_mask(start, end): # mask_line
-    offset = np.subtract(end, start).astype(np.float64)
+def line_mask(start, end): # 3d points are fine -> only uses x and y
+    offset = np.subtract(end, start).astype(np.float64)[:2]
     dist = np.linalg.norm(offset)
     if dist<1: return
     _from = (0 if offset[0]>0 else -offset[0],0 if offset[1]>0 else -offset[1])
