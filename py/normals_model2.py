@@ -364,13 +364,17 @@ if __name__ == "__main__":
         draw_inner_normals = 1
         #
         
-        drawing = ImageDrawing(r=1, g=1, b=1)
+        drawing = ImageDrawing()
+        drawing.set_color(r=0, g=0, b=0)
+        drawing.set_color_bg(r=1, g=1, b=1)
         
 ##        drawing.circles([(0,0)], 1, *red)
-        drawing.grid((0,0), .25, b=1, a=0.2)
+        obj = drawing.grid((0,0), .25)
+        obj.set_color(b=1, a=0.2)
         
         if draw_boundary_lines:
-            drawing.lines(*model.get_boundary_lines(), g=1)
+            obj = drawing.lines(*model.get_boundary_lines())
+            obj.set_color(g=1)
         
         if draw_inner_normals:
             drawing.lines(*model.get_inner_normals())
@@ -378,14 +382,17 @@ if __name__ == "__main__":
             drawing.lines(*model.get_outer_normals())
         
         if draw_prev_points:
-            drawing.points(model._prev_points, b=1)
+            obj = drawing.points(model._prev_points)
+            obj.set_color(b=1)
             if draw_prev_normals:
                 drawing.lines(*model.get_prev_inner_normals())
         
-        drawing.points(model._points, r=1)
+        obj = drawing.points(model._points)
+        obj.set_color(r=1)
 
         line = model.hausdorff_line
-        drawing.lines([line[0]], [line[1]], r=1, g=.5)
+        obj = drawing.lines([line[0]], [line[1]])
+        obj.set_color(r=1, g=.5)
         
 ##        drawing.circles(model._points[:1], model.epsilon/10, inside=model.epsilon/11, r=1)
         

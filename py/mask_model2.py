@@ -11,8 +11,13 @@ class Model(ModelBase):
     
     def _firststep(self):
         self.timestep = -1
-        self.drawing = ImageDrawing(*BG_COLOR)
-        self.drawing.points([self.start_point], *OBJ_COLOR)
+        self.init_drawing()
+        self.drawing.points(np.array([self.start_point], dtype=np.float64))
+
+    def init_drawing(self):
+        self.drawing = ImageDrawing()
+        self.drawing.set_color(*OBJ_COLOR)
+        self.drawing.set_color_bg(*BG_COLOR)
         
     def get_boundary_pixels(self, resolution:int):
         if self.drawing is None: self._firststep()
@@ -63,8 +68,8 @@ class Model(ModelBase):
         
         # place epsilon circles on a new drawing
         self.drawing_prev = self.drawing
-        self.drawing = ImageDrawing(*self.drawing.background)
-        self.drawing.circles(points, self.epsilon, *OBJ_COLOR)
+        self.init_drawing()
+        self.drawing.circles(points, self.epsilon)
         
         self.timestep += 1
 

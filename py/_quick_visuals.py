@@ -15,16 +15,32 @@ def plotting_grid(width=1, height=1, figsize=(8,8)):
             yield ax_target
 
 
-class ImageDrawing:
-    class LinesObj:
+class ColorObj:
+    color = None
+    color_bg = None # more depth -> color transitions to color_bg
+    def set_color(self, r=0, g=0, b=0, a=1):
+        self.color = np.asarray([r,g,b,a], dtype=np.float64)
+        if (self.color>1).any(): self.color /= 255
+    def set_color_bg(self, r=0, g=0, b=0, a=1):
+        self.color_bg = np.asarray([r,g,b,a], dtype=np.float64)
+        if (self.color_bg>1).any(): self.color_bg /= 255
+    def get_color_blend(self, ratio):
+        return self.color*(1-ratio) + self.color_bg*ratio
+    def get_color_blends(self, ratios):
+        return np.expand_dims(self.color, axis=0)*(1-ratios) + np.expand_dims(self.color_bg, axis=0)*ratios
+
+class ImageDrawing(ColorObj):
+    class PointsObj(ColorObj):
+        points = None
+    class LinesObj(ColorObj):
         starts = None
         ends = None
-    class CirclesObj:
+    class CirclesObj(ColorObj):
         points = None
         radius = 1
         inside = 0
-    class GridObj:
-        center = (0,0)
+    class GridObj(ColorObj):
+        center = (0,0) # origin
         size = .1
     
     tl = None
@@ -35,14 +51,14 @@ class ImageDrawing:
     yaw = 0. # rotation around y axis
     tilt = 0. # rotation around z axis
     pitch = 0. # rotation around x axis
-    
-    def __init__(self, *args, **kwargs):
-        self.background = self._color_check(*args, **kwargs)
-        self.objects = []
-        self.colors = [] # list of RGBA color arrays (0..1)
 
-    def _color_check(self, r=0, g=0, b=0, a=1, **kwargs):
-        return np.asarray([r,g,b,a])
+    color = np.array([0,0,0,1.]) # default obj color
+    color_bg = np.ones(4)
+    
+    perpective = True
+    
+    def __init__(self):
+        self.objects = []
 
     def clear(self):
         self.tl = self.br = None
@@ -51,7 +67,7 @@ class ImageDrawing:
 
     def update_tl_br(self, tl, br):
         ndim = tl.shape[0]
-        if ndim<self.ndim: # bounds were lower dimensional
+        if ndim<self.ndim: # update bounds have lower dimensionality than current
             tl = np.pad(tl, (0,self.ndim-ndim))
             br = np.pad(br, (0,self.ndim-ndim))
             tl[ndim:] = self.tl[ndim:]
@@ -63,22 +79,29 @@ class ImageDrawing:
         else: self.br = np.max([br,self.br], axis=0)
         self.ndim = self.tl.shape[0]
         
-    def points(self, points, *args, **kwargs):
-        points = np.asarray(points, dtype=np.float64)
+    def points(self, points):
+        obj = self.PointsObj()
+        obj.points = np.asarray(points, dtype=np.float64)
         self.update_tl_br(*bounding_box(points))
-        self.objects.append(points)
-        self.colors.append(self._color_check(*args, **kwargs))
+        self.objects.append(obj)
+        
+        obj.color = self.color
+        obj.color_bg = self.color
+        return obj
     
-    def lines(self, starts, ends, *args, **kwargs):
+    def lines(self, starts, ends):
         obj = self.LinesObj()
         obj.starts = np.asarray(starts, dtype=np.float64)
         obj.ends = np.asarray(ends, dtype=np.float64)
         self.update_tl_br(*bounding_box(obj.starts))
         self.update_tl_br(*bounding_box(obj.ends))
         self.objects.append(obj)
-        self.colors.append(self._color_check(*args, **kwargs))
+        
+        obj.color = self.color
+        obj.color_bg = self.color
+        return obj
     
-    def circles(self, points, radius, *args, inside=0, **kwargs):
+    def circles(self, points, radius, inside=0):
         obj = self.CirclesObj()
         obj.points = np.asarray(points, dtype=np.float64)
         obj.radius = radius
@@ -86,22 +109,34 @@ class ImageDrawing:
         self.update_tl_br(*bounding_box(obj.points-radius))
         self.update_tl_br(*bounding_box(obj.points+radius))
         self.objects.append(obj)
-        self.colors.append(self._color_check(*args, **kwargs))
+        
+        obj.color = self.color
+        obj.color_bg = self.color
+        return obj
 
-    def grid(self, center, size, *args, **kwargs):
+    def grid(self, center, size):
         obj = self.GridObj()
         obj.center = np.asarray(center, dtype=np.float64)
         obj.size = size
         self.objects.append(obj)
-        self.colors.append(self._color_check(*args, **kwargs))
+        
+        obj.color = self.color
+        obj.color_bg = self.color
+        return obj
     
     def draw(self, resolution:int, topright_is_the_positive_corner=True):
         tl, br = self.get_rotated_bounds()
-        camera_pos = np.mean([tl,br], axis=0)
+        camera_orbit_point = np.mean([tl,br], axis=0)
+        
+        # static camera position == negative z axis
+        camera_pos = camera_orbit_point.copy()
+        if self.ndim>2:
+            camera_pos[2] = tl[2]-1
+        #
         
         limits = pixelize_points(br, tl, br, resolution)
-        image = np.zeros((*image_shape(resolution, *limits), len(self.background)))
-        image[:,:] = self.background
+        image = np.zeros((*image_shape(resolution, *limits), self.color_bg.shape[-1]))
+        image[:,:] = self.color_bg
         
         def color_blend_on_array(array, color):
             if color[3]<1:
@@ -110,6 +145,12 @@ class ImageDrawing:
                 array[:,:3] /= array[:,3:4]
             else:
                 array[:] = color
+            return array
+        
+        def color_array_blend_on_array(array, color):
+            array[:,:3] = color[:,:3]*color[:,3:4] + array[:,:3]*array[:,3:4]*(1-color[:,3:4])
+            array[:,3] = 1-(1-array[:,3])*(1-color[:,3])
+            array[:,:3] /= array[:,3:4]
             return array
         
         masks = {} # storage for mask reuse
@@ -135,27 +176,67 @@ class ImageDrawing:
             r = mask.shape[0]//2
             x_slice = slice(center[0]-r, center[0]+r+1)
             y_slice = slice(center[1]-r, center[1]+r+1)
+            
             image[x_slice, y_slice][mask] = color_blend_on_array(image[x_slice, y_slice][mask], color)
         
         for index,x in enumerate(self.objects):
-            color = self.colors[index]
-            if isinstance(x, self.LinesObj):
-                starts = self.rotate_points(x.starts, camera_pos)
-                ends = self.rotate_points(x.ends, camera_pos)
-                starts = pixelize_points(starts, tl, br, resolution)
-                ends = pixelize_points(ends, tl, br, resolution)
-                for i,s in enumerate(starts):
-                    draw_line_on_image(s, ends[i], color)
+            if isinstance(x, self.PointsObj):
+                points = self.rotate_points(x.points, camera_orbit_point)
+                
+                if self.perpective and self.ndim>2:
+                    apply_curvilinear_perspective(points, camera_pos)
+                    
+                pixels = pixelize_points(points, tl, br, resolution)
+                if self.ndim>2:
+                    color = x.get_color_blends((points[:,2:3]-tl[2])/br[2])
+                    image[pixels[:,0],pixels[:,1]] = color_array_blend_on_array(image[pixels[:,0],pixels[:,1]], color)
+                else:
+                    image[pixels[:,0],pixels[:,1]] = color_blend_on_array(image[pixels[:,0],pixels[:,1]], x.color)
+                
+            elif isinstance(x, self.LinesObj):
+                points_starts = self.rotate_points(x.starts, camera_orbit_point)
+                points_ends = self.rotate_points(x.ends, camera_orbit_point)
+                
+                if self.perpective and self.ndim>2:
+                    apply_curvilinear_perspective(points_starts, camera_pos)
+                    apply_curvilinear_perspective(points_ends, camera_pos)
+                    
+                starts = pixelize_points(points_starts, tl, br, resolution)
+                ends = pixelize_points(points_ends, tl, br, resolution)
+                
+                i = 0
+                if self.ndim>2:
+                    depths = (points_starts[:,2:3]+points_ends[:,2:3])/2
+                    color = x.get_color_blends((depths-tl[2])/br[2])
+                    for s in starts:
+                        draw_line_on_image(s, ends[i], color[i])
+                        i += 1
+                else:
+                    for s in starts:
+                        draw_line_on_image(s, ends[i], x.color)
+                        i += 1
                 
             elif isinstance(x, self.CirclesObj):
-                centers = self.rotate_points(x.points, camera_pos)
-                centers = pixelize_points(centers, tl, br, resolution)
+                points = self.rotate_points(x.points, camera_orbit_point)
+                
+                if self.perpective and self.ndim>2:
+                    apply_curvilinear_perspective(points, camera_pos)
+                
+                pixels = pixelize_points(points, tl, br, resolution)
                 radii = pixelize_distances([x.radius, x.inside], tl, br, resolution)
                 mask = circle_mask(*radii)
-                for c in centers:
-                    draw_circle_on_image(c, mask, color)
+                if self.ndim>2:
+                    color = x.get_color_blends((points[:,2:3]-tl[2])/br[2])
+                    i = 0
+                    for p in pixels:
+                        draw_circle_on_image(p, mask, color[i])
+                        i += 1
+                else:
+                    for p in pixels:
+                        draw_circle_on_image(p, mask, x.color)
                 
             elif isinstance(x, self.GridObj):
+                color = x.color
                 grid_lines_n = int(np.divide(br-tl, x.size).max())+2
                 offset = np.divide(x.center-tl, x.size).astype(np.int32)
                 for i in range(grid_lines_n):
@@ -166,16 +247,11 @@ class ImageDrawing:
                     if target[0]>=0 and target[0]<image.shape[0]:
                         color_blend_on_array(image[target[0],:], color)
                     if target[1]>=0 and target[1]<image.shape[1]:
-                        color_blend_on_array(image[:,target[1]], color)    
-                
-            elif type(x)==np.ndarray:
-                x = self.rotate_points(x, camera_pos)
-                pixels = pixelize_points(x, tl, br, resolution)
-                image[pixels[:,0],pixels[:,1]] = color_blend_on_array(image[pixels[:,0],pixels[:,1]], color)
+                        color_blend_on_array(image[:,target[1]], color)
         
         if image.any():
-            image /= image.max()
             image *= 255
+            image = np.clip(image, a_min=0, a_max=255)
         
         image = image.astype(np.uint8)
         if topright_is_the_positive_corner:
@@ -197,7 +273,7 @@ class ImageDrawing:
         rotated_corners = self.rotate_points(corners, center=np.mean(bounds, axis=0))
         return bounding_box(rotated_corners)
     
-    def rotate_points(self, points, center):
+    def rotate_points(self, points, center, depth=0):
         p_ndim = points.shape[1]
         
         if p_ndim<self.ndim:
@@ -222,21 +298,46 @@ class ImageDrawing:
         return (tl[0], br[0], tl[1], br[1])
 
 
+def apply_curvilinear_perspective(points, observer):
+    distances = distance(points, observer)
+    valid = distances>0
+    points[valid,:2] -= observer[:2]
+    points[valid,0] /= distances[valid]
+    points[valid,1] /= distances[valid]
+    points[valid,:2] += observer[:2]
+
 
 if __name__ == "__main__":
-    drawing = ImageDrawing(r=1, g=1, b=1)
-    drawing.points(np.random.random((100,3)))
-    drawing.lines(*point_lines(np.random.random((100,3))), b=1)
-    drawing.circles(np.random.random((100,2))+2, 0.05, r=1)
+    drawing = ImageDrawing()
+    drawing.set_color_bg(r=1, g=1, b=1)
+
+    points = points_in_gridlike_shape(np.zeros(2), np.ones(2), (10,10))
+    points = points.reshape(-1, 2)
+    points = np.pad(points, ((0,0),(0,1)), mode="edge")
+    
+    obj = drawing.lines(*point_lines(points))
+    obj.set_color(g=1)
+    obj.set_color_bg(b=1, a=.1)
+    
+    obj = drawing.circles(points, 0.01)
+    obj.set_color(r=1)
+    obj.set_color_bg(b=0, a=.1)
+    
+##    circles = np.zeros((500,3))
+##    circles[:,:2] = np.random.random((500,2))#+2
+##    circles[:,0] *= 2
+##    obj = drawing.circles(circles, 0.05)
+##    obj.set_color(r=1)
     
 ##    print((drawing.draw(512) == drawing.draw2(512)).all())
 ##    drawing.tilt = np.pi/4
 ##    drawing.test_draw(200)
 ##    drawing.tilt = np.pi/4
     for plot in plotting_grid(9, 1, (20,4)):
-        drawing.draw_to_plot(plot, 200)
-        drawing.yaw += np.pi/8
-        drawing.pitch += np.pi/8
+        drawing.draw_to_plot(plot, 1000)
+        drawing.pitch += np.pi/6
+        drawing.tilt += np.pi/8
+        drawing.yaw += np.pi/10
     plt.show()
         
         

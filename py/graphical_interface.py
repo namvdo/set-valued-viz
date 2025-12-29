@@ -195,25 +195,38 @@ class ModelInstance():
 
     def draw(self, resolution:int):
         
-        color = np.divide(self.colors["background"], 255)
-        drawing = ImageDrawing(*color)
+        drawing = ImageDrawing()
+##        drawing.yaw = 0
+##        drawing.tilt = 0
+##        drawing.pitch = 0
+        drawing.perspective = False
+        drawing.set_color(*np.divide(self.colors["background"], 255))
         
         color = np.divide(self.colors["boundary"], 255)
-        if color[3]>0: drawing.lines(*self.model.get_boundary_lines(), *color)
+        if color[3]>0:
+            obj = drawing.lines(*self.model.get_boundary_lines())
+            obj.set_color(*color)
         
         color = np.divide(self.colors["normals"], 255)
-        if color[3]>0: drawing.lines(*self.model.get_inner_normals(), *color)
+        if color[3]>0:
+            obj = drawing.lines(*self.model.get_inner_normals())
+            obj.set_color(*color)
         
         color = np.divide(self.colors["prev. points"], 255)
-        if color[3]>0: drawing.points(self.model._prev_points, *color)
+        if color[3]>0:
+            obj = drawing.points(self.model._prev_points)
+            obj.set_color(*color)
         
         color = np.divide(self.colors["points"], 255)
-        if color[3]>0: drawing.points(self.model._points, *color)
+        if color[3]>0:
+            obj = drawing.points(self.model._points)
+            obj.set_color(*color)
         
         color = np.divide(self.colors["hausdorff line"], 255)
         if color[3]>0:
             line = self.model.hausdorff_line
-            drawing.lines([line[0]], [line[1]], *color)
+            obj = drawing.lines([line[0]], [line[1]])
+            obj.set_color(*color)
         
         # extend limits
         auto = self.auto_extend.get()
@@ -236,7 +249,9 @@ class ModelInstance():
             if auto: self.max_y.set(round(drawing.br[1], auto_rounding))
         
         color = np.divide(self.colors["grid"], 255)
-        if color[3]>0: drawing.grid((0,0), self.model.epsilon, *color)
+        if color[3]>0:
+            obj = drawing.grid((0,0), self.model.epsilon)
+            obj.set_color(*color)
         
         image = drawing.draw(resolution)
         return image, drawing.tl, drawing.br
