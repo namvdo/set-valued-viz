@@ -14,7 +14,7 @@ def test2(*args, **kwargs):
 ##def test3(*args, **kwargs):
 ##    return hausdorff_distance9(*args, **kwargs)
 
-if __name__ == "__main__":
+def hausdorff_distance_testing():
     # hausdorff distance function testing
     n = 1280
     for i in range(10):
@@ -64,4 +64,22 @@ if __name__ == "__main__":
 ##        print(test3(points1, points2))
         input("continue...")
         n <<= 1
-    pass
+
+
+
+if __name__ == "__main__":
+    dome = point_ball(12, 1)
+
+    drawing = ImageDrawing()
+##    drawing.set_color_bg(r=0, g=0, b=0)
+    
+    drawing.pitch = np.pi/3
+##    drawing.yaw = np.pi/16
+##    drawing.tilt = np.pi/16
+
+    for circle in dome:
+        obj = drawing.lines(*point_lines(circle))
+        obj.set_color(r=1)
+        obj.set_color_bg(b=1, a=0.1)
+        
+    drawing.test_draw(1000)  # , camera_dist=0

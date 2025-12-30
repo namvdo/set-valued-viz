@@ -1,5 +1,7 @@
 import math
 import numpy as np
+from heapq import *
+import collections as cls
 
 class Queue2():
     head = 0
@@ -279,3 +281,193 @@ class MassPointsFloat(MassPoints):
                     else: keys |= self.chunks[i][seeked_target]
             prev_keys = keys
         return keys
+
+
+
+
+
+
+
+
+
+
+
+
+
+class Graph():
+    connections = 0
+    class Path:
+        distance = 0
+        def __init__(self):
+            self.vertices = []
+            self.distances = []
+        def __str__(self):
+            string = "Path: "
+            if self.vertices:
+                string += str(self.vertices)+"\n"
+                string += " distances: "+str(self.distances)+"\n"
+                string += " total: "+str(self.distance)+"\n"
+            else: string += "none"
+            return string
+        
+    def __init__(self):
+        self.vertices = set()
+        self.edges = {}
+        self.weights = {}
+    def __len__(self): return len(self.vertices)
+    def __str__(self):
+        l = len(self.vertices)
+        string = f"Graph: {l}\n"
+        string += f" connections: {self.connections}\n"
+        string += f" deadends: {l-len(self.edges)}\n"
+        return string
+
+    def exists(self, source, target=None):
+        # return if the vertex exists OR edge exists (if target is not None)
+        return source in self.edges and (target is None or target in self.edges[source])
+
+    def get(self, source, target=None, default=None):
+        if source in self.edges:
+            if target is not None:
+                if target in self.edges[source]: return self.weights[(source,target)]
+                return default
+            return self.edges[source]
+        return default
+
+    def remove(self, source):
+        self.vertices.remove(source)
+        if source in self.edges:
+            del self.edges[source]
+        
+    def connect(self, source, target, weight=1):
+        if source==target: return
+        key = (source,target)
+        if target not in self.vertices:
+            self.vertices.add(target)
+        if source not in self.edges:
+            self.edges[source] = {target}
+            self.vertices.add(source)
+            if weight is not None: self.weights[key] = weight
+            self.connections += 1
+            return
+        l = self.edges[source]
+        if target not in l:
+            l.add(target)
+            if weight is not None: self.weights[key] = weight
+            self.connections += 1
+        elif weight is None and key in self.weights: # nullify weight
+            del self.weights[key]
+        else: self.weights[key] = weight # replace weight
+
+    def disconnect(self, source, target, oneway=False):
+        if source in self.edges:
+            if target in self.edges[source]:
+                self.edges[source].remove(target)
+                key = (source,target)
+                if key in self.weights:
+                    del self.weights[key]
+                if not oneway: self.disconnect(target, source, True)
+                return True
+        return not oneway and self.disconnect(target, source, True)
+
+    def BFS(self, source, target, path=None, visited=None):
+        queue = cls.deque()
+        queue.append(source)
+        if visited is None: visited = {source}
+        else: visited.add(source)
+        while len(queue):
+            active = queue.popleft()
+            if path is not None: path.append(active)
+            if active==target: return True
+            if active in self.edges:
+                for t in self.edges[active]:
+                    if t not in visited:
+                        queue.append(t)
+                        visited.add(t)
+        return False
+
+    def DFS(self, source, target, path=None, visited=None):
+        stack = [source]
+        if visited is None: visited = {source}
+        else: visited.add(source)
+        while len(stack):
+            active = stack.pop()
+            if path is not None: path.append(active)
+            if active==target: return True
+            if active in self.edges:
+                for t in self.edges[active]:
+                    if t not in visited:
+                        stack.append(t)
+                        visited.add(t)
+        return False
+
+    def find_connected(self, source=None):
+        if source is None:
+            for source in self.vertices: break
+        visited = set()
+        self.BFS(source, None, None, visited)
+        return visited
+    
+    def find_disconnected(self, source=None):
+        return self.vertices-self.find_connected(source)
+    
+    def is_disconnected(self, source=None):
+        return bool(self.find_disconnected(source))
+
+    def get_deadends(self):
+        return self.vertices-set(self.edges.keys())
+    
+
+    def dijkstra(self, source, target, blacklist=None, whitelist=None):
+        # init
+        result = self.Path()
+        distances = {}
+        previous = {}
+        priqueue = []
+        heapify(priqueue)
+
+        # setup
+        heappush(priqueue, (0,source))
+        distances[source] = 0
+
+        # loop
+        while len(priqueue):
+            distance, active = heappop(priqueue)
+            if active==target:
+                result.vertices.append(active)
+                while (prev:=previous.get(active)) is not None:
+                    result.distances.append(self.weights.get((prev,active), 0))
+                    result.distance += result.distances[-1]
+                    active = prev
+                    result.vertices.append(active)
+                result.vertices = result.vertices[::-1]
+                result.distances = result.distances[::-1]
+                break
+            white = (whitelist is None or active in whitelist)
+            if white: black = (blacklist is None or active not in blacklist)
+            if active in self.edges and white and black:
+                for t in self.edges[active]:
+                    d = distance+self.weights.get((active,t), 0)
+                    if t in distances:
+                        if d<distances[t]:
+                            heappush(priqueue, (d,t))
+                            distances[t] = d
+                            previous[t] = active
+                    else:
+                        heappush(priqueue, (d,t))
+                        distances[t] = d
+                        previous[t] = active
+        return result
+
+
+
+
+
+
+
+
+
+
+
+
+

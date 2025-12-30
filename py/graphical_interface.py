@@ -199,7 +199,6 @@ class ModelInstance():
 ##        drawing.yaw = 0
 ##        drawing.tilt = 0
 ##        drawing.pitch = 0
-        drawing.perspective = False
         drawing.set_color(*np.divide(self.colors["background"], 255))
         
         color = np.divide(self.colors["boundary"], 255)

@@ -51,11 +51,9 @@ class ImageDrawing(ColorObj):
     yaw = 0. # rotation around y axis
     tilt = 0. # rotation around z axis
     pitch = 0. # rotation around x axis
-
+    
     color = np.array([0,0,0,1.]) # default obj color
     color_bg = np.ones(4)
-    
-    perpective = True
     
     def __init__(self):
         self.objects = []
@@ -124,14 +122,28 @@ class ImageDrawing(ColorObj):
         obj.color_bg = self.color
         return obj
     
-    def draw(self, resolution:int, topright_is_the_positive_corner=True):
+    def draw(self, resolution:int, topright_is_the_positive_corner:bool=True, camera_dist:float=None):
         tl, br = self.get_rotated_bounds()
         camera_orbit_point = np.mean([tl,br], axis=0)
         
         # static camera position == negative z axis
+        can_show_depth = self.ndim>2
+        can_do_perspective = camera_dist is not None and can_show_depth
         camera_pos = camera_orbit_point.copy()
-        if self.ndim>2:
-            camera_pos[2] = tl[2]-1
+        if can_show_depth:
+            camera_pos[2] = tl[2]
+        if can_do_perspective:
+            camera_pos[2] -= camera_dist
+            zoom = camera_dist
+        
+        def depth_ratio_array(points):
+            if can_do_perspective:
+                # by distance instead
+                dists = np.linalg.norm(points-camera_pos, axis=1)
+                dists -= dists.min()
+                dists /= dists.max()
+                return dists.reshape(-1, 1)
+            return (points[:,2:3]-camera_pos[2])/(br[2]-camera_pos[2]) # 0...1
         #
         
         limits = pixelize_points(br, tl, br, resolution)
@@ -168,7 +180,6 @@ class ImageDrawing(ColorObj):
             line_tl = np.min([start,end], axis=0)
             x_slice = slice(line_tl[0], line_tl[0]+mask.shape[0])
             y_slice = slice(line_tl[1], line_tl[1]+mask.shape[1])
-            
             image[x_slice, y_slice][mask] = color_blend_on_array(image[x_slice, y_slice][mask], color)
             return True
         
@@ -183,12 +194,13 @@ class ImageDrawing(ColorObj):
             if isinstance(x, self.PointsObj):
                 points = self.rotate_points(x.points, camera_orbit_point)
                 
-                if self.perpective and self.ndim>2:
-                    apply_curvilinear_perspective(points, camera_pos)
+                if can_do_perspective:
+                    apply_curvilinear_perspective(points, camera_pos, zoom)
                     
                 pixels = pixelize_points(points, tl, br, resolution)
-                if self.ndim>2:
-                    color = x.get_color_blends((points[:,2:3]-tl[2])/br[2])
+                if can_show_depth:
+                    ratios = depth_ratio_array(points)
+                    color = x.get_color_blends(ratio_array)
                     image[pixels[:,0],pixels[:,1]] = color_array_blend_on_array(image[pixels[:,0],pixels[:,1]], color)
                 else:
                     image[pixels[:,0],pixels[:,1]] = color_blend_on_array(image[pixels[:,0],pixels[:,1]], x.color)
@@ -197,17 +209,17 @@ class ImageDrawing(ColorObj):
                 points_starts = self.rotate_points(x.starts, camera_orbit_point)
                 points_ends = self.rotate_points(x.ends, camera_orbit_point)
                 
-                if self.perpective and self.ndim>2:
-                    apply_curvilinear_perspective(points_starts, camera_pos)
-                    apply_curvilinear_perspective(points_ends, camera_pos)
+                if can_do_perspective:
+                    apply_curvilinear_perspective(points_starts, camera_pos, zoom)
+                    apply_curvilinear_perspective(points_ends, camera_pos, zoom)
                     
                 starts = pixelize_points(points_starts, tl, br, resolution)
                 ends = pixelize_points(points_ends, tl, br, resolution)
                 
                 i = 0
-                if self.ndim>2:
-                    depths = (points_starts[:,2:3]+points_ends[:,2:3])/2
-                    color = x.get_color_blends((depths-tl[2])/br[2])
+                if can_show_depth:
+                    ratios = depth_ratio_array((points_starts+points_ends)/2)
+                    color = x.get_color_blends(ratios)
                     for s in starts:
                         draw_line_on_image(s, ends[i], color[i])
                         i += 1
@@ -219,14 +231,15 @@ class ImageDrawing(ColorObj):
             elif isinstance(x, self.CirclesObj):
                 points = self.rotate_points(x.points, camera_orbit_point)
                 
-                if self.perpective and self.ndim>2:
-                    apply_curvilinear_perspective(points, camera_pos)
+                if can_do_perspective:
+                    apply_curvilinear_perspective(points, camera_pos, zoom)
                 
                 pixels = pixelize_points(points, tl, br, resolution)
                 radii = pixelize_distances([x.radius, x.inside], tl, br, resolution)
                 mask = circle_mask(*radii)
-                if self.ndim>2:
-                    color = x.get_color_blends((points[:,2:3]-tl[2])/br[2])
+                if can_show_depth:
+                    ratios = depth_ratio_array(points)
+                    color = x.get_color_blends(ratios)
                     i = 0
                     for p in pixels:
                         draw_circle_on_image(p, mask, color[i])
@@ -258,12 +271,12 @@ class ImageDrawing(ColorObj):
             return np.flip(image.swapaxes(0, 1), axis=0)
         return image
 
-    def draw_to_plot(self, plot, resolution:int):
-        plot.imshow(self.draw(resolution), extent=self.get_extent())
+    def draw_to_plot(self, plot, *args, **kwargs):
+        plot.imshow(self.draw(*args, **kwargs), extent=self.get_extent())
 
-    def test_draw(self, resolution:int):
+    def test_draw(self, *args, **kwargs):
         print("test draw", self)
-        self.draw_to_plot(plt, resolution)
+        self.draw_to_plot(plt, *args, **kwargs)
         plt.show()
 
     
@@ -298,12 +311,13 @@ class ImageDrawing(ColorObj):
         return (tl[0], br[0], tl[1], br[1])
 
 
-def apply_curvilinear_perspective(points, observer):
+def apply_curvilinear_perspective(points, observer, zoom=1.):
     distances = distance(points, observer)
     valid = distances>0
     points[valid,:2] -= observer[:2]
-    points[valid,0] /= distances[valid]
-    points[valid,1] /= distances[valid]
+    points[valid,0] /= 1+distances[valid]
+    points[valid,1] /= 1+distances[valid]
+    points[valid,:2] *= 1+zoom
     points[valid,:2] += observer[:2]
 
 
@@ -334,7 +348,7 @@ if __name__ == "__main__":
 ##    drawing.test_draw(200)
 ##    drawing.tilt = np.pi/4
     for plot in plotting_grid(9, 1, (20,4)):
-        drawing.draw_to_plot(plot, 1000)
+        drawing.draw_to_plot(plot, 1000, camera_dist=0)
         drawing.pitch += np.pi/6
         drawing.tilt += np.pi/8
         drawing.yaw += np.pi/10

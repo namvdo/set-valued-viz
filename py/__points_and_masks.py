@@ -69,21 +69,21 @@ def point_normals(points):
     diff = np.diff(points, prepend=points[-1:], axis=0)
     return vectors_to_radians(diff)-np.pi/2
 
-def simple_normals_from_points(points):
-    # now outer_points must be expanded outward by the epsilon
-    normals = point_normals(points)
-    
-    candidates0 = radians_to_vectors(normals) # either inside or outside
-    candidates1 = radians_to_vectors(normals+np.pi) # either inside or outside
-    
-    # findout which has the larger bounding box -> the outside
-    # and make the outside points the new outer_points
-    cand0_topleft, cand0_bottomright = bounding_box(candidates0)
-    cand1_topleft, cand1_bottomright = bounding_box(candidates1)
-    cand0_area = np.prod(np.subtract(cand0_bottomright, cand0_topleft))
-    cand1_area = np.prod(np.subtract(cand1_bottomright, cand1_topleft))
-    if cand0_area>cand1_area: return candidates0
-    return candidates1
+##def simple_normals_from_points(points):
+##    # now outer_points must be expanded outward by the epsilon
+##    normals = point_normals(points)
+##    
+##    candidates0 = radians_to_vectors(normals) # either inside or outside
+##    candidates1 = radians_to_vectors(normals+np.pi) # either inside or outside
+##    
+##    # findout which has the larger bounding box -> the outside
+##    # and make the outside points the new outer_points
+##    cand0_topleft, cand0_bottomright = bounding_box(candidates0)
+##    cand1_topleft, cand1_bottomright = bounding_box(candidates1)
+##    cand0_area = np.prod(np.subtract(cand0_bottomright, cand0_topleft))
+##    cand1_area = np.prod(np.subtract(cand1_bottomright, cand1_topleft))
+##    if cand0_area>cand1_area: return candidates0
+##    return candidates1
 
 
 def even_sided_polygon(sides, rotation):
@@ -887,7 +887,31 @@ class PeriodicPointDetector():
 
 
 
+def point_dome(n_layers, radius):
+    dome = []
+    for n in range(1, n_layers+1):
+        ratio = n/n_layers
+        rads = np.linspace(0, np.pi*2, 3*n+1)[1:]
+        
+        circle = radians_to_vectors(rads)
+        circle *= np.sin(ratio*np.pi/2)
+        circle = np.pad(circle, ((0,0),(0,1)))
+        
+        circle[:,2] = -np.cos(ratio*np.pi/2)
+        circle *= radius
+        dome.append(circle)
+    return dome
 
+def point_ball(*args, **kwargs):
+    dome = point_dome(*args, **kwargs)
+    bowl = [-x for x in dome[-2::-1]]
+    return dome+bowl
+
+##def ball_graph(*args, **kwargs):
+##    ball = point_ball(*args, **kwargs)
+##    graph = Graph()
+##    for i in range(len(ball)):
+##        pass
 
 
 
