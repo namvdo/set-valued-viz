@@ -62,18 +62,28 @@ def hausdorff_distance_testing():
         print(test1(points1, points2))
         print(test2(points1, points2))
 ##        print(test3(points1, points2))
+
+
+        print("\ninside crescent")
+        points1 = np.random.random((n,2))
+        points2 = (np.random.random((n,2))-.5)*3
+        move_mask = (points2[:,0]>0)*(points2[:,1]>0)
+        points2[move_mask] *= -1
+        print(test1(points1, points2))
+        print(test2(points1, points2))
+        
         input("continue...")
         n <<= 1
 
 
 
 if __name__ == "__main__":
-    dome = point_ball(12, 1)
-
-    drawing = ImageDrawing()
-##    drawing.set_color_bg(r=0, g=0, b=0)
+##    hausdorff_distance_testing()
     
-    drawing.pitch = np.pi/3
+    dome = point_ball(12, 1)
+    drawing = ImageDrawing()
+    
+##    drawing.pitch = np.pi/3
 ##    drawing.yaw = np.pi/16
 ##    drawing.tilt = np.pi/16
 
@@ -82,4 +92,4 @@ if __name__ == "__main__":
         obj.set_color(r=1)
         obj.set_color_bg(b=1, a=0.1)
         
-    drawing.test_draw(1000)  # , camera_dist=0
+    drawing.test_draw(1000, camera_dist=0)  # 

@@ -140,8 +140,8 @@ class ImageDrawing(ColorObj):
             if can_do_perspective:
                 # by distance instead
                 dists = np.linalg.norm(points-camera_pos, axis=1)
-                dists -= dists.min()
-                dists /= dists.max()
+                dists -= camera_dist
+                dists /= br[2]-tl[2]
                 return dists.reshape(-1, 1)
             return (points[:,2:3]-camera_pos[2])/(br[2]-camera_pos[2]) # 0...1
         #
