@@ -23,6 +23,10 @@ class ModelInstance():
     step = None # -> IntegerField
     step_data_label = None # -> label
     auto_extend = None # -> BooleanSwitch
+
+    yaw = None # -> IntegerField
+    tilt = None # -> IntegerField
+    pitch = None # -> IntegerField
     
     def __init__(self, on_destroy, **kwargs):
         for k,v in kwargs.items():
@@ -175,6 +179,14 @@ class ModelInstance():
         #
 
         #
+        width = 4
+        ff = nice_titled_frame(f, "rotation", side=tk.TOP, anchor="nw", fill=tk.Y)
+        self.pitch = IntegerField(ff, low=0, mod=360, width=width, label_text="pitch", justify="center")
+        self.yaw = IntegerField(ff, low=0, mod=360, width=width, label_text="yaw", justify="center")
+        self.tilt = IntegerField(ff, low=0, mod=360, width=width, label_text="tilt", justify="center")
+        #
+
+        #
         ff = nice_titled_frame(f, "colors", side=tk.TOP)
         
         self.colors = {
@@ -196,9 +208,9 @@ class ModelInstance():
     def draw(self, resolution:int):
         
         drawing = ImageDrawing()
-##        drawing.yaw = 0
-##        drawing.tilt = 0
-##        drawing.pitch = 0
+        drawing.yaw = self.yaw.get()/180*np.pi
+        drawing.tilt = self.tilt.get()/180*np.pi
+        drawing.pitch = self.pitch.get()/180*np.pi
         drawing.set_color(*np.divide(self.colors["background"], 255))
         
         color = np.divide(self.colors["boundary"], 255)
@@ -253,12 +265,12 @@ class ModelInstance():
             obj.set_color(*color)
         
         image = drawing.draw(resolution)
-        return image, drawing.tl, drawing.br
+        return image, drawing.get_extent()#drawing.tl, drawing.br
         
     def save_png(self):
         path = os.path.join(SAVEDIR, "test.png")
         makedirs(path)
-        image, _, _ = self.draw(self.png_resolution.get())
+        image, _ = self.draw(self.png_resolution.get())
         PIL_image_from_array(image).save(path, optimize=True)
     
     def model_reset(self):
@@ -307,10 +319,10 @@ class ModelInstance():
         
     def refresh_viewport(self):
         if self.model.has_points():
-            image, tl, br = self.draw(self.fig_resolution.get())
+            image, extent = self.draw(self.fig_resolution.get())
             title = f"{len(self.model)} points"
             title += f"\nimage: {image.shape[:2]}"
-            self.viewport.update(image, tl, br, title=title)
+            self.viewport.update(image, extent, title=title)
         else:
             self.viewport.clear()
 

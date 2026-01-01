@@ -915,6 +915,39 @@ def point_ball(*args, **kwargs):
 
 
 
+
+
+
+
+
+
+
+
+def bezier_curve_intersection(point1, point2, tangent1, tangent2): # 2D
+    line1 = (point1, point1+tangent1)
+    line2 = (point2, point2+tangent2)
+    return find_intersection(line1, line2)
+
+def bezier_curve(point1, point2, controlpoint, length=1): # n-dimensional
+    points1 = np.linspace(point1, controlpoint, length)
+    points2 = np.linspace(controlpoint, point2, length)
+    progress = np.linspace(np.zeros(len(point1)), np.ones(len(point1)), length)
+    return points1*(1-progress)+points2*progress
+
+def bezier_curve_using_normals(point1, point2, normal1, normal2, length=1):
+    tangents = rotate_vectors(np.array((normal1, normal2)), np.pi/2)
+    controlpoint = bezier_curve_intersection(point1, point2, tangents[0], tangents[1])
+    if controlpoint is not None:
+        return bezier_curve(point1, point2, controlpoint, length)
+    # straight line
+    return np.linspace(point1, point2, length)
+
+
+
+
+
+
+
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
     

@@ -25,9 +25,9 @@ class Viewport():
         self.subplot.clear()
         self.canvas.draw()
     
-    def update(self, image, tl, br, title=None):
+    def update(self, image, extent, title=None):
         self.subplot.clear()
-        self.subplot.imshow(image, extent=(tl[0], br[0], tl[1], br[1]))
+        self.subplot.imshow(image, extent=extent)
         self.subplot.set_title(title)
         self.canvas.draw()
 
