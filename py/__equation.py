@@ -2,26 +2,24 @@ import re
 import numpy as np
 
 
-def find_parenthesis_start(string, start_index):
+def find_parenthesis_start(string, start_index, start_symbol="(", end_symbol=")"):
     index = 0
     closure = 0
     for i in range(start_index):
         c = string[start_index-i]
-        match c:
-            case "(": closure += 1
-            case ")": closure -= 1
+        if c==start_symbol: closure += 1
+        elif c==end_symbol: closure -= 1
         if closure>=0:
             index = start_index-i
             break
     return index
-def find_parenthesis_end(string, start_index):
+def find_parenthesis_end(string, start_index, start_symbol="(", end_symbol=")"):
     index = len(string)-1
-    closure = -int(string[start_index]=="(")
+    closure = -int(string[start_index]==start_symbol)
     for i in range(len(string)-start_index):
         c = string[start_index+i]
-        match c:
-            case "(": closure += 1
-            case ")": closure -= 1
+        if c==start_symbol: closure += 1
+        elif c==end_symbol: closure -= 1
         if closure<0:
             index = start_index+i
             break
@@ -549,76 +547,18 @@ def transpose_matrix(matrix):
             matrix[i][j] = matrix[j][i]
             matrix[j][i] = temp
 
-##class MappingFunction2D:
-##    def __init__(self, fx:str, fy:str):
-##        self.fx = EquationObject(fx)
-##        self.fy = EquationObject(fy)
-##        self.constants = {}
-##
-##    def set_constants(self, **values):
-##        self.constants.update(values)
-##        
-##    def required_constants(self): # return a set of keyword arguments __call__ requires
-##        need = self.fx.required_inputs()
-##        need |= self.fy.required_inputs()
-##        if "x" in need: need.remove("x")
-##        if "y" in need: need.remove("y")
-##        return need
-##
-##    def missing_constants(self):
-##        return self.required_constants()-set(self.constants.keys())
-##
-##    def trim_excess_constants(self):
-##        required = self.required_constants()
-##        for k in list(self.constants.keys()):
-##            if k not in required: del self.constants[k]
-##
-##    def copy(self):
-##        new = type(self)(self.fx.string, self.fy.string)
-##        new.constants = self.constants.copy()
-##        return new
-##    
-##    def __str__(self):
-##        x = self.fx.string
-##        y = self.fy.string
-##        for k,v in self.constants.items():
-##            v = str(v)
-##            x = x.replace(k, v)
-##            y = y.replace(k, v)
-##        missing = self.missing_constants()
-##        return f"({x}, {y})" + (str(" (has undefined constants)") if missing else "")
-##    
-##    def __call__(self, x, y, **inputs):
-##        return (self.fx.solve(x=x, y=y, **self.constants|inputs),
-##                self.fy.solve(x=x, y=y, **self.constants|inputs))
-##
-##    def jacobian(self):
-##        return [
-##            [self.fx.derivative("x"), self.fx.derivative("y")],
-##            [self.fy.derivative("x"), self.fy.derivative("y")],
-##            ]
-##
-##    def tij2D(self): # T(L)^-1
-##        matrix = self.jacobian()
-##        transpose_matrix(matrix)
-##        
-##        # determinant
-##        det = f"({matrix[0][0].string})*({matrix[1][1].string})-({matrix[0][1].string})*({matrix[1][0].string})"
-##        det = expand(shrink(det))
-##        if det=="0":
-##            print("non invertible matrix")
-##            return None
-##        
-##        # inverse
-##        matrix[0][0], matrix[1][1] = matrix[1][1], matrix[0][0]
-##        matrix[0][1].string = f"-({matrix[0][1].string})"
-##        matrix[1][0].string = f"-({matrix[1][0].string})"
-##        for i in range(2):
-##            for j in range(2):
-##                o = matrix[i][j]
-##                o.string = f"({o.string})/({det})" # divide with the determinant
-##        return matrix
 
+def solve_matrix(matrix, **inputs):
+    output = []
+    l = len(matrix)
+    for i in range(l):
+        temp = []
+        for j in range(l):
+            result = np.asarray(matrix[i][j].solve(**inputs))
+            np.nan_to_num(result, copy=False)
+            temp.append(result)
+        output.append(temp)
+    return output
 
 
 class MappingFunction: # N-dimensional version of MappingFunction2D
@@ -790,17 +730,6 @@ class MappingFunction: # N-dimensional version of MappingFunction2D
         return matrix
 
 
-def solve_matrix(matrix, **inputs):
-    output = []
-    l = len(matrix)
-    for i in range(l):
-        temp = []
-        for j in range(l):
-            result = np.asarray(matrix[i][j].solve(**inputs))
-            np.nan_to_num(result, copy=False)
-            temp.append(result)
-        output.append(temp)
-    return output
 
 
 

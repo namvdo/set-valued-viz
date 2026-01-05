@@ -134,11 +134,10 @@ class ImageDrawing(ColorObj):
         return obj
 
 
-    def calc_perspective_zoom(self, camera_pos):
-        corners = np.array(list(bounding_corners(np.array([self.tl, self.br]))))
-        apply_curvilinear_perspective(corners, camera_pos, zoom=1.)
-        return distance(self.tl, self.br)/distance(*bounding_box(corners))
-        
+##    def calc_perspective_zoom(self, camera_pos):
+##        corners = np.array(list(bounding_corners(np.array([self.tl, self.br]))))
+##        apply_curvilinear_perspective(corners, camera_pos, zoom=1.)
+##        return distance(self.tl, self.br)/distance(*bounding_box(corners))
     
     
     def draw(self, resolution:int, topright_is_the_positive_corner:bool=True, camera_dist:float=None):

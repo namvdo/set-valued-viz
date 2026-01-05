@@ -8,12 +8,6 @@ def distance(a, b):
 def nearestpoint_i(point, points):
     return np.argmin(np.linalg.norm(points-point, axis=1))
 
-def farthestpoint_i(point, points):
-    return np.argmax(np.linalg.norm(points-point, axis=1))
-
-def nearestvalue_i(array, value):
-    return np.argmin(np.abs(np.asarray(array)-value))
-
 def find_intersection(line0, line1):
     def det(a, b): return a[0]*b[1]-a[1]*b[0]
     xdiff = (line0[0][0]-line0[1][0], line1[0][0]-line1[1][0])
@@ -24,11 +18,6 @@ def find_intersection(line0, line1):
         y = det(d, ydiff) / div
         return x, y
 #
-
-def radians_absolute(radians): # -inf...inf -> 0...2*np.pi
-    radians = np.mod(radians, np.pi*2)
-    radians[radians<0] = radians[radians<0]+np.pi*2
-    return radians
 
 def radians_to_vectors(radians):
     vectors = np.repeat(np.expand_dims(radians, axis=1), 2, axis=1)
@@ -41,13 +30,6 @@ def vectors_to_radians(vectors):
 
 def bounding_box(points): # n-dimensional
     return np.min(points, axis=0), np.max(points, axis=0)
-
-def bounding_box_corners(points):
-    tl, br = np.min(points, axis=0), np.max(points, axis=0)
-    asd = np.concatenate([tl,br[::-1]], axis=0)
-    bl = asd[::2]
-    tr = asd[::-2]
-    return tl, tr, br, bl
 
 def bounding_corners(points): # n-dimensional
     # iterate every dimensional corner
@@ -64,27 +46,6 @@ def bounding_corners(points): # n-dimensional
         j = np.argmin(mask)
         mask[j] = True
         mask[:j] = False
-
-def point_normals(points):
-    diff = np.diff(points, prepend=points[-1:], axis=0)
-    return vectors_to_radians(diff)-np.pi/2
-
-##def simple_normals_from_points(points):
-##    # now outer_points must be expanded outward by the epsilon
-##    normals = point_normals(points)
-##    
-##    candidates0 = radians_to_vectors(normals) # either inside or outside
-##    candidates1 = radians_to_vectors(normals+np.pi) # either inside or outside
-##    
-##    # findout which has the larger bounding box -> the outside
-##    # and make the outside points the new outer_points
-##    cand0_topleft, cand0_bottomright = bounding_box(candidates0)
-##    cand1_topleft, cand1_bottomright = bounding_box(candidates1)
-##    cand0_area = np.prod(np.subtract(cand0_bottomright, cand0_topleft))
-##    cand1_area = np.prod(np.subtract(cand1_bottomright, cand1_topleft))
-##    if cand0_area>cand1_area: return candidates0
-##    return candidates1
-
 
 def even_sided_polygon(sides, rotation):
     radians = np.linspace(0, np.pi*2, sides+1)[:-1]
@@ -233,173 +194,173 @@ def find_hausdorff_pair(points1, points2): # n-dimensional
 
 
 
-def hausdorff_distance3(points1, points2, float_precision=10000):
-    # both ways
-    # VERY FAST
-    overlap = overlap_box(*bounding_box(points1), *bounding_box(points2))
-    if overlap is not None: # there is overlap -> slower method
-        # find the nearest point per point in the other object
-        temp_dist = 0
-        for pp in points1:
-            dists = np.linalg.norm(pp-points2, axis=1)
-            i = np.argmin(dists)
-            p = points2[i]
-            if dists[i]>temp_dist:
-                temp_dist = dists[i]
-                farthest_point1 = pp
-                nearest_point2 = p
-        temp_dist = 0
-        for pp in points2:
-            dists = np.linalg.norm(pp-points1, axis=1)
-            i = np.argmin(dists)
-            p = points1[i]
-            if dists[i]>temp_dist:
-                temp_dist = dists[i]
-                farthest_point2 = pp
-                nearest_point1 = p
-        
-    else: # no overlap -> fast method
-        # inaccurate when there is significant overlap between objects
-        mp1 = MassPointsFloat(float_precision=float_precision)
-        mp2 = MassPointsFloat(float_precision=float_precision)
-        for i,p in enumerate(points1): mp1.set(i, p)
-        for i,p in enumerate(points2): mp2.set(i, p)
-
-        # find object center
-        nearest_point1 = np.add(*bounding_box(points1))/2
-        nearest_point2 = np.add(*bounding_box(points2))/2
-        
-        # find the farthest point from the other nearest point
-        farthest1 = mp1.farthest(nearest_point2)
-        farthest2 = mp2.farthest(nearest_point1)
-        farthest_point1 = points1[list(farthest1)[0]]
-        farthest_point2 = points2[list(farthest2)[0]]
-        
-        # find the nearest point in the other object from the farthest point
-        nearest1 = mp1.nearest(farthest_point2)
-        nearest2 = mp2.nearest(farthest_point1)
-        nearest_point1 = points1[list(nearest1)[0]]
-        nearest_point2 = points2[list(nearest2)[0]]
+##def hausdorff_distance3(points1, points2, float_precision=10000):
+##    # both ways
+##    # VERY FAST
+##    overlap = overlap_box(*bounding_box(points1), *bounding_box(points2))
+##    if overlap is not None: # there is overlap -> slower method
+##        # find the nearest point per point in the other object
+##        temp_dist = 0
+##        for pp in points1:
+##            dists = np.linalg.norm(pp-points2, axis=1)
+##            i = np.argmin(dists)
+##            p = points2[i]
+##            if dists[i]>temp_dist:
+##                temp_dist = dists[i]
+##                farthest_point1 = pp
+##                nearest_point2 = p
+##        temp_dist = 0
+##        for pp in points2:
+##            dists = np.linalg.norm(pp-points1, axis=1)
+##            i = np.argmin(dists)
+##            p = points1[i]
+##            if dists[i]>temp_dist:
+##                temp_dist = dists[i]
+##                farthest_point2 = pp
+##                nearest_point1 = p
+##        
+##    else: # no overlap -> fast method
+##        # inaccurate when there is significant overlap between objects
+##        mp1 = MassPointsFloat(float_precision=float_precision)
+##        mp2 = MassPointsFloat(float_precision=float_precision)
+##        for i,p in enumerate(points1): mp1.set(i, p)
+##        for i,p in enumerate(points2): mp2.set(i, p)
+##
+##        # find object center
+##        nearest_point1 = np.add(*bounding_box(points1))/2
+##        nearest_point2 = np.add(*bounding_box(points2))/2
+##        
+##        # find the farthest point from the other nearest point
+##        farthest1 = mp1.farthest(nearest_point2)
+##        farthest2 = mp2.farthest(nearest_point1)
+##        farthest_point1 = points1[list(farthest1)[0]]
+##        farthest_point2 = points2[list(farthest2)[0]]
+##        
+##        # find the nearest point in the other object from the farthest point
+##        nearest1 = mp1.nearest(farthest_point2)
+##        nearest2 = mp2.nearest(farthest_point1)
+##        nearest_point1 = points1[list(nearest1)[0]]
+##        nearest_point2 = points2[list(nearest2)[0]]
+##    
+##    dist1 = distance(nearest_point1, farthest_point2)
+##    dist2 = distance(nearest_point2, farthest_point1)
+##    if dist1>dist2: return dist1, (nearest_point1, farthest_point2)
+##    return dist2, (nearest_point2, farthest_point1)
+##
+##
+##
+##def hausdorff_distance4(points1, points2): # presumes that points are in order, EVEN FASTER
+##    def quick_find_pair(ps1, ps2):
+##        step = max(int(np.sqrt(len(ps1))), 1)
+##        index1, index2 = find_hausdorff_pair(ps1[::step], ps2)
+##        if step==1: return ps1[index1], ps2[index2]
+##        start = max(index1-1, 0)*step
+##        end = (index1+1)*step+1
+##        index3, index2 = find_hausdorff_pair(ps1[start:end], ps2)
+##        index1 = start+index3
+##        return ps1[index1], ps2[index2]
+##    
+##    line1 = quick_find_pair(points1, points2)
+##    line2 = quick_find_pair(points2, points1)
+##    
+##    dist1 = distance(*line1)
+##    dist2 = distance(*line2)
+##    if dist1>dist2: return dist1, line1
+##    return dist2, line2
+##
+##
+##def hausdorff_distance5(points1, points2): # NOT QUITE AS FAST AS 4, but indifferent to point order; n-dimensional
+##    distance_matrix = np.zeros((len(points1), len(points2)))
+##    
+##    index1 = index2 = 0
+##    temp_dist = 0
+##    for i,p1 in enumerate(points1): # go through first points and build the distance matrix
+##        distance_matrix[i] = np.linalg.norm(p1-points2, axis=1)
+##        j = np.argmin(distance_matrix[i])
+##        if distance_matrix[i,j]>temp_dist:
+##            temp_dist = distance_matrix[i,j]
+##            index1 = i
+##            index2 = j
+##    
+##    line1 = points1[index1], points2[index2]
+##    
+##    temp_dist = 0
+##    for i,j in enumerate(np.argmin(distance_matrix, axis=0)): # go through the distance matrix columns
+##        if distance_matrix[j,i]>temp_dist:
+##            temp_dist = distance_matrix[j,i]
+##            index1 = i
+##            index2 = j
+##    
+##    line2 = points2[index1], points1[index2]
+##    
+##    dist1 = distance(*line1)
+##    dist2 = distance(*line2)
+##    if dist1>dist2: return dist1, line1
+##    return dist2, line2
     
-    dist1 = distance(nearest_point1, farthest_point2)
-    dist2 = distance(nearest_point2, farthest_point1)
-    if dist1>dist2: return dist1, (nearest_point1, farthest_point2)
-    return dist2, (nearest_point2, farthest_point1)
-
-
-
-def hausdorff_distance4(points1, points2): # presumes that points are in order, EVEN FASTER
-    def quick_find_pair(ps1, ps2):
-        step = max(int(np.sqrt(len(ps1))), 1)
-        index1, index2 = find_hausdorff_pair(ps1[::step], ps2)
-        if step==1: return ps1[index1], ps2[index2]
-        start = max(index1-1, 0)*step
-        end = (index1+1)*step+1
-        index3, index2 = find_hausdorff_pair(ps1[start:end], ps2)
-        index1 = start+index3
-        return ps1[index1], ps2[index2]
-    
-    line1 = quick_find_pair(points1, points2)
-    line2 = quick_find_pair(points2, points1)
-    
-    dist1 = distance(*line1)
-    dist2 = distance(*line2)
-    if dist1>dist2: return dist1, line1
-    return dist2, line2
-
-
-def hausdorff_distance5(points1, points2): # NOT QUITE AS FAST AS 4, but indifferent to point order; n-dimensional
-    distance_matrix = np.zeros((len(points1), len(points2)))
-    
-    index1 = index2 = 0
-    temp_dist = 0
-    for i,p1 in enumerate(points1): # go through first points and build the distance matrix
-        distance_matrix[i] = np.linalg.norm(p1-points2, axis=1)
-        j = np.argmin(distance_matrix[i])
-        if distance_matrix[i,j]>temp_dist:
-            temp_dist = distance_matrix[i,j]
-            index1 = i
-            index2 = j
-    
-    line1 = points1[index1], points2[index2]
-    
-    temp_dist = 0
-    for i,j in enumerate(np.argmin(distance_matrix, axis=0)): # go through the distance matrix columns
-        if distance_matrix[j,i]>temp_dist:
-            temp_dist = distance_matrix[j,i]
-            index1 = i
-            index2 = j
-    
-    line2 = points2[index1], points1[index2]
-    
-    dist1 = distance(*line1)
-    dist2 = distance(*line2)
-    if dist1>dist2: return dist1, line1
-    return dist2, line2
-    
-def divide_to_sectors(points): # n-dimensional
-    # yield batches of points based on what dimensional corner direction is the closest
-    ndim = points.shape[1]
-    tl, br = bounding_box(points)
-    mask = np.zeros(ndim, dtype=np.bool_)
-    
-    distance_matrix = np.zeros((ndim*2,len(points)))
-    index = 0
-    while 1:
-        corner = tl.copy()
-        corner[mask] = br[mask]
-        
-        distance_matrix[index] = np.linalg.norm(points-corner, axis=1)
-        index += 1
-        
-        if mask.all(): break
-        
-        j = np.argmin(mask)
-        mask[j] = True
-        mask[:j] = False
-    
-    sectors = np.argmin(distance_matrix, axis=0)
-    for i in range(ndim*2):
-        yield points[sectors==i]
-
-def hausdorff_distance6(points1, points2): # SUPER FAST, but inaccurate; n-dimensional
-    
-    def get_sectors_and_centers(points):
-        sectors = [ps for ps in divide_to_sectors(points) if ps.size>0]
-        centers = [np.mean(ps, axis=0) for ps in sectors]
-        return sectors, centers
-    
-    nearest_points1 = points1
-    nearest_points2 = points2
-    farthest_points1 = points1
-    farthest_points2 = points2
-    
-    while 1:
-        near_sectors1, near_centers1 = get_sectors_and_centers(nearest_points1)
-        near_sectors2, near_centers2 = get_sectors_and_centers(nearest_points2)
-        far_sectors1, far_centers1 = get_sectors_and_centers(farthest_points1)
-        far_sectors2, far_centers2 = get_sectors_and_centers(farthest_points2)
-        if len(far_sectors2)<2 and len(far_sectors1)<2 and len(near_sectors1)<2 and len(near_sectors2)<2: break
-        
-        far1,near2 = find_hausdorff_pair(far_centers1, near_centers2)
-        far2,near1 = find_hausdorff_pair(far_centers2, near_centers1)
-        
-        nearest_points1 = near_sectors1[near1]
-        nearest_points2 = near_sectors2[near2]
-        farthest_points1 = far_sectors1[far1]
-        farthest_points2 = far_sectors2[far2]
-    
-    # finish
-    far1,near2 = find_hausdorff_pair(farthest_points1, nearest_points2)
-    line1 = farthest_points1[far1], nearest_points2[near2]
-    
-    far2,near1 = find_hausdorff_pair(farthest_points2, nearest_points1)
-    line2 = farthest_points2[far2], nearest_points1[near1]
-    
-    dist1 = distance(*line1)
-    dist2 = distance(*line2)
-    if dist1>dist2: return dist1, line1
-    return dist2, line2
+##def divide_to_sectors(points): # n-dimensional
+##    # yield batches of points based on what dimensional corner direction is the closest
+##    ndim = points.shape[1]
+##    tl, br = bounding_box(points)
+##    mask = np.zeros(ndim, dtype=np.bool_)
+##    
+##    distance_matrix = np.zeros((ndim*2,len(points)))
+##    index = 0
+##    while 1:
+##        corner = tl.copy()
+##        corner[mask] = br[mask]
+##        
+##        distance_matrix[index] = np.linalg.norm(points-corner, axis=1)
+##        index += 1
+##        
+##        if mask.all(): break
+##        
+##        j = np.argmin(mask)
+##        mask[j] = True
+##        mask[:j] = False
+##    
+##    sectors = np.argmin(distance_matrix, axis=0)
+##    for i in range(ndim*2):
+##        yield points[sectors==i]
+##
+##def hausdorff_distance6(points1, points2): # SUPER FAST, but inaccurate; n-dimensional
+##    
+##    def get_sectors_and_centers(points):
+##        sectors = [ps for ps in divide_to_sectors(points) if ps.size>0]
+##        centers = [np.mean(ps, axis=0) for ps in sectors]
+##        return sectors, centers
+##    
+##    nearest_points1 = points1
+##    nearest_points2 = points2
+##    farthest_points1 = points1
+##    farthest_points2 = points2
+##    
+##    while 1:
+##        near_sectors1, near_centers1 = get_sectors_and_centers(nearest_points1)
+##        near_sectors2, near_centers2 = get_sectors_and_centers(nearest_points2)
+##        far_sectors1, far_centers1 = get_sectors_and_centers(farthest_points1)
+##        far_sectors2, far_centers2 = get_sectors_and_centers(farthest_points2)
+##        if len(far_sectors2)<2 and len(far_sectors1)<2 and len(near_sectors1)<2 and len(near_sectors2)<2: break
+##        
+##        far1,near2 = find_hausdorff_pair(far_centers1, near_centers2)
+##        far2,near1 = find_hausdorff_pair(far_centers2, near_centers1)
+##        
+##        nearest_points1 = near_sectors1[near1]
+##        nearest_points2 = near_sectors2[near2]
+##        farthest_points1 = far_sectors1[far1]
+##        farthest_points2 = far_sectors2[far2]
+##    
+##    # finish
+##    far1,near2 = find_hausdorff_pair(farthest_points1, nearest_points2)
+##    line1 = farthest_points1[far1], nearest_points2[near2]
+##    
+##    far2,near1 = find_hausdorff_pair(farthest_points2, nearest_points1)
+##    line2 = farthest_points2[far2], nearest_points1[near1]
+##    
+##    dist1 = distance(*line1)
+##    dist2 = distance(*line2)
+##    if dist1>dist2: return dist1, line1
+##    return dist2, line2
 
 def hausdorff_distance7(points1, points2): # BASELINE, checks every point against every point
     far1,near2 = find_hausdorff_pair(points1, points2)
@@ -467,16 +428,6 @@ def hausdorff_distance8(points1, points2): # SUPER FAST and accurate; n-dimensio
     if dist1>dist2: return dist1, line1
     return dist2, line2
 
-
-##def find_hausdorff_pair_backandforth(points1, points2): # n-dimensional; inaccurate if there is overlap
-##    far_point = np.mean(points1, axis=0)
-##    far = near = None
-##    while 1:
-##        near = np.argmin(np.linalg.norm(points2-far_point, axis=1))
-##        i = np.argmax(np.linalg.norm(points1-points2[near], axis=1))
-##        if far==i: break # no change -> found the best pair
-##        far = i
-##    return far, near
 
 
 
@@ -569,43 +520,9 @@ def polygon_mask(points, resolution:int, fill=False):
     if fill: image |= horizontally_closed_areas(image)
     return image
 
-
-def center_rotate_points(points, rotation):
-    topleft, bottomright = bounding_box(points)
-    center = (bottomright+topleft)/2
-    offsets = points-center
-    temp = offsets[:,0]
-    offsets[:,0] = temp*np.cos(rotation)-offsets[:,1]*np.sin(rotation)
-    offsets[:,1] = temp*np.sin(rotation)+offsets[:,1]*np.cos(rotation)
-    return center+offsets
-
 def image_color_mask(image, color):
     return (image[:,:,0]==color[0])*(image[:,:,1]==color[1])*(image[:,:,2]==color[2])
 
-
-##def fill_closed_areas(mask): # very crude
-##    fill_mask_hor = np.zeros(mask.shape, dtype=np.bool_)
-##    fill_mask_ver = fill_mask_hor.copy()
-##    
-##    for r,row in enumerate(mask):
-##        i = row.argmax() # first one
-##        while 1:
-##            j = i+row[i:].argmin() # first zero after that
-##            ii = j+row[j:].argmax() # closing one
-##            if j==ii: break
-##            fill_mask_hor[r,j:ii] = True
-##            i = ii
-##            
-##    for c in range(mask.shape[1]):
-##        col = mask[:,c]
-##        i = col.argmax() # first one
-##        while 1:
-##            j = i+col[i:].argmin() # first zero after that
-##            ii = j+col[j:].argmax() # closing one
-##            if j==ii: break
-##            fill_mask_ver[j:ii,c] = True
-##            i = ii
-##    return fill_mask_hor*fill_mask_ver
 
 
 def horizontally_closed_areas(mask):
@@ -691,101 +608,101 @@ def iterate_intersections(points):
                 yield intersection, (i-1, i), (j-1, j) # intersection + lines as point indexes
                 done.add(k1)
 
-def sort_points_to_polygon(points): # crude and inaccurate
-    l = len(points)
-    unused = np.ones(l, dtype=np.bool_)
-    indexes = np.arange(l)
-    sorting = indexes.copy()
-
-    def get_nearest(p):
-        dists = np.linalg.norm(points[unused]-p, axis=1)
-        i = np.argmin(dists)
-        return indexes[unused][i], dists[i]
-    
-    count_right = count_left = 0
-    index_right = index_left = np.argmin(np.linalg.norm(np.diff(points, axis=0), axis=1))
-    while 1:
-        sorting[count_right] = index_right
-        unused[index_right] = False
-        sorting[count_left] = index_left
-        unused[index_left] = False
-        
-        if not unused.any(): break
-        index1, dist1 = get_nearest(points[index_right])
-        index2, dist2 = get_nearest(points[index_left])
-        if dist1<dist2:
-            index_right = index1
-            count_right += 1
-        else:
-            index_left = index2
-            count_left -= 1
-    points[:] = points[sorting]
 
 
-
-def sort_points_to_polygon3(points): # slow and dumb, but "works"
-    l = len(points)
-    indexes = np.arange(l)
-    
-    distances = np.zeros((l,l))
-    for i in range(l):
-        p = points[i]
-        distances[i] = np.linalg.norm(points-p, axis=1)
-    
-    def single_run(start):
-        sorting = indexes.copy()
-        valid = np.ones(l, dtype=np.bool_)
-        best_index = start
-        step = 0
-        sorting[step] = best_index
-        valid[best_index] = False
-        while valid.any():
-            step += 1
-            order = distances[best_index].argsort()
-            next_index = order[valid[order]][0]
-            best_index = next_index
-            sorting[step] = best_index
-            valid[best_index] = False
-        return sorting
-    
-    sorting = single_run(0)
-    while 1: # clean up intersections
-        points[:] = points[sorting]
-        sorting[:] = indexes
-        intersections = False
-        for x,ii,jj in iterate_intersections(points):
-            intersections = True
-            sorting[ii[1]] = jj[0]
-            sorting[jj[0]] = ii[1]
-            break
-        if not intersections: break
-
-
-
-def small_triangles_from_points(points):
-    l = len(points)
-    indexes = np.arange(l)
-    valid = np.ones(l, dtype=np.bool_)
-
-    def smallest_triangle(index):
-        dists = distance(points, points[index])
-        dists[index] = dists.max()+1
-        
-        i = np.argmin(dists)
-        dists[i] = dists.max()
-        i = indexes[i]
-        
-        j = np.argmin(dists)
-        j = indexes[j]
-        
-        return i, j
-
-    visited = set()
-    for i in range(l):
-        if i not in visited:
-            j, k = smallest_triangle(i)
-            visited |= {i,j,k}
-            yield np.array([points[i],points[j],points[k]])
+##def sort_points_to_polygon(points): # crude and inaccurate
+##    l = len(points)
+##    unused = np.ones(l, dtype=np.bool_)
+##    indexes = np.arange(l)
+##    sorting = indexes.copy()
+##
+##    def get_nearest(p):
+##        dists = np.linalg.norm(points[unused]-p, axis=1)
+##        i = np.argmin(dists)
+##        return indexes[unused][i], dists[i]
+##    
+##    count_right = count_left = 0
+##    index_right = index_left = np.argmin(np.linalg.norm(np.diff(points, axis=0), axis=1))
+##    while 1:
+##        sorting[count_right] = index_right
+##        unused[index_right] = False
+##        sorting[count_left] = index_left
+##        unused[index_left] = False
+##        
+##        if not unused.any(): break
+##        index1, dist1 = get_nearest(points[index_right])
+##        index2, dist2 = get_nearest(points[index_left])
+##        if dist1<dist2:
+##            index_right = index1
+##            count_right += 1
+##        else:
+##            index_left = index2
+##            count_left -= 1
+##    points[:] = points[sorting]
+##
+##def sort_points_to_polygon3(points): # slow and dumb, but "works"
+##    l = len(points)
+##    indexes = np.arange(l)
+##    
+##    distances = np.zeros((l,l))
+##    for i in range(l):
+##        p = points[i]
+##        distances[i] = np.linalg.norm(points-p, axis=1)
+##    
+##    def single_run(start):
+##        sorting = indexes.copy()
+##        valid = np.ones(l, dtype=np.bool_)
+##        best_index = start
+##        step = 0
+##        sorting[step] = best_index
+##        valid[best_index] = False
+##        while valid.any():
+##            step += 1
+##            order = distances[best_index].argsort()
+##            next_index = order[valid[order]][0]
+##            best_index = next_index
+##            sorting[step] = best_index
+##            valid[best_index] = False
+##        return sorting
+##    
+##    sorting = single_run(0)
+##    while 1: # clean up intersections
+##        points[:] = points[sorting]
+##        sorting[:] = indexes
+##        intersections = False
+##        for x,ii,jj in iterate_intersections(points):
+##            intersections = True
+##            sorting[ii[1]] = jj[0]
+##            sorting[jj[0]] = ii[1]
+##            break
+##        if not intersections: break
+##
+##
+##
+##def small_triangles_from_points(points):
+##    l = len(points)
+##    indexes = np.arange(l)
+##    valid = np.ones(l, dtype=np.bool_)
+##
+##    def smallest_triangle(index):
+##        dists = distance(points, points[index])
+##        dists[index] = dists.max()+1
+##        
+##        i = np.argmin(dists)
+##        dists[i] = dists.max()
+##        i = indexes[i]
+##        
+##        j = np.argmin(dists)
+##        j = indexes[j]
+##        
+##        return i, j
+##
+##    visited = set()
+##    for i in range(l):
+##        if i not in visited:
+##            j, k = smallest_triangle(i)
+##            visited |= {i,j,k}
+##            yield np.array([points[i],points[j],points[k]])
         
 
 
