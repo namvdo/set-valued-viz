@@ -356,6 +356,9 @@ def nice_field(frame, *args, identifier=None, side=tk.LEFT, fill=tk.BOTH, update
     set_hover_colors(field, set_active_colors_inverted, set_active_colors)
     return field
 
+def clear_field_content(field):
+    field.delete(0, tk.END)
+
 def set_field_content(field, string):
     field.delete(0, tk.END)
     field.insert(0, string)
@@ -497,6 +500,7 @@ class IntegerField:
     def refresh(self):
         val = self.get()
         if val is not None: set_field_content(self.field, str(val))
+        else: clear_field_content(self.field)
         if self.on_update is not None: self.on_update()
     def get(self): return self.var.get()
     def set(self, value, refresh=True):

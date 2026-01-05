@@ -77,19 +77,21 @@ def hausdorff_distance_testing():
 
 
 def image_drawing_3d_testing():
-    dome = point_ball(12, 1)
+    dome = point_ball(20, 1)
     drawing = ImageDrawing()
     
-    drawing.pitch = np.pi/3
-    drawing.yaw = np.pi/16
-    drawing.tilt = np.pi/16
+    drawing.set_isometric_rotation()
 
     for circle in dome:
         obj = drawing.lines(*point_lines(circle))
         obj.set_color(r=1)
         obj.set_color_bg(b=1, a=0.1)
-        
-    drawing.test_draw(1000, camera_dist=2)  #
+    
+    obj = drawing.lines(*drawing.get_axis_lines())
+    obj.set_color(r=1, g=.5)
+
+    distance = None # None == orthogonal
+    drawing.test_draw(2000, camera_dist=distance)  #
 
 
 def bezier_curve_testing():
@@ -101,9 +103,11 @@ def bezier_curve_testing():
     normal2 = (3,1)
     #
 
+    #
     tangents = rotate_vectors(np.array((normal1, normal2)), np.pi/2)
     curve_intsect = bezier_curve_intersection(point1, point2, *tangents)
     curve = bezier_curve(point1, point2, curve_intsect, 50)
+    # -> same as bezier_curve_using_normals(point1, point2, normal1, normal2, N)
 
     drawing = ImageDrawing()
     obj = drawing.circles([curve_intsect], 0.03)
@@ -125,6 +129,6 @@ def bezier_curve_testing():
 
 if __name__ == "__main__":
 ##    hausdorff_distance_testing()
-##    image_drawing_3d_testing()
+    image_drawing_3d_testing()
 ##    bezier_curve_testing()
     pass

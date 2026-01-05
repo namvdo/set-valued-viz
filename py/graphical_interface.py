@@ -179,11 +179,35 @@ class ModelInstance():
         #
 
         #
-        width = 4
-        ff = nice_titled_frame(f, "rotation", side=tk.TOP, anchor="nw", fill=tk.Y)
-        self.pitch = IntegerField(ff, low=0, mod=360, width=width, label_text="pitch", justify="center")
-        self.yaw = IntegerField(ff, low=0, mod=360, width=width, label_text="yaw", justify="center")
-        self.tilt = IntegerField(ff, low=0, mod=360, width=width, label_text="tilt", justify="center")
+        width = 8
+        ff = nice_titled_frame(f, "Camera", side=tk.TOP, anchor="nw", fill=tk.Y)
+        fff = nice_frame(ff, side=tk.LEFT, anchor="c", fill=tk.BOTH)
+        
+        self.pitch = FloatField(fff, low=0, mod=360, width=width, label_text="pitch", justify="center")
+        self.yaw = FloatField(fff, low=0, mod=360, width=width, label_text="yaw", justify="center")
+        self.tilt = FloatField(fff, low=0, mod=360, width=width, label_text="tilt", justify="center")
+        
+        self.camera_distance = FloatField(fff, val=None, low=0, can_disable=True, width=width, label_text="focal length", justify="center")
+        
+        fff = nice_frame(ff, side=tk.LEFT, anchor="n")
+        def _press():
+            rad_deg = 180/np.pi
+            self.pitch.set(315)
+            self.yaw.set(np.pi/5.1 * rad_deg)
+            self.tilt.set(330)
+            self.camera_distance.set(None) # disable perspective
+            
+        b = nice_button(fff, text="Isometric 1", side=tk.TOP, command=_press)
+        
+        def _press():
+            rad_deg = 180/np.pi
+            self.pitch.set(225)
+            self.yaw.set(np.pi/5.1 * rad_deg)
+            self.tilt.set(210)
+            self.camera_distance.set(None) # disable perspective
+            
+        b = nice_button(fff, text="Isometric 2", side=tk.TOP, command=_press)
+
         #
 
         #
@@ -197,6 +221,7 @@ class ModelInstance():
             "normals": [0,0,0,127],
             "prev. points": [0,0,255,0],
             "hausdorff line": [255,127,0,0],
+            "axes": [0,127,255,255],
             }
 ##        longest_name_len = len(max(self.colors.keys(), key=len))
         for name,color in self.colors.items():
@@ -208,6 +233,7 @@ class ModelInstance():
     def draw(self, resolution:int):
         
         drawing = ImageDrawing()
+        
         drawing.yaw = self.yaw.get()/180*np.pi
         drawing.tilt = self.tilt.get()/180*np.pi
         drawing.pitch = self.pitch.get()/180*np.pi
@@ -258,13 +284,35 @@ class ModelInstance():
         if max_y is not None:
             drawing.br[1] = max(drawing.br[1], max_y)
             if auto: self.max_y.set(round(drawing.br[1], auto_rounding))
+
+
+        def _2d_to_3d():
+            # draw 2d as 3d
+            tl = np.pad(drawing.tl, (0,1))
+            smallest_side = np.argmin(drawing.br-drawing.tl)
+            tl[2] = tl[smallest_side]
+            br = np.pad(drawing.br, (0,1))
+            br[2] = br[smallest_side]
+            drawing.update_tl_br(tl, br)
+            #
+
+        _2d_to_3d()
+        
+        color = np.divide(self.colors["axes"], 255)
+        if color[3]>0:
+            starts, ends = drawing.get_axis_lines()
+            for i in range(len(starts)):
+                lines = np.linspace(starts[i], ends[i], 10)
+                obj = drawing.lines(lines[:-1], lines[1:])
+                obj.set_color(r=color[i%3], g=color[(i+1)%3], b=color[(i+2)%3], a=color[3])
         
         color = np.divide(self.colors["grid"], 255)
         if color[3]>0:
             obj = drawing.grid((0,0), self.model.epsilon)
             obj.set_color(*color)
-        
-        image = drawing.draw(resolution)
+
+        camera_dist = self.camera_distance.get()
+        image = drawing.draw(resolution, camera_dist=camera_dist)
         return image, drawing.get_extent()#drawing.tl, drawing.br
         
     def save_png(self):

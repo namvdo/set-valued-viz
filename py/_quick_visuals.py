@@ -17,7 +17,7 @@ def plotting_grid(width=1, height=1, figsize=(8,8)):
 
 class ColorObj:
     color = None
-    color_bg = None # more depth -> color transitions to color_bg
+    color_bg = None # depth -> color transitions to color_bg
     def set_color(self, r=0, g=0, b=0, a=1):
         self.color = np.asarray([r,g,b,a], dtype=np.float64)
         if (self.color>1).any(): self.color /= 255
@@ -25,8 +25,10 @@ class ColorObj:
         self.color_bg = np.asarray([r,g,b,a], dtype=np.float64)
         if (self.color_bg>1).any(): self.color_bg /= 255
     def get_color_blend(self, ratio):
+        if self.color_bg is None: return self.color
         return self.color*(1-ratio) + self.color_bg*ratio
     def get_color_blends(self, ratios):
+        if self.color_bg is None: return np.expand_dims(self.color, axis=0)*np.ones((len(ratios), 1))
         return np.expand_dims(self.color, axis=0)*(1-ratios) + np.expand_dims(self.color_bg, axis=0)*ratios
 
 class ImageDrawing(ColorObj):
@@ -43,10 +45,9 @@ class ImageDrawing(ColorObj):
         center = (0,0) # origin
         size = .1
     
+    ndim = None
     tl = None
     br = None
-    
-    ndim = 0
     
     yaw = 0. # rotation around y axis
     tilt = 0. # rotation around z axis
@@ -54,6 +55,8 @@ class ImageDrawing(ColorObj):
     
     color = np.array([0,0,0,1.]) # default obj color
     color_bg = np.ones(4)
+
+    plane_depth = None # 2d points are given this value as the depth if not None
     
     def __init__(self):
         self.objects = []
@@ -63,45 +66,55 @@ class ImageDrawing(ColorObj):
         self.objects.clear()
         self.colors.clear()
 
+    def _check_points(self, points):
+        points = np.asarray(points, dtype=np.float64)
+        if points.shape[1]==2 and self.plane_depth is not None:
+            return np.pad(points, ((0,0),(0,1)))
+        return points
+
     def update_tl_br(self, tl, br):
         ndim = tl.shape[0]
-        if ndim<self.ndim: # update bounds have lower dimensionality than current
-            tl = np.pad(tl, (0,self.ndim-ndim))
-            br = np.pad(br, (0,self.ndim-ndim))
-            tl[ndim:] = self.tl[ndim:]
-            br[ndim:] = self.br[ndim:]
+        if self.ndim is None:
+            self.tl = tl
+            self.br = br
+        else:
+            if ndim<self.ndim: # update bounds have lower dimensionality than current
+                tl = np.pad(tl, (0,self.ndim-ndim))
+                br = np.pad(br, (0,self.ndim-ndim))
+                tl[ndim:] = self.tl[ndim:]
+                br[ndim:] = self.br[ndim:]
+            elif ndim>self.ndim: # update bounds have higher dimensionality than current
+                self.tl = np.pad(self.tl, (0,ndim-self.ndim))
+                self.br = np.pad(self.br, (0,ndim-self.ndim))
+                self.tl[self.ndim:] = tl[self.ndim:]
+                self.br[self.ndim:] = br[self.ndim:]
             
-        if self.tl is None: self.tl = tl
-        else: self.tl = np.min([tl,self.tl], axis=0)
-        if self.br is None: self.br = br
-        else: self.br = np.max([br,self.br], axis=0)
+            self.tl, self.br = bounding_box([tl,self.tl,br,self.br])
         self.ndim = self.tl.shape[0]
         
     def points(self, points):
         obj = self.PointsObj()
-        obj.points = np.asarray(points, dtype=np.float64)
+        obj.points = self._check_points(points)
         self.update_tl_br(*bounding_box(points))
         self.objects.append(obj)
         
         obj.color = self.color
-        obj.color_bg = self.color
         return obj
     
     def lines(self, starts, ends):
         obj = self.LinesObj()
-        obj.starts = np.asarray(starts, dtype=np.float64)
-        obj.ends = np.asarray(ends, dtype=np.float64)
+        obj.starts = self._check_points(starts)
+        obj.ends = self._check_points(ends)
         self.update_tl_br(*bounding_box(obj.starts))
         self.update_tl_br(*bounding_box(obj.ends))
         self.objects.append(obj)
         
         obj.color = self.color
-        obj.color_bg = self.color
         return obj
     
     def circles(self, points, radius, inside=0):
         obj = self.CirclesObj()
-        obj.points = np.asarray(points, dtype=np.float64)
+        obj.points = self._check_points(points)
         obj.radius = radius
         obj.inside = inside
         self.update_tl_br(*bounding_box(obj.points-radius))
@@ -109,18 +122,24 @@ class ImageDrawing(ColorObj):
         self.objects.append(obj)
         
         obj.color = self.color
-        obj.color_bg = self.color
         return obj
 
     def grid(self, center, size):
         obj = self.GridObj()
-        obj.center = np.asarray(center, dtype=np.float64)
+        obj.center = self._check_points([center])[0]
         obj.size = size
         self.objects.append(obj)
         
         obj.color = self.color
-        obj.color_bg = self.color
         return obj
+
+
+    def calc_perspective_zoom(self, camera_pos):
+        corners = np.array(list(bounding_corners(np.array([self.tl, self.br]))))
+        apply_curvilinear_perspective(corners, camera_pos, zoom=1.)
+        return distance(self.tl, self.br)/distance(*bounding_box(corners))
+        
+    
     
     def draw(self, resolution:int, topright_is_the_positive_corner:bool=True, camera_dist:float=None):
         tl, br = self.get_rotated_bounds()
@@ -134,7 +153,12 @@ class ImageDrawing(ColorObj):
             camera_pos[2] = tl[2]
         if can_do_perspective:
             camera_pos[2] -= camera_dist
-            zoom = camera_dist
+            zoom = 1
+##            zoom /= self.calc_perspective_zoom(camera_pos)
+            zoom += tl[2]-camera_pos[2]
+##            zoom *= distance(tl, br)/distance(self.tl, self.br)
+##            zoom **= 2
+##            print(zoom)
         
         def depth_ratio_array(points):
             if can_do_perspective:
@@ -146,7 +170,7 @@ class ImageDrawing(ColorObj):
             return (points[:,2:3]-camera_pos[2])/(br[2]-camera_pos[2]) # 0...1
         #
         
-        limits = pixelize_points(br, tl, br, resolution)
+        limits = pixelize_points(br[:2], tl[:2], br[:2], resolution)
         image = np.zeros((*image_shape(resolution, *limits), self.color_bg.shape[-1]))
         image[:,:] = self.color_bg
         
@@ -197,10 +221,10 @@ class ImageDrawing(ColorObj):
                 if can_do_perspective:
                     apply_curvilinear_perspective(points, camera_pos, zoom)
                     
-                pixels = pixelize_points(points, tl, br, resolution)
+                pixels = pixelize_points(points[:,:2], tl[:2], br[:2], resolution)
                 if can_show_depth:
                     ratios = depth_ratio_array(points)
-                    color = x.get_color_blends(ratio_array)
+                    color = x.get_color_blends(ratios)
                     image[pixels[:,0],pixels[:,1]] = color_array_blend_on_array(image[pixels[:,0],pixels[:,1]], color)
                 else:
                     image[pixels[:,0],pixels[:,1]] = color_blend_on_array(image[pixels[:,0],pixels[:,1]], x.color)
@@ -213,8 +237,8 @@ class ImageDrawing(ColorObj):
                     apply_curvilinear_perspective(points_starts, camera_pos, zoom)
                     apply_curvilinear_perspective(points_ends, camera_pos, zoom)
                     
-                starts = pixelize_points(points_starts, tl, br, resolution)
-                ends = pixelize_points(points_ends, tl, br, resolution)
+                starts = pixelize_points(points_starts[:,:2], tl[:2], br[:2], resolution)
+                ends = pixelize_points(points_ends[:,:2], tl[:2], br[:2], resolution)
                 
                 i = 0
                 if can_show_depth:
@@ -234,8 +258,8 @@ class ImageDrawing(ColorObj):
                 if can_do_perspective:
                     apply_curvilinear_perspective(points, camera_pos, zoom)
                 
-                pixels = pixelize_points(points, tl, br, resolution)
-                radii = pixelize_distances([x.radius, x.inside], tl, br, resolution)
+                pixels = pixelize_points(points[:,:2], tl[:2], br[:2], resolution)
+                radii = pixelize_distances([x.radius, x.inside], tl[:2], br[:2], resolution)
                 mask = circle_mask(*radii)
                 if can_show_depth:
                     ratios = depth_ratio_array(points)
@@ -250,12 +274,12 @@ class ImageDrawing(ColorObj):
                 
             elif isinstance(x, self.GridObj):
                 color = x.color
-                grid_lines_n = int(np.divide(br-tl, x.size).max())+2
-                offset = np.divide(x.center-tl, x.size).astype(np.int32)
+                grid_lines_n = int(np.divide(br[:2]-tl[:2], x.size).max())+2
+                offset = np.divide(x.center-tl[:2], x.size).astype(np.int32)
                 for i in range(grid_lines_n):
                     i -= offset
                     target = x.size*i
-                    target = pixelize_points(target, tl, br, resolution)
+                    target = pixelize_points(target, tl[:2], br[:2], resolution)
                     
                     if target[0]>=0 and target[0]<image.shape[0]:
                         color_blend_on_array(image[target[0],:], color)
@@ -310,6 +334,17 @@ class ImageDrawing(ColorObj):
         tl, br = self.get_rotated_bounds()
         return (tl[0], br[0], tl[1], br[1])
 
+    def get_axis_lines(self):
+        starts = np.zeros((self.ndim,self.ndim))
+        starts[:,:] = self.tl
+        ends = starts.copy()
+        for i in range(self.ndim): ends[i,i] = self.br[i]
+        return starts, ends
+    
+    def set_isometric_rotation(self):
+        self.pitch = -np.pi/4
+        self.yaw = np.pi/5.1
+        self.tilt = -np.pi/6
 
 def apply_curvilinear_perspective(points, observer, zoom=1.):
     distances = distance(points, observer)
@@ -317,7 +352,7 @@ def apply_curvilinear_perspective(points, observer, zoom=1.):
     points[valid,:2] -= observer[:2]
     points[valid,0] /= 1+distances[valid]
     points[valid,1] /= 1+distances[valid]
-    points[valid,:2] *= 1+zoom
+    points[valid,:2] *= zoom#+1
     points[valid,:2] += observer[:2]
 
 
