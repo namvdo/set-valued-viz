@@ -6,10 +6,72 @@ from normals_model2 import Model as NormalsModel
 
 SAVEDIR = os.path.join(WORKDIR, "saves")
 
+
+
+
+class ArrayHistory():
+    updates = 0
+    capacity = 10
+    def __init__(self, capacity=10):
+        self.capacity = capacity
+        self.stack = []
+
+    def __len__(self): return len(self.stack)
+    
+    def update(self, points):
+        while len(self.stack)>=self.capacity: self.stack.pop(0)
+        self.stack.append(points)
+        self.updates += 1
+
+    def clear(self):
+        self.stack.clear()
+        
+    def pop(self):
+        return self.stack.pop()
+
+    def copy(self):
+        new = type(self)()
+        new.updates = self.updates
+        new.stack = self.stack.copy()
+        new.capacity = self.capacity
+        return new
+        
+class PointsHistory(ArrayHistory):
+    def hausdorff(self, points1):
+        dists = []
+        for i,points2 in enumerate(self.stack[::-1]):
+            dist, _ = hausdorff_distance8(points1, points2)
+            dists.append(dist)
+        return dists
+
+
+
+class Checkpoints():
+    class Checkpoint:
+        def __init__(self, **kwargs):
+            for k,v in kwargs.items():
+                if hasattr(v, "copy"): v = v.copy()
+                setattr(self, k, v)
+    
+    def __init__(self): self.checkpoints = {}
+    def __len__(self): return len(self.checkpoints)
+    def clear(self): self.checkpoints.clear()
+    def delete(self, key):
+        if key in self.checkpoints: del self.checkpoints[key]
+    def save(self, key, **kwargs):
+        self.checkpoints[key] = self.Checkpoint(**kwargs)
+    def load(self, key, default=None):
+        return self.checkpoints.get(key, default)
+
+
+
+
+
 class ModelInstance():
     key = None
+    
     model = None
-    model_prev = None # copied model
+    points_history = None # -> PointsHistory
     
     fig_resolution = None # -> IntegerField
     png_resolution = None # -> IntegerField
@@ -23,7 +85,7 @@ class ModelInstance():
     step = None # -> IntegerField
     step_data_label = None # -> label
     auto_extend = None # -> BooleanSwitch
-
+    
     yaw = None # -> IntegerField
     tilt = None # -> IntegerField
     pitch = None # -> IntegerField
@@ -31,6 +93,9 @@ class ModelInstance():
     def __init__(self, on_destroy, **kwargs):
         for k,v in kwargs.items():
             if hasattr(self, k): setattr(self, k, v)
+
+        self.checkpoints = Checkpoints()
+        self.points_history = PointsHistory(5)
         
         win = nice_window(self.key, on_destroy=on_destroy)
         set_padding(win)
@@ -48,7 +113,7 @@ class ModelInstance():
         
         # buttons
         f = padded_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
-        b = nice_button(f, text="Recalc Step", command=self.model_recalculate)
+        b = nice_button(f, text="Recalc Step", command=self.model_recalc_from_checkpoint)
         ff = nice_frame(f, anchor="c", side=tk.TOP, fill=tk.BOTH)
         self.step = IntegerField(ff, val=1, low=0, high=None, side=tk.RIGHT, width=6, justify="center")
         b = nice_button(ff, text="Reset", side=tk.LEFT, width=6, command=self.model_reset)
@@ -62,17 +127,14 @@ class ModelInstance():
         #
 
         #
-        width = 8
-        ff = nice_titled_frame(frame, "hausdorff distance range", side=tk.TOP)
+        width = 6
+        ff = nice_titled_frame(frame, "hausdorff distance", side=tk.TOP)
+        self.step_data_label = nice_label(ff, width=8, height=self.points_history.capacity, justify="left", anchor="nw")
+        
         fff = nice_frame(ff, anchor="c", side=tk.TOP)
         self.min_hausdorff = FloatField(fff, val=None, low=0, high=None, can_disable=True, width=width, side=tk.LEFT, justify="center")
-        nice_label(fff, text="<= dist <=", side=tk.LEFT)
+        nice_label(fff, text="<= auto run limits <=", side=tk.LEFT)
         self.max_hausdorff = FloatField(fff, val=None, low=0, high=None, can_disable=True, width=width, side=tk.LEFT, justify="center")
-        #
-        
-        #
-        ff = nice_titled_frame(frame, "step data", anchor="n", side=tk.TOP)
-        self.step_data_label = nice_label(ff, width=8, justify="left", anchor="w")
         #
 
         #
@@ -132,7 +194,7 @@ class ModelInstance():
 
                 if v is None: self.model.function.constants[k] = obj.get()
         
-        self.refresh_stepdata()
+        self.refresh_running_data()
         
 
     def _init_viewport_panel(self, root):
@@ -166,30 +228,31 @@ class ModelInstance():
         fff = nice_titled_frame(ff, "extend limits", side=tk.RIGHT)
         
         ffff = nice_frame(fff, anchor="c", side=tk.TOP)
-        self.min_x = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, justify="center", width=width)
+        self.min_x = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, width=width)
         nice_label(ffff, text="<= x <=", side=tk.LEFT)
-        self.max_x = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, justify="center", width=width)
+        self.max_x = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, width=width)
         
         ffff = nice_frame(fff, anchor="c", side=tk.TOP)
-        self.min_y = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, justify="center", width=width)
+        self.min_y = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, width=width)
         nice_label(ffff, text="<= y <=", side=tk.LEFT)
-        self.max_y = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, justify="center", width=width)
+        self.max_y = FloatField(ffff, val=None, low=None, high=None, can_disable=True, side=tk.LEFT, width=width)
 
         self.auto_extend = BooleanSwitch(fff, text="Auto Extend", side=tk.TOP)
         #
 
         #
         width = 8
-        ff = nice_titled_frame(f, "Camera", side=tk.TOP, anchor="nw", fill=tk.Y)
-        fff = nice_frame(ff, side=tk.LEFT, anchor="c", fill=tk.BOTH)
+        ff = nice_frame(f, side=tk.TOP, anchor="c", fill=tk.BOTH)
+        fff = nice_titled_frame(ff, "Camera", side=tk.LEFT, anchor="nw", fill=tk.Y)
+        ffff = nice_frame(fff, side=tk.LEFT, anchor="c", fill=tk.BOTH)
         
-        self.pitch = FloatField(fff, low=0, mod=360, width=width, label_text="pitch", justify="center")
-        self.yaw = FloatField(fff, low=0, mod=360, width=width, label_text="yaw", justify="center")
-        self.tilt = FloatField(fff, low=0, mod=360, width=width, label_text="tilt", justify="center")
+        self.pitch = FloatField(ffff, low=0, mod=360, width=width, label_text="pitch")
+        self.yaw = FloatField(ffff, low=0, mod=360, width=width, label_text="yaw")
+        self.tilt = FloatField(ffff, low=0, mod=360, width=width, label_text="tilt")
         
-        self.camera_distance = FloatField(fff, val=None, low=0, can_disable=True, width=width, label_text="focal length", justify="center")
+        self.camera_distance = FloatField(ffff, val=None, low=0, can_disable=True, width=width, label_text="focal len.")
         
-        fff = nice_frame(ff, side=tk.LEFT, anchor="n")
+        ffff = nice_frame(fff, side=tk.LEFT, anchor="n")
         def _press():
             rad_deg = 180/np.pi
             self.pitch.set(315)
@@ -197,7 +260,7 @@ class ModelInstance():
             self.tilt.set(330)
             self.camera_distance.set(None) # disable perspective
             
-        b = nice_button(fff, text="Isometric 1", side=tk.TOP, command=_press)
+        b = nice_button(ffff, text="Isometric 1", side=tk.TOP, command=_press)
         
         def _press():
             rad_deg = 180/np.pi
@@ -206,9 +269,15 @@ class ModelInstance():
             self.tilt.set(210)
             self.camera_distance.set(None) # disable perspective
             
-        b = nice_button(fff, text="Isometric 2", side=tk.TOP, command=_press)
+        b = nice_button(ffff, text="Isometric 2", side=tk.TOP, command=_press)
 
         #
+        width = 6
+        fff = nice_titled_frame(ff, "Grid Settings", side=tk.LEFT, anchor="nw", fill=tk.Y)
+        self.grid_x = FloatField(fff, val=0, width=width, label_text="x")
+        self.grid_y = FloatField(fff, val=0, width=width, label_text="y")
+        self.grid_size = FloatField(fff, val=0.1, low=0, width=width, label_text="size")
+        
 
         #
         ff = nice_titled_frame(f, "colors", side=tk.TOP)
@@ -255,7 +324,7 @@ class ModelInstance():
             obj.set_color(*color)
         
         color = np.divide(self.colors["points"], 255)
-        if color[3]>0:
+        if color[3]>0 and len(self.model)>1:
             obj = drawing.points(self.model._points)
             obj.set_color(*color)
         
@@ -285,7 +354,6 @@ class ModelInstance():
             drawing.br[1] = max(drawing.br[1], max_y)
             if auto: self.max_y.set(round(drawing.br[1], auto_rounding))
 
-
         def _2d_to_3d():
             # draw 2d as 3d
             tl = np.pad(drawing.tl, (0,1))
@@ -307,8 +375,9 @@ class ModelInstance():
                 obj.set_color(r=color[i%3], g=color[(i+1)%3], b=color[(i+2)%3], a=color[3])
         
         color = np.divide(self.colors["grid"], 255)
-        if color[3]>0:
-            obj = drawing.grid((0,0), self.model.epsilon)
+        size = self.grid_size.get()
+        if color[3]>0 and size>0:
+            obj = drawing.grid((self.grid_x.get(),self.grid_y.get()), size)
             obj.set_color(*color)
 
         camera_dist = self.camera_distance.get()
@@ -322,41 +391,65 @@ class ModelInstance():
         PIL_image_from_array(image).save(path, optimize=True)
     
     def model_reset(self):
-        self.model_prev = None
+        self.checkpoints.clear()
+        self.points_history.clear()
         self.model.reset()
         self.step.set(1)
-        self.refresh_stepdata()
+        self.refresh_running_data()
         self.refresh_viewport()
 
-    def model_checkpoint(self):
-        self.model_prev = self.model.copy()
-        
-    def model_recalculate(self): # recalculate current step with changes applied
-        if self.model_prev is not None:
+    def model_save_checkpoint(self, key="prev"):
+        self.checkpoints.save(key, step=self.step.get(), model=self.model, points_history=self.points_history)
+
+    def model_load_checkpoint(self, key="prev"):
+        cp = self.checkpoints.load(key)
+        if cp is not None:
+            self.step.set(cp.step)
+            self.points_history = cp.points_history.copy()
             for attr in ["_points","_normals","_prev_points","_prev_normals","_timestep","tij"]:
-                self.model.copyattr(self.model_prev, attr)
-            self.model_process(self.step.get()-1) # do previous step again
-
+                self.model.copyattr(cp.model, attr)
+            return True
+        return False
+        
+    def model_recalc_from_checkpoint(self): # recalculate from previous checkpoint with updated settings
+        target_step = self.step.get()-1
+        if self.model_load_checkpoint("prev"):
+            self.model_process(target_step)
+    
+    def update_points_history(self):
+        self.points_history.update(self.model.get_points().copy())
+        
     def model_process(self, target_step:int):
-        self.model_checkpoint()
-        for model_step in self.model.process(target_step-1): # model's steps are 1 less (starts from 0)
-            self.refresh_stepdata(model_step+1)
+        self.model_save_checkpoint("prev")
+        self.update_points_history()
 
-            # check if hausdorff distance is out of range
-            target_step = model_step+1
+        def _hausdorff_distance_is_in_range():
             min_hdr = self.min_hausdorff.get()
-            if min_hdr is not None and self.model.hausdorff_dist<min_hdr: break
             max_hdr = self.max_hausdorff.get()
-            if max_hdr is not None and self.model.hausdorff_dist>max_hdr: break
-            #
+            if min_hdr is not None or max_hdr is not None:
+                dists = self.points_history.hausdorff(self.model.get_points())
+                for dist in dists:
+                    if min_hdr is not None and dist<min_hdr: return False
+                    if max_hdr is not None and dist>max_hdr: return False
+            return True
+
+        last_step = (target_step-1) # model's steps are 1 less (starts from 0)
+        for model_step in self.model.process(last_step):
+            target_step = model_step+1
             
+            if not _hausdorff_distance_is_in_range(): break
+            
+            if model_step!=last_step: self.update_points_history()
+        
+        self.refresh_running_data(model_step+1)
         self.refresh_viewport()
         self.step.set(target_step+1) # to display next step in the field
     
-    def refresh_stepdata(self, step:int = 0):
+    def refresh_running_data(self, step:int = 0):
         data = {}
-        data["step"] = step
-        data["hausdorff distance"] = readable_float(self.model.hausdorff_dist, 6)
+
+        dists = self.points_history.hausdorff(self.model.get_points())
+        for i,dist in enumerate(dists): data[f"period {i+1}"] = readable_float(dist, 6)
         
         text = ""
         for k,v in data.items():

@@ -305,8 +305,9 @@ class Model(ModelBase):
                 self._timestep += 1 # increase early so that precision increase can catch up to correct step
                 
                 self._gap_detection_loops()
-                # hausdorff most effective here, where prev and current points exist in full
-                self.__hausdorff_update(self._points, prev_points)
+                
+##                # hausdorff most effective here, where prev and current points exist in full
+##                self.__hausdorff_update(self._points, prev_points)
                 
                 # amount of points might have changed -> reload
                 points = self._points
@@ -349,7 +350,15 @@ class Model(ModelBase):
 
     def get_prev_inner_normals(self, length=1):
         return self._prev_points, self._prev_points-self._prev_normals*length
+
     
+    def get_points(self):
+        if len(self._points)==0: return np.array([self.start_point])
+        return self._points
+
+
+
+
 
 
 if __name__ == "__main__":

@@ -273,11 +273,11 @@ class ImageDrawing(ColorObj):
                 
             elif isinstance(x, self.GridObj):
                 color = x.color
-                grid_lines_n = int(np.divide(br[:2]-tl[:2], x.size).max())+2
-                offset = np.divide(x.center-tl[:2], x.size).astype(np.int32)
+                grid_lines_n = int(np.divide(br[:2]-tl[:2], x.size).max())+1
+                offset = tl[:2]-(tl[:2]-x.center)%x.size
                 for i in range(grid_lines_n):
-                    i -= offset
                     target = x.size*i
+                    target += offset
                     target = pixelize_points(target, tl[:2], br[:2], resolution)
                     
                     if target[0]>=0 and target[0]<image.shape[0]:
