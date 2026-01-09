@@ -4,6 +4,10 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 
 from PIL.Image import fromarray as PIL_image_from_array
+import PIL.ImageTk
+
+def array_to_imagetk(root, array):
+    return PIL.ImageTk.PhotoImage(PIL.Image.fromarray(array), master=root.master)
 
 from __equation import RE_NUMBER
 
@@ -94,52 +98,69 @@ def set_hover_colors(obj, on_enter=set_active_colors, on_leave=set_passive_color
 
 
 
-
-
-##def array_to_imagetk(frame, array):
-##    return PIL.ImageTk.PhotoImage(PIL.Image.fromarray(array.swapaxes(0, 1)[::-1]), master=frame)
-
 def scroll_delta_translate(delta):
     if os.name=="nt": return delta//120 # on windows must divide by 120
     return delta
 
-def integer_cycler(obj, mod, on_update=None, button=True, scroll=True):
-    var = tk.IntVar(value=0)
+def integer_cycler(obj, mod, on_update=None, button=1, scroll=1, var=None):
+    if var is None:
+        var = tk.IntVar(value=0)
     def button_handler(event):
         match event.num:
-            case 1: var.set((var.get()+1)%mod)
-            case 3: var.set((var.get()-1)%mod)
+            case 1: var.set((var.get()+int(button))%mod)
+            case 3: var.set((var.get()-int(button))%mod)
             case _: return
         if on_update is not None: on_update()
     def wheel_handler(event):
-        var.set((var.get()+scroll_delta_translate(event.delta))%mod)
+        var.set((var.get()+int(scroll*scroll_delta_translate(event.delta)))%mod)
         if on_update is not None: on_update()
-    if button: obj.bind("<Button>", button_handler, add="+")
-    if scroll: obj.bind("<MouseWheel>", wheel_handler, add="+")
+    if button!=0: obj.bind("<Button>", button_handler, add="+")
+    if scroll!=0: obj.bind("<MouseWheel>", wheel_handler, add="+")
     return var
 
-def string_cycler(obj, options, on_update=None, button=True, scroll=True):
-    var = tk.StringVar(value=options[0])
-    var.option_index = 0
+def index_cycler(obj, options, on_update=None, button=1, scroll=1, var=None):
+    if var is None:
+        var = tk.IntVar(value=0)
     def button_handler(event):
+        if len(options)==0: return
+        match event.num:
+            case 1: var.set((var.get()+int(button))%len(options))
+            case 3: var.set((var.get()-int(button))%len(options))
+            case _: return
+        if on_update is not None: on_update()
+    def wheel_handler(event):
+        if len(options)==0: return
+        var.set((var.get()+int(scroll*scroll_delta_translate(event.delta)))%len(options))
+        if on_update is not None: on_update()
+    if button!=0: obj.bind("<Button>", button_handler, add="+")
+    if scroll!=0: obj.bind("<MouseWheel>", wheel_handler, add="+")
+    return var
+
+def string_cycler(obj, options, on_update=None, button=1, scroll=1, var=None):
+    if var is None:
+        var = tk.StringVar(value=options[0])
+        var.option_index = 0
+    def button_handler(event):
+        if len(options)==0: return
         match event.num:
             case 1:
-                var.option_index += 1
+                var.option_index += int(button)
                 var.option_index %= len(options)
                 var.set(options[var.option_index])
             case 3:
-                var.option_index -= 1
+                var.option_index -= int(button)
                 var.option_index %= len(options)
                 var.set(options[var.option_index])
             case _: return
         if on_update is not None: on_update()
     def wheel_handler(event):
-        var.option_index += scroll_delta_translate(event.delta)
+        if len(options)==0: return
+        var.option_index += int(scroll*scroll_delta_translate(event.delta))
         var.option_index %= len(options)
         var.set(options[var.option_index])
         if on_update is not None: on_update()
-    if button: obj.bind("<Button>", button_handler, add="+")
-    if scroll: obj.bind("<MouseWheel>", wheel_handler, add="+")
+    if button!=0: obj.bind("<Button>", button_handler, add="+")
+    if scroll!=0: obj.bind("<MouseWheel>", wheel_handler, add="+")
     return var
 
 
@@ -190,19 +211,20 @@ class FloatVar(IntVar):
             return super().set(round(f*10**self.precision))
 
 
-def integer_selector(obj, start=0, low=None, high=None, mod=None, step=1, on_update=None, button=True, scroll=True, can_disable=False):
-    var = IntVar(value=start, can_disable=can_disable)
+def integer_selector(obj, start=0, low=None, high=None, mod=None, on_update=None, button=1, scroll=1, can_disable=False, var=None):
+    if var is None:
+        var = IntVar(value=start, can_disable=can_disable)
     def button_handler(event):
         if var.disabled: return
         match event.num:
             case 1:
-                val = var.get()+step
+                val = var.get()+int(button)
                 if mod is not None: val %= mod
                 if high is not None: val = min(val, high)
                 if low is not None: val = max(val, low)
                 var.set(val)
             case 3:
-                val = var.get()-step
+                val = var.get()-int(button)
                 if mod is not None: val %= mod
                 if high is not None: val = min(val, high)
                 if low is not None: val = max(val, low)
@@ -211,36 +233,36 @@ def integer_selector(obj, start=0, low=None, high=None, mod=None, step=1, on_upd
         if on_update is not None: on_update()
     def wheel_handler(event):
         if var.disabled: return
-        i = scroll_delta_translate(event.delta)
-        i *= step
+        i = int(scroll*scroll_delta_translate(event.delta))
         val = var.get()+i
         if mod is not None: val %= mod
         if high is not None: val = min(val, high)
         if low is not None: val = max(val, low)
         var.set(val)
         if on_update is not None: on_update()
-    if button: obj.bind("<Button>", button_handler, add="+")
-    if scroll: obj.bind("<MouseWheel>", wheel_handler, add="+")
+    if button!=0: obj.bind("<Button>", button_handler, add="+")
+    if scroll!=0: obj.bind("<MouseWheel>", wheel_handler, add="+")
     return var
 
 
 
 
-def float_selector(obj, start=0., low=None, high=None, mod=None, step=1, on_update=None, button=True, scroll=True, can_disable=False):
+def float_selector(obj, start=0., low=None, high=None, mod=None, on_update=None, button=1, scroll=1, can_disable=False, var=None):
     # step increments are relative to current float precision
     # and float precision in the var cannot be changed by just incremental step adjustments
-    var = FloatVar(value=start, can_disable=can_disable)
+    if var is None:
+        var = FloatVar(value=start, can_disable=can_disable)
     def button_handler(event):
         if var.disabled: return
         match event.num:
             case 1:
-                val = var.get()+step/10**var.precision
+                val = var.get()+button/10**var.precision
                 if mod is not None: val %= mod
                 if high is not None: val = min(val, high)
                 if low is not None: val = max(val, low)
                 var.set(val, False)
             case 3:
-                val = var.get()-step/10**var.precision
+                val = var.get()-button/10**var.precision
                 if mod is not None: val %= mod
                 if high is not None: val = min(val, high)
                 if low is not None: val = max(val, low)
@@ -250,15 +272,15 @@ def float_selector(obj, start=0., low=None, high=None, mod=None, step=1, on_upda
     def wheel_handler(event):
         if var.disabled: return
         i = scroll_delta_translate(event.delta)
-        i *= step/10**var.precision
+        i *= scroll/10**var.precision
         val = var.get()+i
         if mod is not None: val %= mod
         if high is not None: val = min(val, high)
         if low is not None: val = max(val, low)
         var.set(val, False)
         if on_update is not None: on_update()
-    if button: obj.bind("<Button>", button_handler, add="+")
-    if scroll: obj.bind("<MouseWheel>", wheel_handler, add="+")
+    if button!=0: obj.bind("<Button>", button_handler, add="+")
+    if scroll!=0: obj.bind("<MouseWheel>", wheel_handler, add="+")
     return var
 
 
@@ -296,7 +318,7 @@ def write_to_textbox(box, content, clear=False):
 
 
 
-def nice_window(title, configure_handler=None, on_destroy=None):
+def nice_window(title, configure_handler=None, on_destroy=None, resizeable=False):
     win = tk.Tk()
     win.wm_title(title)
     if configure_handler is not None:
@@ -306,7 +328,7 @@ def nice_window(title, configure_handler=None, on_destroy=None):
             on_destroy()
             win.destroy()
         win.protocol("WM_DELETE_WINDOW", _destroy)
-    win.resizable(False, False)
+    win.resizable(resizeable, resizeable)
     set_passive_colors(win)
     return win
 
@@ -329,27 +351,26 @@ def nice_textbox(frame, width=80, height=20, side=tk.TOP, **kwargs):
     set_active_colors(box)
     return box
 
-def nice_canvas(frame, width, height, side=tk.LEFT, fill=tk.BOTH):
-    canvas = tk.Canvas(frame, width=width, height=height)
-    canvas.pack(side=side, fill=fill)
-    set_active_colors(canvas)
+def nice_canvas(frame, width, height, side=tk.LEFT, fill=tk.BOTH, expand=True, **kwargs):
+    canvas = tk.Canvas(frame, width=width, height=height, **kwargs)
+    canvas.pack(side=side, fill=fill, expand=expand)
     return canvas
 
-def nice_label(*args, side=tk.TOP, fill=tk.BOTH, **kwargs):
+def nice_label(*args, side=tk.TOP, fill=tk.BOTH, expand=False, **kwargs):
     label = tk.Label(*args, **kwargs)
-    label.pack(side=side, fill=fill)
+    label.pack(side=side, fill=fill, expand=expand)
     set_passive_colors(label)
     return label
 
-def nice_title(frame, text, *args, side=tk.TOP, fill=tk.BOTH, **kwargs):
+def nice_title(frame, text, *args, side=tk.TOP, fill=tk.BOTH, expand=False, **kwargs):
     label = tk.Label(frame, text=text.title(), *args, **kwargs)
-    label.pack(side=side, fill=fill)
+    label.pack(side=side, fill=fill, expand=expand)
     set_passive_colors_inverted(label)
     return label
 
-def nice_field(frame, *args, identifier=None, side=tk.LEFT, fill=tk.BOTH, update_handler=None, **kwargs):
+def nice_field(frame, *args, identifier=None, side=tk.LEFT, fill=tk.BOTH, expand=False, update_handler=None, **kwargs):
     field = tk.Entry(frame, *args, **kwargs)
-    field.pack(side=side, fill=fill)
+    field.pack(side=side, fill=fill, expand=expand)
     if update_handler is not None:
         def _event_handle(event): update_handler(identifier, field.get())
         field.bind("<KeyRelease>", _event_handle)
@@ -370,9 +391,9 @@ def nice_labeled_field(frame, text, width=DEFAULT_TEXTFIELD_WIDTH, side=tk.TOP, 
     field = nice_field(subframe, identifier=text, width=width, side=tk.LEFT, justify=justify, update_handler=update_handler)
     return field
 
-def nice_button(frame, *args, side=tk.TOP, fill=tk.BOTH, **kwargs):
+def nice_button(frame, *args, side=tk.TOP, fill=tk.BOTH, expand=False, **kwargs):
     but = tk.Button(frame, *args, **kwargs)
-    but.pack(side=side, fill=fill)
+    but.pack(side=side, fill=fill, expand=expand)
     set_hover_colors(but)
     return but
 
@@ -386,19 +407,18 @@ def padded_frame(frame, *args, **kwargs):
     set_padding(f)
     return f
 
-def raised_frame(frame, *args, border=1, **kwargs):
-    f = nice_frame(frame, *args, **kwargs)
+def raised_frame(frame, *args, border=1, expand=True, **kwargs):
+    f = nice_frame(frame, *args, expand=expand, **kwargs)
     set_passive_colors_inverted(f)
     set_padding(f, border, border)
-    return nice_frame(f, side=tk.TOP, fill=tk.BOTH)
+    return nice_frame(f, side=tk.TOP, fill=tk.BOTH, expand=expand)
 
 def nice_titled_frame(frame, title, *args, side=tk.TOP, border=1, fill=tk.BOTH, **kwargs):
-    f = nice_frame(frame, *args, side=side, fill=fill, **kwargs)
+    f = nice_frame(frame, *args, side=side, expand=True, fill=fill, **kwargs)
     set_padding(f)
     nice_title(f, title, side=tk.TOP, fill=tk.BOTH)
-    ff = raised_frame(f, side=tk.TOP, fill=tk.BOTH, border=border)
+    ff = raised_frame(f, side=tk.TOP, expand=True, fill=tk.BOTH, border=border)
     set_padding(ff)
-##    set_random_colors(f)
     return ff
 
 
@@ -466,7 +486,7 @@ class IntegerField:
     var = None
     field = None
     on_update = None
-    def __init__(self, root, val=0, low=None, high=None, mod=None, step=1, can_disable=False, on_update=None, label_text=None, **kwargs):
+    def __init__(self, root, val=0, low=None, high=None, mod=None, scroll=1, can_disable=False, on_update=None, label_text=None, **kwargs):
         def update_handler(identifier, string):
             if len(string)==0 and not can_disable:
                 # reset because in this case there must be a value in the field
@@ -488,12 +508,12 @@ class IntegerField:
             kwargs["side"] = tk.RIGHT
             kwargs["fill"] = tk.BOTH
         self.field = nice_field(root, update_handler=update_handler, **kwargs)
-        self.init_var(val, low, high, mod, step, can_disable=can_disable)
+        self.init_var(val, low, high, mod, scroll=scroll, can_disable=can_disable)
         self.refresh()
         self.on_update = on_update
 
     def init_var(self, *args, **kwargs):
-        self.var = integer_selector(self.field, *args, on_update=self.refresh, button=False, **kwargs)
+        self.var = integer_selector(self.field, *args, on_update=self.refresh, button=0, **kwargs)
         
     def __str__(self): return self.field.get()
     
@@ -510,7 +530,7 @@ class IntegerField:
 
 class FloatField(IntegerField):
     def init_var(self, *args, **kwargs):
-        self.var = float_selector(self.field, *args, on_update=self.refresh, button=False, **kwargs)
+        self.var = float_selector(self.field, *args, on_update=self.refresh, button=0, **kwargs)
 
 
 
@@ -547,5 +567,312 @@ class BooleanSwitch():
         if value!=self.value:
             self.value = value
             self.update_visuals()
+
+
+
+
+
+class StringList():
+    strings = None
+    labels = None
+    var = None
+
+    prev_index = 0
+    def __init__(self, root, strings, visible=1, on_update=None, label_text=None, anchor="c", justify="center", **kwargs):
+        self.strings = strings
+        if label_text is not None:
+            root = nice_left_label(root, label_text, side=kwargs.get("side", tk.TOP), fill=kwargs.get("fill", tk.BOTH))
+            kwargs["side"] = tk.TOP
+            kwargs["fill"] = tk.BOTH
+        
+        kwargs["anchor"] = anchor
+        f = nice_frame(root, **kwargs)
+        
+        ff = nice_frame(f, side=tk.RIGHT, fill=tk.Y)
+        set_passive_colors_inverted(ff)
+        l = nice_label(ff, text="▲", side=tk.TOP)
+        set_passive_colors_inverted(l)
+        l = nice_label(ff, text="▼", side=tk.BOTTOM)
+        set_passive_colors_inverted(l)
+
+        ff = nice_frame(f, side=tk.TOP, fill=tk.BOTH)
+        self.init_labels(ff, visible, anchor=anchor, justify=justify, button=0, scroll=-1, on_update=self.refresh) # , low=0, high=len(self.strings)-1
+        
+
+    def init_labels(self, f, visible, anchor="c", justify="center", **kwargs):
+##        self.var = integer_selector(f, **kwargs)
+        self.var = index_cycler(f, self.strings, **kwargs)
+        
+        self.labels = []
+        for i in range(visible):
+            obj = nice_label(f, anchor=anchor, justify=justify)
+            set_passive_colors_inverted(obj)
+            index_cycler(obj, self.strings, **kwargs, var=self.var)
+##            integer_selector(obj, **kwargs, var=self.var)
+            self.labels.append(obj)
+        self.refresh()
+        
+##    def refresh(self):
+##        # wraparound
+##        index = self.var.get()
+##        l = len(self.labels)
+##        ll = len(self.strings)
+##        for i in range(len(self.labels)):
+##            if i+index < ll or ll>=l: text = self.strings[(i+index)%ll]
+##            else: text = ""
+##            self.labels[i].configure(text=text)
+            
+    def refresh(self):
+        # no wraparound
+        index = self.var.get()
+        l = len(self.labels)
+        ll = len(self.strings)
+        diff = self.prev_index-index
+        if ll>l and not (self.prev_index==0 and index==ll-1):
+            over = max((index+l)-ll, 0)
+            if over>0: index -= over
+        else: index = 0
+        self.var.set(index)
+        self.prev_index = index
+        for i in range(len(self.labels)):
+            if i+index < ll or ll>=l: text = self.strings[(i+index)%ll]
+            else: text = ""
+            self.labels[i].configure(text=text)
+
+    def __len__(self): return len(self.strings)
+
+    def clear(self):
+        self.strings.clear()
+
+    def insert(self, index, string):
+        self.strings.insert(index, string)
+        
+    def append(self, string):
+        self.strings.append(string)
+    
+    def pop(self, index=-1):
+        return self.strings.pop(index)
+    
+    def swap(self, index, string):
+        self.strings[index], string = string, self.strings[index]
+        return string
+
+
+
+class TextBox():
+    box = None
+    def __init__(self, root, *args, **kwargs):
+        self.box = nice_textbox(root, *args, **kwargs)
+    
+    def write(self, string):
+        self.box.configure(state="normal")
+        self.box.insert(tk.END, string)
+        self.box.configure(state="disabled")
+    
+    def clear(self):
+        self.box.configure(state="normal")
+        self.box.delete(1.0, tk.END)
+        self.box.configure(state="disabled")
+    
+    def print(self, *args, end="\n"):
+        string = " ".join([str(x) for x in args])
+        string += end
+        self.write(string)
+
+
+
+class Canvas():
+    configures_to_ignore = 0
+    canvas = None
+    def __init__(self, root, width, height, side=tk.TOP, fill=tk.BOTH, anchor="nw", **kwargs):
+        self.canvas = nice_canvas(root, width, height, **kwargs)
+        self.canvas.config(highlightthickness=0) # stop endless resize loop
+        self.canvas.pack_propagate(0)
+        
+        # auto check widgets
+        def configure_handler(event):
+            if self.configures_to_ignore>=0: self.configures_to_ignore -= 1
+            else: self.check_that_every_widget_is_inside()
+        self.canvas.bind("<Configure>", configure_handler, add="+")
+        #
+        
+        self.images = set() # keep images from being garbage collected
+        self.drag_start_pos = {} # key -> pos
+        
+        self.widget_keys = {} # widget -> key
+        self.widget_visible = {} # widget -> boolean
+        
+        self._canvas_panning_init()
+
+    def get_inside_shape(self):
+        return (self.canvas.winfo_width(), self.canvas.winfo_height())
+    def get_canvas_shape(self):
+        padx = self.canvas.master["padx"]
+        pady = self.canvas.master["pady"]
+        if not isinstance(padx, int): padx = int(str(padx))
+        if not isinstance(pady, int): pady = int(str(pady))
+        return (self.canvas.master.winfo_width()-padx*2, self.canvas.master.winfo_height()-pady*2)
+
+
+    def _canvas_panning_init(self):
+        self.pannable = {} # key -> panning offset
+        
+        def drag_handler(event):
+            prev = self.drag_start_pos[self.canvas]
+            now = np.array((event.x, event.y))
+            self.drag_start_pos[self.canvas] = now
+            self.panning_move(now-prev)
+        
+        def button_handler(event):
+            if self.canvas in self.drag_start_pos: del self.drag_start_pos[self.canvas]
+            self.drag_start_pos[self.canvas] = np.array((event.x, event.y))
+
+        def reset_panning(event):
+            for k,offset in self.pannable.items():
+                pos = self.coords(key)
+                self.coords(key, np.subtract(pos, offset))
+                offset[:] = 0
+        
+        self.canvas.bind("<Button-1>", button_handler, add="+")
+        self.canvas.bind("<Button-2>", self.panning_reset, add="+")
+        self.canvas.bind("<B1-Motion>", drag_handler, add="+")
+    
+    def panning_reset(self, event=None):
+        for k,offset in self.pannable.items():
+            pos = self.coords(k)
+            self.coords(k, np.subtract(pos, offset))
+            offset[:] = 0
+
+    def panning_move(self, move):
+        for k,offset in self.pannable.items():
+            offset += move
+            self.move(k, move)
+
+    def move(self, key, offset): # move by offset amount
+        self.canvas.move(key, *offset)
+        
+    def coords(self, key, pos=None): # set new position or get current position
+        if pos is None: return self.canvas.coords(key)
+        return self.canvas.coords(key, *pos)
+
+
+    # natives
+    def image(self, image, pos=(0,0), anchor="nw", pan=True, **kwargs):
+        if type(image)==np.ndarray: image = array_to_imagetk(self.canvas, image)
+        self.images.add(image)
+        key = self.canvas.create_image(*pos, image=image, anchor=anchor, **kwargs)
+        return self._native_canvas_obj(key, pan=pan)
+
+    def text(self, text, pos=(0,0), anchor="nw", pan=True, **kwargs):
+        key = self.canvas.create_text(*pos, text=text, anchor=anchor, **kwargs)
+        return self._native_canvas_obj(key, pan=pan)
+    
+    def _native_canvas_obj(self, key, pan=True):
+        if pan: self.pannable[key] = np.zeros(2)
+        return key
+    #
+
+    def get_topmost(self, obj):
+        topmost = obj
+        while topmost.master is not self.canvas: topmost = topmost.master
+        return topmost
+    
+    def window(self, obj, pos=(0,0), anchor="nw"):
+        topmost = self.get_topmost(obj)
+        key = self.canvas.create_window(*pos, anchor=anchor, window=topmost)
+        self.widget_keys[topmost] = key
+        self.configures_to_ignore += 1
+        return key
+
+    def _keep_obj_inside(self, key, obj):
+        coords = self.coords(key)
+        canvas_shape = np.array(self.get_inside_shape())
+        obj_shape = np.array((obj.winfo_width(), obj.winfo_height()))
+        new_coords = np.clip(coords, a_min=0, a_max=abs(canvas_shape-obj_shape))
+        if (coords!=new_coords).any(): self.coords(key, new_coords)
+    
+    def check_that_every_widget_is_inside(self):
+        for obj,key in self.widget_keys.items():
+            self._keep_obj_inside(key, obj)
+        
+    def _movable_obj(self, key, obj):
+        # make object draggable
+        topmost = self.get_topmost(obj)
+        
+        def drag_handler(event):
+            prev = self.drag_start_pos[key]
+            self.move(key, np.array((event.x, event.y))-prev)
+            self._keep_obj_inside(key, topmost)
+            
+        def button_handler(event):
+            if key in self.drag_start_pos: del self.drag_start_pos[key]
+            self.drag_start_pos[key] = np.array((event.x, event.y))
+        
+        obj.bind("<Button-1>", button_handler, add="+")
+        obj.bind("<B1-Motion>", drag_handler, add="+")
+    
+    def _liftable_obj(self, obj):
+        # when clicked -> raise to top
+        topmost = self.get_topmost(obj)
+        def button_handler(event):
+            topmost.lift()
+        obj.bind("<Button-1>", button_handler, add="+")
+        
+    
+    def movable_window(self, title, pos=(0,0)):
+        f = nice_titled_frame(self.canvas, title)
+        topmost = self.get_topmost(f)
+        set_padding(topmost, 1, 1)
+        key = self.window(topmost, pos)
+        
+        for obj in topmost.slaves():
+            self._movable_obj(key, obj)
+            self._liftable_obj(obj)
+            self.hide_trigger(obj, f.master)
+        self._liftable_obj(f)
+        return key, f
+
+    def hide_trigger(self, trigger, target):
+        self.widget_visible[target] = self.widget_visible.get(target, True)
+        def button_handler(event):
+            if self.widget_visible[target]: target.pack_forget()
+            else: target.pack()
+            self.widget_visible[target] = not self.widget_visible[target]
+        trigger.bind("<Button-2>", button_handler, add="+")
+        trigger.bind("<Button-3>", button_handler, add="+")
+
+if __name__ == "__main__":
+    win = nice_window("test", resizeable=True)
+    set_padding(win)
+##    win.configure(width=500, height=500)
+##    win.pack_propagate(0) # do not let children trigger resizing
+    
+    topframe = nice_titled_frame(win, "TOPFRAME", fill=tk.BOTH)
+    canvas = Canvas(topframe, 500, 100)
+    
+    f = nice_button(canvas.canvas, text="button")
+    canvas.window(f, (0,0))
+    
+    k,f1 = canvas.movable_window("title")
+    canvas.coords(k, (100,50))
+    b1 = nice_button(f1, text="button")
+    
+    k,f2 = canvas.movable_window("title2", (100,100))
+    b2 = nice_button(f2, text="button")
+    
+##    canvas.hide_trigger(b1, f2.master)
+##    canvas.hide_trigger(b2, f1.master)
+    
+    key = canvas.image(np.random.random((100,100))*255, (200,50))
+    canvas.move(key, (-200,0))
+    canvas.coords(key, (0,10))
+
+    k = canvas.text("asd", (400,100))
+    
+    win.mainloop()
+
+
+
+
 
 

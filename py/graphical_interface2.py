@@ -101,15 +101,23 @@ class ModelInstance():
         self.checkpoints = Checkpoints()
         self.points_history = PointsHistory(10)
         
-        win = nice_window(self.key, on_destroy=on_destroy)
+        win = nice_window(self.key, on_destroy=on_destroy, resizeable=True)
         set_padding(win)
-##        top = nice_frame(win, side=tk.TOP, fill=tk.BOTH)
-##        nice_label(top, text="asd", anchor="w")
-        mid = nice_frame(win, side=tk.TOP)
-        self._init_model_control_panel(mid)
-        self._init_viewport_panel(mid)
-        self._init_viewport_settings_panel(mid)
-##        bot = nice_frame(win, side=tk.TOP, fill=tk.BOTH)
+        
+##        win_shape = np.array((win.winfo_screenwidth(), win.winfo_screenheight()))
+        win_shape = np.array([1200,800])
+        self.canvas = Canvas(win, *win_shape)
+        
+        k,f = self.canvas.movable_window("Model Controls", (0,0))
+        self._init_model_control_panel(f)
+        
+        k,f = self.canvas.movable_window("Viewport", (0,0))
+        self._init_viewport_panel(f)
+        
+        k,f = self.canvas.movable_window("Viewport Controls", (0,0))
+        self._init_viewport_settings_panel(f)
+        
+##        win.configure(width=win_shape[0], height=win_shape[1])
         
 
     def _init_model_control_panel(self, root):
@@ -201,12 +209,10 @@ class ModelInstance():
         
 
     def _init_viewport_panel(self, root):
-        f = nice_titled_frame(root, "viewport", side=tk.LEFT, fill=tk.NONE)
-        self.viewport = Viewport(f)
-##        self.viewport = nice_label(f, width=51, height=51)
+        self.viewport = Viewport(root)
         
     def _init_viewport_settings_panel(self, root):
-        frame = nice_frame(root, anchor="nw", fill=tk.BOTH)
+        frame = nice_frame(root, anchor="nw")
         
         # buttons
         f = padded_frame(frame, anchor="c", side=tk.TOP, fill=tk.BOTH)
@@ -388,7 +394,7 @@ class ModelInstance():
         
         camera_dist = self.camera_distance.get()
         image = drawing.draw(resolution, camera_dist=camera_dist)
-        return image, drawing.get_full_unrotated_extent()
+        return image, drawing.get_full_extent()
         
     def save_png(self):
         path = os.path.join(SAVEDIR, "test.png")

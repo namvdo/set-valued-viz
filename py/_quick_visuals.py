@@ -273,8 +273,8 @@ class ImageDrawing(ColorObj):
                 
             elif isinstance(x, self.GridObj):
                 color = x.color
-                grid_lines_n = int(np.divide(br[:2]-tl[:2], x.size).max())+1
-                offset = tl[:2]-(tl[:2]-x.center)%x.size
+                grid_lines_n = int(np.divide(br[:2]-tl[:2], x.size).max())+3
+                offset = tl[:2]-(tl[:2]+x.center)%x.size
                 for i in range(grid_lines_n):
                     target = x.size*i
                     target += offset
@@ -332,6 +332,21 @@ class ImageDrawing(ColorObj):
     def get_extent(self):
         tl, br = self.get_rotated_bounds()
         return (tl[0], br[0], tl[1], br[1])
+    
+    def get_full_extent(self):
+        tl, br = self.get_rotated_bounds()
+        extent = []
+        for i in range(self.ndim):
+            extent.append(tl[i])
+            extent.append(br[i])
+        return extent
+    
+    def get_full_unrotated_extent(self):
+        extent = []
+        for i in range(self.ndim):
+            extent.append(self.tl[i])
+            extent.append(self.br[i])
+        return extent
 
     def get_axis_lines(self):
         starts = np.zeros((self.ndim,self.ndim))

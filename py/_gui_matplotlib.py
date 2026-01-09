@@ -27,48 +27,13 @@ class Viewport():
     
     def update(self, image, extent, title=None):
         self.subplot.clear()
-        self.subplot.imshow(image, extent=extent)
+        self.subplot.imshow(image, extent=extent[:4])
         self.subplot.set_title(title)
         self.canvas.draw()
 
     def get_widget(self):
         return self.canvas.get_tk_widget()
 
-
-##class Viewport3D(Viewport):
-##    camera_pos = None
-##    
-##    camera_yaw = 0 # yaw
-##    z_rotation = 0 # tilt
-##    x_rotation = 0 # pitch
-##
-##    points = None
-##    normals = None
-##    
-##    def __init__(self, *args, **kwargs):
-##        super().__init__(*args, **kwargs)
-##        self.camera_pos = np.zeros(3)
-##        self.objects = []
-##    
-##    def start_plotting(self):
-##        self.subplot.clear()
-##        
-##    def plot_points(self, points, size=None, color=None):
-##        self.subplot.scatter(points[:,0], points[:,1], alpha=1-points[:,2])
-##
-##    def finish_plotting(self, title=None):
-##        self.subplot.set_title(title)
-##        self.canvas.draw()
-##
-##    def test(self, event):
-##        self.start_plotting()
-##
-##        center = 
-##
-##        points = np.random.random((10,3))
-##        self.plot_points(points, size=0.2)
-##        
-##        self.finish_plotting()
 
 
 if __name__ == "__main__":
