@@ -681,11 +681,24 @@ class TextBox():
 
 
 
+
+
+
+
+
+
+
+
+
+
 class Canvas():
+    shape = None # array
     configures_to_ignore = 0
     canvas = None
-    def __init__(self, root, width, height, side=tk.TOP, fill=tk.BOTH, anchor="nw", **kwargs):
-        self.canvas = nice_canvas(root, width, height, **kwargs)
+    def __init__(self, tk_canvas):
+        self.shape = np.ones(2)
+        
+        self.canvas = tk_canvas
         self.canvas.config(highlightthickness=0) # stop endless resize loop
         self.canvas.pack_propagate(0)
         
@@ -693,84 +706,33 @@ class Canvas():
         def configure_handler(event):
             if self.configures_to_ignore>=0: self.configures_to_ignore -= 1
             else: self.check_that_every_widget_is_inside()
+            self.shape = np.array((event.width, event.height))
         self.canvas.bind("<Configure>", configure_handler, add="+")
         #
         
-        self.images = set() # keep images from being garbage collected
         self.drag_start_pos = {} # key -> pos
-        
         self.widget_keys = {} # widget -> key
         self.widget_visible = {} # widget -> boolean
         
-        self._canvas_panning_init()
-
-    def get_inside_shape(self):
-        return (self.canvas.winfo_width(), self.canvas.winfo_height())
-    def get_canvas_shape(self):
-        padx = self.canvas.master["padx"]
-        pady = self.canvas.master["pady"]
-        if not isinstance(padx, int): padx = int(str(padx))
-        if not isinstance(pady, int): pady = int(str(pady))
-        return (self.canvas.master.winfo_width()-padx*2, self.canvas.master.winfo_height()-pady*2)
-
-
-    def _canvas_panning_init(self):
-        self.pannable = {} # key -> panning offset
         
-        def drag_handler(event):
-            prev = self.drag_start_pos[self.canvas]
-            now = np.array((event.x, event.y))
-            self.drag_start_pos[self.canvas] = now
-            self.panning_move(now-prev)
-        
-        def button_handler(event):
-            if self.canvas in self.drag_start_pos: del self.drag_start_pos[self.canvas]
-            self.drag_start_pos[self.canvas] = np.array((event.x, event.y))
-
-        def reset_panning(event):
-            for k,offset in self.pannable.items():
-                pos = self.coords(key)
-                self.coords(key, np.subtract(pos, offset))
-                offset[:] = 0
-        
-        self.canvas.bind("<Button-1>", button_handler, add="+")
-        self.canvas.bind("<Button-2>", self.panning_reset, add="+")
-        self.canvas.bind("<B1-Motion>", drag_handler, add="+")
-    
-    def panning_reset(self, event=None):
-        for k,offset in self.pannable.items():
-            pos = self.coords(k)
-            self.coords(k, np.subtract(pos, offset))
-            offset[:] = 0
-
-    def panning_move(self, move):
-        for k,offset in self.pannable.items():
-            offset += move
-            self.move(k, move)
+    def relative_pos(self, pos):
+        return np.divide(pos, self.shape)
+    def actual_pos(self, rel_pos):
+        return np.multiply(rel_pos, self.shape)
+    def modulus_pos(self, pos):
+        return np.mod(pos, self.shape)
+    def clipped_pos(self, pos):
+        return np.clip(pos, a_min=0, a_max=np.subtract(self.shape, 1))
 
     def move(self, key, offset): # move by offset amount
         self.canvas.move(key, *offset)
         
-    def coords(self, key, pos=None): # set new position or get current position
-        if pos is None: return self.canvas.coords(key)
+    def coords(self, key, pos=None, rel_pos=None): # set new position or get current position
+        if pos is None and rel_pos is None: return self.canvas.coords(key)
+        if rel_pos is not None:
+            if pos is None: pos = self.actual_pos(rel_pos)
+            else: pos = np.add(pos, self.actual_pos(rel_pos))
         return self.canvas.coords(key, *pos)
-
-
-    # natives
-    def image(self, image, pos=(0,0), anchor="nw", pan=True, **kwargs):
-        if type(image)==np.ndarray: image = array_to_imagetk(self.canvas, image)
-        self.images.add(image)
-        key = self.canvas.create_image(*pos, image=image, anchor=anchor, **kwargs)
-        return self._native_canvas_obj(key, pan=pan)
-
-    def text(self, text, pos=(0,0), anchor="nw", pan=True, **kwargs):
-        key = self.canvas.create_text(*pos, text=text, anchor=anchor, **kwargs)
-        return self._native_canvas_obj(key, pan=pan)
-    
-    def _native_canvas_obj(self, key, pan=True):
-        if pan: self.pannable[key] = np.zeros(2)
-        return key
-    #
 
     def get_topmost(self, obj):
         topmost = obj
@@ -786,9 +748,8 @@ class Canvas():
 
     def _keep_obj_inside(self, key, obj):
         coords = self.coords(key)
-        canvas_shape = np.array(self.get_inside_shape())
         obj_shape = np.array((obj.winfo_width(), obj.winfo_height()))
-        new_coords = np.clip(coords, a_min=0, a_max=abs(canvas_shape-obj_shape))
+        new_coords = np.clip(coords, a_min=0, a_max=abs(self.shape-obj_shape))
         if (coords!=new_coords).any(): self.coords(key, new_coords)
     
     def check_that_every_widget_is_inside(self):
@@ -817,6 +778,8 @@ class Canvas():
         def button_handler(event):
             topmost.lift()
         obj.bind("<Button-1>", button_handler, add="+")
+        obj.bind("<Button-2>", button_handler, add="+")
+        obj.bind("<Button-3>", button_handler, add="+")
         
     
     def movable_window(self, title, pos=(0,0)):
@@ -841,35 +804,6 @@ class Canvas():
         trigger.bind("<Button-2>", button_handler, add="+")
         trigger.bind("<Button-3>", button_handler, add="+")
 
-if __name__ == "__main__":
-    win = nice_window("test", resizeable=True)
-    set_padding(win)
-##    win.configure(width=500, height=500)
-##    win.pack_propagate(0) # do not let children trigger resizing
-    
-    topframe = nice_titled_frame(win, "TOPFRAME", fill=tk.BOTH)
-    canvas = Canvas(topframe, 500, 100)
-    
-    f = nice_button(canvas.canvas, text="button")
-    canvas.window(f, (0,0))
-    
-    k,f1 = canvas.movable_window("title")
-    canvas.coords(k, (100,50))
-    b1 = nice_button(f1, text="button")
-    
-    k,f2 = canvas.movable_window("title2", (100,100))
-    b2 = nice_button(f2, text="button")
-    
-##    canvas.hide_trigger(b1, f2.master)
-##    canvas.hide_trigger(b2, f1.master)
-    
-    key = canvas.image(np.random.random((100,100))*255, (200,50))
-    canvas.move(key, (-200,0))
-    canvas.coords(key, (0,10))
-
-    k = canvas.text("asd", (400,100))
-    
-    win.mainloop()
 
 
 

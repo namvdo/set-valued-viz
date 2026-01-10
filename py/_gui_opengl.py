@@ -11,13 +11,13 @@ from pyopengltk import OpenGLFrame
 ##    GL.glLoadIdentity()
 ##    # Draw your primitives here
 ##    GL.glFlush()
-##
+
 ##def reshape(width, height):
 ##    GL.glViewport(0, 0, width, height)
 ##    GL.glMatrixMode(GL.GL_PROJECTION)
 ##    GL.glLoadIdentity()
 ##    GL.glOrtho(-1.0, 1.0, -1.0, 1.0, -1.0, 1.0)
-##
+
 ##def main():
 ##    GLUT.glutInit()
 ##    GLUT.glutInitDisplayMode(GLUT.GLUT_SINGLE | GLUT.GLUT_RGB)
@@ -27,8 +27,6 @@ from pyopengltk import OpenGLFrame
 ##    GLUT.glutDisplayFunc(display)
 ##    GLUT.glutReshapeFunc(reshape)
 ##    GLUT.glutMainLoop()
-
-
 
 class AppOgl(OpenGLFrame):
 
@@ -47,7 +45,7 @@ class AppOgl(OpenGLFrame):
         GL.glMatrixMode(GL.GL_MODELVIEW)
         GL.glLoadIdentity()
         # Draw your primitives here
-
+        
         self.test_draw()
         
         #
@@ -77,13 +75,14 @@ class AppOgl(OpenGLFrame):
 
 class Viewport():
     frame = None
-    def __init__(self, root, side=tk.TOP, fill=tk.BOTH, **kwargs):
+    def __init__(self, root, side=tk.TOP, fill=tk.BOTH, expand=True, **kwargs):
         self.frame = AppOgl(root, **kwargs)
-        self.frame.pack(side=side, fill=fill)
+        self.frame.pack(side=side, fill=fill, expand=expand)
         
 
 if __name__ == "__main__":
-    win = nice_window("test")
+    win = nice_window("test", resizeable=True)
     vp = Viewport(win, width=512, height=200)
+
     win.mainloop()
     pass

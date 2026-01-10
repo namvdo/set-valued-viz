@@ -85,6 +85,7 @@ class ModelInstance():
     colors = None # -> dict
 
     viewport = None # -> Viewport
+    canvas = None # -> Canvas
     
     step = None # -> IntegerField
     printbox = None # -> TextBox
@@ -104,20 +105,15 @@ class ModelInstance():
         win = nice_window(self.key, on_destroy=on_destroy, resizeable=True)
         set_padding(win)
         
-##        win_shape = np.array((win.winfo_screenwidth(), win.winfo_screenheight()))
-        win_shape = np.array([1200,800])
-        self.canvas = Canvas(win, *win_shape)
+        self.viewport = Viewport(win, 1280, 720)
+        self.canvas = Canvas(self.viewport.get_widget())
         
         k,f = self.canvas.movable_window("Model Controls", (0,0))
         self._init_model_control_panel(f)
         
-        k,f = self.canvas.movable_window("Viewport", (0,0))
-        self._init_viewport_panel(f)
-        
-        k,f = self.canvas.movable_window("Viewport Controls", (0,0))
+        k,f = self.canvas.movable_window("Viewport Controls", (600,0))
         self._init_viewport_settings_panel(f)
         
-##        win.configure(width=win_shape[0], height=win_shape[1])
         
 
     def _init_model_control_panel(self, root):
@@ -206,10 +202,6 @@ class ModelInstance():
         self.printbox = TextBox(f, width=28, height=6, side=tk.TOP, fill=tk.BOTH)
         
         self.refresh_printbox()
-        
-
-    def _init_viewport_panel(self, root):
-        self.viewport = Viewport(root)
         
     def _init_viewport_settings_panel(self, root):
         frame = nice_frame(root, anchor="nw")
@@ -473,11 +465,6 @@ class ModelInstance():
     def refresh_viewport(self):
         if self.model.has_points():
             image, extent = self.draw(self.fig_resolution.get())
-            
-##            string = f"{extent[0]:+.3f} < x < {extent[1]:+.3f}\n"
-##            string += f"{extent[2]:+.3f} < y < {extent[3]:+.3f}\n"
-##            string += f"{extent[4]:+.3f} < z < {extent[5]:+.3f}"
-##            self.axis_label.configure(text=string)
             
             title = f"{len(self.model)} points"
             title += f"\nimage: {image.shape[:2]}"

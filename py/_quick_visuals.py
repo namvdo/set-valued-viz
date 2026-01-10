@@ -64,7 +64,6 @@ class ImageDrawing(ColorObj):
     def clear(self):
         self.tl = self.br = None
         self.objects.clear()
-        self.colors.clear()
 
     def _check_points(self, points):
         points = np.asarray(points, dtype=np.float64)
@@ -149,7 +148,7 @@ class ImageDrawing(ColorObj):
         can_do_perspective = camera_dist is not None and can_show_depth
         camera_pos = camera_orbit_point.copy()
         if can_show_depth:
-            camera_pos[2] = tl[2]
+            camera_pos[2] = tl[2]-1
         if can_do_perspective:
             camera_pos[2] -= camera_dist
             zoom = 1
@@ -360,13 +359,18 @@ class ImageDrawing(ColorObj):
         self.yaw = np.pi/5.1
         self.tilt = -np.pi/6
 
+
+
+
+    
+
 def apply_curvilinear_perspective(points, observer, zoom=1.):
     distances = distance(points, observer)
     valid = distances>0
     points[valid,:2] -= observer[:2]
-    points[valid,0] /= 1+distances[valid]
-    points[valid,1] /= 1+distances[valid]
-    points[valid,:2] *= zoom#+1
+    points[valid,0] /= distances[valid]
+    points[valid,1] /= distances[valid]
+    points[valid,:2] *= zoom
     points[valid,:2] += observer[:2]
 
 
