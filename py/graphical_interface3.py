@@ -108,11 +108,19 @@ class ModelInstance():
         self.viewport = Viewport(win, 1280, 720)
         self.canvas = Canvas(self.viewport.get_widget())
         
-        k,f = self.canvas.movable_window("Model Controls", (0,0))
+        k,f = self.canvas.movable_window("Model Controls", (0,0), hidden=False)
         self._init_model_control_panel(f)
         
-        k,f = self.canvas.movable_window("Viewport Controls", (600,0))
+        k,f = self.canvas.movable_window("Viewport Controls", (-1,0), hidden=False)
         self._init_viewport_settings_panel(f)
+        
+        # planned & wip stuff
+        k,f = self.canvas.movable_window("animation", (400,0), hidden=True)
+        nice_label(f, text="WIP")
+        
+        k,f = self.canvas.movable_window("periodical points", (500,0), hidden=True)
+        nice_label(f, text="WIP")
+        #
         
         
 

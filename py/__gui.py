@@ -690,22 +690,26 @@ class TextBox():
 
 
 
+def get_widget_shape(widget):
+    return (widget.winfo_width(), widget.winfo_height())
 
 class Canvas():
     shape = None # array
     configures_to_ignore = 0
     canvas = None
     def __init__(self, tk_canvas):
-        self.shape = np.ones(2)
+        self.shape = np.zeros(2)
         
         self.canvas = tk_canvas
         self.canvas.config(highlightthickness=0) # stop endless resize loop
         self.canvas.pack_propagate(0)
         
-        # auto check widgets
+        self.__configure_timer_id = None
+        
+        # auto check widgets so that they are inside the frame
         def configure_handler(event):
             if self.configures_to_ignore>=0: self.configures_to_ignore -= 1
-            else: self.check_that_every_widget_is_inside()
+            else: self._start_configure_timer()
             self.shape = np.array((event.width, event.height))
         self.canvas.bind("<Configure>", configure_handler, add="+")
         #
@@ -713,6 +717,33 @@ class Canvas():
         self.drag_start_pos = {} # key -> pos
         self.widget_keys = {} # widget -> key
         self.widget_visible = {} # widget -> boolean
+        self.widget_pack_memory = {} # widget -> dict to hold pack info when hidden
+        
+        self.canvas.after(50, self._wait_until_done)
+        
+    def _wait_until_done(self):
+        if self.shape.any(): self.canvas.after(50, self._after_done)
+        else: self.canvas.after(50, self._wait_until_done)
+
+    def _after_done(self):
+        for obj,key in self.widget_keys.items(): # negative pos -> from the opposite edge
+            pos = self.coords(key)
+            negative = np.less(pos, 0)
+            new_pos = np.subtract(pos, np.multiply(negative, get_widget_shape(obj)))
+            new_pos[negative] %= self.shape[negative]
+            new_pos[negative] += 1
+            if (np.subtract(pos, new_pos)!=0).any():
+                self.coords(key, new_pos)
+        self.check_that_every_widget_is_inside()
+
+    def _start_configure_timer(self):
+        if self.__configure_timer_id is not None:
+            self.canvas.after_cancel(self.__configure_timer_id)
+        self.__configure_timer_id = self.canvas.after(100, self._after_configure)
+
+    def _after_configure(self):
+        self.__configure_timer_id = None
+        self.check_that_every_widget_is_inside()
         
         
     def relative_pos(self, pos):
@@ -720,7 +751,7 @@ class Canvas():
     def actual_pos(self, rel_pos):
         return np.multiply(rel_pos, self.shape)
     def modulus_pos(self, pos):
-        return np.mod(pos, self.shape)
+        return pos%self.shape
     def clipped_pos(self, pos):
         return np.clip(pos, a_min=0, a_max=np.subtract(self.shape, 1))
 
@@ -782,7 +813,7 @@ class Canvas():
         obj.bind("<Button-3>", button_handler, add="+")
         
     
-    def movable_window(self, title, pos=(0,0)):
+    def movable_window(self, title, pos=(0,0), hidden=False):
         f = nice_titled_frame(self.canvas, title)
         topmost = self.get_topmost(f)
         set_padding(topmost, 1, 1)
@@ -791,19 +822,32 @@ class Canvas():
         for obj in topmost.slaves():
             self._movable_obj(key, obj)
             self._liftable_obj(obj)
-            self.hide_trigger(obj, f.master)
+            self.set_hide_trigger(obj, f.master)
         self._liftable_obj(f)
+
+        if hidden:
+            self.hide(f.master)
         return key, f
 
-    def hide_trigger(self, trigger, target):
+    def set_hide_trigger(self, trigger, target):
         self.widget_visible[target] = self.widget_visible.get(target, True)
         def button_handler(event):
-            if self.widget_visible[target]: target.pack_forget()
-            else: target.pack()
-            self.widget_visible[target] = not self.widget_visible[target]
+            if not self.show(target): self.hide(target)
         trigger.bind("<Button-2>", button_handler, add="+")
         trigger.bind("<Button-3>", button_handler, add="+")
-
+    
+    def hide(self, widget):
+        self.widget_visible[widget] = False
+        self.widget_pack_memory[widget] = widget.pack_info()
+        widget.pack_forget()
+        
+    def show(self, widget):
+        if not self.widget_visible.get(widget, True):
+            self.widget_visible[widget] = True
+            widget.pack(**self.widget_pack_memory[widget])
+            del self.widget_pack_memory[widget]
+            return True
+        return False
 
 
 

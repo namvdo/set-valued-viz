@@ -33,4 +33,5 @@ def main(target_file, icon="", onefile=True):
     delete_folder(workpath) # delete temporary files
 
 if __name__ == "__main__":
-    main("graphical_interface.py")
+##    main("graphical_interface.py")
+    main("graphical_interface3.py")
