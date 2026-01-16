@@ -65,6 +65,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
+name = "lorenz-backend"
+version = "0.1.0"
+dependencies = [
+ "getrandom",
+ "js-sys",
+ "regex",
+ "serde",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -175,18 +187,6 @@ dependencies = [
  "memchr",
  "ryu",
  "serde_core",
-]
-
-[[package]]
-name = "set-valued-viz"
-version = "0.1.0"
-dependencies = [
- "getrandom",
- "js-sys",
- "regex",
- "serde",
- "serde_json",
- "wasm-bindgen",
 ]
 
 [[package]]

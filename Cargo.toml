@@ -1,5 +1,5 @@
 [package]
-name = "set-valued-viz"
+name = "lorenz-backend"
 version = "0.1.0"
 edition = "2021"
 
