@@ -54,6 +54,22 @@ impl Jacobian {
             j22: self.j21 * other.j12 + self.j22 * other.j22
         }
     }
+
+    fn eigenvalues(&self) -> (f64, f64, bool) {
+        let trace = self.j11 + self.j22;
+        let det = self.j11 * self.j22 - self.j12 * self.j21;
+        let discriminant = trace * trace - 4.0 * det;
+
+        if discriminant >= 0 {
+            let sqrt_disc = discriminant.sqrt();
+            let lambda1 = (trace + sqrt_disc) / 2.0;
+            let lambda2 = (trace - sqrt_disc) / 2.0;
+            (lambda1, lambda2, false)
+        } else {
+            let modulus = det.sqrt();
+            (modulus, modulus, true)
+        }
+    }
 }
 
 fn henon_map(x: f64, y: f64, a: f64, b: f64) -> (f64, f64) {
@@ -205,6 +221,25 @@ fn main() {
 
 pub fn precompute_periodic_orbits(a: f64, b: f64) -> PeriodicOrbitDatabase {
     let mut database = PeriodicOrbitDatabase::new();
+
+    for period in 1..=5{
+        println!("Searching for period-{} orbits", period)
+        // grid search
+        for i in 0..50 {
+            for j in 0..50 { 
+                let x_guess = -2.0 + 4.0 * (i as f64) / 50.0;
+                let y_guess = -2.0 + 4.0 * (j as f64) / 50.0;
+
+                if let Some(orbit_point) = find_periodic_point_near(
+                    x_guess, y_guess, a, b, period
+                ) {
+                    database.add_if_new(orbit_point, period);
+                }
+            }
+        }
+    }
+
+    database
 }
 
 pub struct PeriodicOrbitDatabase {
@@ -213,6 +248,8 @@ pub struct PeriodicOrbitDatabase {
 }
 
 impl PeriodicOrbitDatabase {
+
+
     pub fn find_matching_orbit(&self, x: f64, y: f64, tolerance: f64) -> Option<&PeriodicOrbit> {
         for orbit in &self.orbits {
             for point in &orbit.points {
@@ -227,7 +264,46 @@ impl PeriodicOrbitDatabase {
         None
     }
 
-    
+    pub fn add_if_new(&mut self, point: Point, period: usize) {
+        const DUPLICATE_TOLERANCE: f64 = 1e-6;
+
+        for existing_orbit in &self.orbits {
+            if existing_orbit.period != period {
+                continue;
+            }
+
+            for existing_point in &existing_orbit.points {
+                let distance = ((point.x - existing_point.x).powi(2) + (point.y - existing_point.y).powi(2)).sqrt();
+
+                if distance < DUPLICATE_TOLERANCE {
+                    return;
+                }
+            }
+        }
+
+        self.orbits.push(self.construct_full_orbit(point, period));
+    }
+
+    fn construct_full_orbit(&self, start_point: Point, period: usize) -> PeriodicOrbit {
+        let mut points = vec![start_point.clone()];
+        let mut x = start_point.x;
+        let mut y = start_point.y;
+
+        for _ in 1..period {
+            (x, y) = henon_map(x, y, a, b);
+            points.push(Point {x, y});
+        }
+
+        let stability = compute_stability(&points, self.a, self.b);
+
+        PeriodicOrbit {
+            points, 
+            period,
+            stability
+        }
+    }
+
+
 }
 
 pub struct PeriodicOrbit {
