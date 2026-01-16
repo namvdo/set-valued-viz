@@ -72,6 +72,30 @@ impl Jacobian {
     }
 }
 
+
+fn classify_stability(jac: &Jacobian) -> StabilityType {
+    let (lambda1, lambda2, is_complex) = jac.eigenvalues();
+
+    if is_complex {
+        if lambda1 < 1.0 {
+            StabilityType::Stable
+        } else {
+            StabilityType::Unstable
+        }
+    } else {
+        let l1_stable = lambda1.abs() < 1.0;
+        let l2_stable = lambda2.abs() < 1.0;
+
+        if l1_stable && l2_stable {
+            StabilityType::Stable
+        } else if !l1_stable && !l2_stable {
+            StabilityType::Unstable
+        } else {
+            StabilityType::Saddle
+        }
+    }
+}
+
 fn henon_map(x: f64, y: f64, a: f64, b: f64) -> (f64, f64) {
     (
         1.0 - a * x * x + y,
