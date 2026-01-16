@@ -1,5 +1,5 @@
 use std::f64;
-
+use kdtree::KDTree;
 #[derive(Debug, Clone)]
 pub struct Point {
     pub x: f64, 
@@ -13,6 +13,22 @@ pub struct Jacobian {
     pub j21: f64, 
     pub j22: f64
 }
+
+
+pub struct FixedPoint {
+    pub x: f64, 
+    pub y: f64, 
+    pub period: usize, 
+    pub stability: StabilityType,
+}
+
+pub enum StabilityType {
+    Stable,
+    Unstable,
+    Saddle
+}
+
+
 
 impl Jacobian {
     fn inverse(&self) -> Option<Jacobian> {
@@ -185,3 +201,38 @@ fn main() {
         }
     }
 }
+
+
+pub fn precompute_periodic_orbits(a: f64, b: f64) -> PeriodicOrbitDatabase {
+    let mut database = PeriodicOrbitDatabase::new();
+}
+
+pub struct PeriodicOrbitDatabase {
+    orbits: Vec<PeriodicOrbit>,
+    spatial_index: KDTree,
+}
+
+impl PeriodicOrbitDatabase {
+    pub fn find_matching_orbit(&self, x: f64, y: f64, tolerance: f64) -> Option<&PeriodicOrbit> {
+        for orbit in &self.orbits {
+            for point in &orbit.points {
+                let distance = ((x - point.x).powi(2) + (y - point.y).powi(2)).sqrt();
+
+                if distance < tolerance {
+                    return Some(orbit);
+                }
+            }
+        }
+
+        None
+    }
+
+    
+}
+
+pub struct PeriodicOrbit {
+    pub points: Vec<Point>,
+    pub period: usize,
+    pub stability: StabilityType
+}
+
