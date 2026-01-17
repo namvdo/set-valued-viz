@@ -1,7 +1,11 @@
+use std::option::Option;
 use std::char::MAX;
 use std::cmp::max;
 use std::f64;
+use std::thread::current;
 use js_sys::Math::min;
+use serde::de::Unexpected::Option;
+use serde_json::value::to_raw_value;
 
 #[derive(Debug, Clone)]
 pub struct Point {
@@ -314,18 +318,25 @@ impl PeriodicOrbitDatabase {
             b,
         }
     }
-    pub fn find_matching_orbit(&self, x: f64, y: f64, tolerance: f64) -> Option<&PeriodicOrbit> {
+    pub fn find_matching_orbit(&self, x: f64, y: f64, tolerance: f64) -> Option<(&PeriodicOrbit, f64)>  {
+        let mut best_match: Option<(&PeriodicOrbit, f64)> = None;
+
         for orbit in &self.orbits {
-            for point in &orbit.points {
+            for point in orbit.points {
                 let distance = ((x - point.x).powi(2) + (y - point.y).powi(2)).sqrt();
 
                 if distance < tolerance {
-                    return Some(orbit);
+                    match best_match {
+                        None => best_match = Some((orbit, distance)),
+                        Some((_, best_dist)) if distance < best_dist => {
+                            best_match = Some((orbit, distance))
+                        },
+                        _ => {}
+                    }
                 }
             }
         }
-
-        None
+        best_match
     }
 
     pub fn add_if_new(&mut self, fixed_point: FixedPoint) {
@@ -368,6 +379,18 @@ impl PeriodicOrbitDatabase {
             points,
             period: start_point.period,
             stability: start_point.stability
+        }
+    }
+
+    pub fn classify_point(&self, x: f64, y: f64, tolerance: f64) -> PointClassification {
+        if let Some((orbit, distance)) = self.find_matching_orbit(x, y, tolerance) {
+            PointClassification::NearPeriodicOrbit {
+                period: orbit.period,
+                stability: orbit.stability.clone(),
+                distance
+            }
+        } else {
+            PointClassification::Regular
         }
     }
 
@@ -481,4 +504,111 @@ fn compute_hausdorff_distance(boundary1: &[BoundaryPoint], boundary2: &[Boundary
         max_dist = max_dist.max(min_dist);
     }
     max_dist
+}
+
+
+pub struct BoundarySnapshot {
+    pub iteration: usize,
+    pub points: Vec<BoundaryPoint>,
+}
+
+pub struct HenonSystemAnalysis {
+    pub a: f64,
+    pub b: f64,
+    pub epsilon: f64,
+    pub orbit_database: PeriodicOrbitDatabase,
+    pub boundary_history: Vec<BoundarySnapshot>,
+}
+
+impl HenonSystemAnalysis {
+    pub fn new(a: f64, b: f64, epsilon: f64, max_period: usize) -> Self {
+        let orbit_database = precompute_periodic_orbits(a, b, max_period);
+
+        Self {
+            a,
+            b,
+            epsilon,
+            orbit_database,
+            boundary_history: Vec::new(),
+        }
+    }
+
+    pub fn track_boundary(
+        &mut self,
+        initial_center: (f64, f64),
+        num_boundary_points: usize,
+        max_iterations: usize,
+        convergence_tolerance: f64
+    ) {
+        println!(
+            "Initial center: ({:.4}, {:.4}), ε = {:.4}",
+            initial_center.0, initial_center.1, self.epsilon
+        );
+
+        let mut current_boundary = initialize_circular_boundary(initial_center, self.epsilon, num_boundary_points);
+
+        current_boundary = self.classify_boundary(&current_boundary);
+
+        self.boundary_history.push(BoundarySnapshot {
+            iteration: 0,
+            points: current_boundary.clone(),
+        });
+
+        for iter in 1..=max_iterations {
+            current_boundary = evolve_boundary_step(&current_boundary, self.a, self.b, self.epsilon);
+
+            let diverged_count = current_boundary
+                .iter().filter(|p| p.x.abs() > 100.0 || p.y.abs() > 100.0)
+                .count();
+            let diverged_ratio = diverged_count as f64 / iter as f64;
+            if diverged_ratio > 0.5 {
+                println!(
+                    "Iteration {}: System diverged ({:.1}% points escaped)",
+                    iter,
+                    diverged_ratio * 100.0
+                );
+                break;
+            }
+            current_boundary = self.classify_boundary(&current_boundary);
+
+            self.boundary_history.push(BoundarySnapshot {
+                points: current_boundary.clone(),
+                iteration: iter
+            });
+
+            if iter > 1 {
+                let prev_boundary = &self.boundary_history[self.boundary_history.len() - 2].points;
+                let hausdorff_distance = compute_hausdorff_distance(prev_boundary, &current_boundary);
+
+                if hausdorff_distance < convergence_tolerance {
+                    println!("Converged.");
+                    break;
+                };
+                if iter % 10 == 0 {
+                    println!(
+                        "Iteration {}: Hausdorff distance = {:.2e}",
+                        iter, hausdorff_distance
+                    );
+                }
+            }
+        }
+
+    }
+
+    fn classify_boundary(&self, boundary: &[BoundaryPoint]) -> Vec<BoundaryPoint> {
+        boundary
+            .iter()
+            .map(|point| {
+                let classification = self.orbit_database.classify_point(point.x, point.y, 1e-4);
+                BoundaryPoint {
+                    x: point.x,
+                    y: point.y,
+                    nx: point.nx,
+                    ny: point.ny,
+                    classification
+                }
+            }).collect()
+
+
+    }
 }
