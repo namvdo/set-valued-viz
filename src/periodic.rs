@@ -1,8 +1,10 @@
+use std::char::MAX;
+use std::cmp::max;
 use std::f64;
 #[derive(Debug, Clone)]
 pub struct Point {
     pub x: f64, 
-    pub y: f64
+    pub y: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +71,10 @@ impl Jacobian {
         })
     }
 
+    fn apply(&self, x: f64, y: f64) -> (f64, f64) {
+        (self.j11 * x + self.j12 * y, self.j21 * x + self.j22 * y)
+    }
+
     fn multiply(&self, other: &Jacobian) -> Jacobian {
         Jacobian {
             j11: self.j11 * other.j11 + self.j12 * other.j21, 
@@ -83,7 +89,7 @@ impl Jacobian {
         let det = self.j11 * self.j22 - self.j12 * self.j21;
         let discriminant = trace * trace - 4.0 * det;
 
-        if discriminant >= 0 {
+        if discriminant >= 0.0 {
             let sqrt_disc = discriminant.sqrt();
             let lambda1 = (trace + sqrt_disc) / 2.0;
             let lambda2 = (trace - sqrt_disc) / 2.0;
@@ -188,52 +194,55 @@ fn verify_minimal_period(x: f64, y: f64, a: f64, b: f64, period: usize) -> bool 
     true
 }
 
-pub fn find_periodic_point_near(x_guess: f64, y_guess: f64, a: f64, b: f64, period: usize) -> Option<Point> {
+pub fn find_periodic_point_near(x_guess: f64, y_guess: f64, a: f64, b: f64, period: usize) -> Option<FixedPoint> {
     let mut x = x_guess;
-    let mut y = y_guess; 
+    let mut y = y_guess;
 
     const MAX_ITERATIONS: usize = 100;
     const TOLERANCE: f64 = 1e-10;
 
-    for _ in 0..MAX_ITERATIONS {
-        let (fx, fy, jacobian) = compose_henon_n_times(x, y, a, b, period);
+    for _iter in 0..MAX_ITERATIONS {
+        let (fx, fy, jac_fn) = compose_henon_n_times(x, y, a, b, period);
 
-        let rx = fx - x; 
+        let rx = fx - x;
         let ry = fy - y;
 
         let error = (rx * rx + ry * ry).sqrt();
 
         if error < TOLERANCE {
             if verify_minimal_period(x, y, a, b, period) {
-                return Some(Point { x, y });
+                let stability = classify_stability(&jac_fn);
+
+                return Some(FixedPoint {
+                    x,
+                    y,
+                    period,
+                    stability
+                });
             } else {
                 return None;
             }
         }
-
         let jac_g = Jacobian {
-            j11: jacobian.j11 - 1.0,
-            j12: jacobian.j12,
-            j21: jacobian.j21,
-            j22: jacobian.j22 - 1.0
+            j11: jac_fn.j11 - 1.0,
+            j12: jac_fn.j12,
+            j21: jac_fn.j21,
+            j22: jac_fn.j22 - 1.0,
         };
-        
+
         let jac_g_inv = match jac_g.inverse() {
-            Some(inv) => inv, 
-            None => return None
+            Some(inv) => inv,
+            None => return None,
         };
 
-        let dx = jac_g_inv.j11 * (-rx) + jac_g_inv.j12 * (-ry);
-        let dy = jac_g_inv.j21 * (-rx) + jac_g_inv.j22 * (-ry);
-
-        x += dx; 
+        let (dx, dy) = jac_g_inv.apply(-rx, -ry);
+        x += dx;
         y += dy;
 
         if x.abs() > 100.0 || y.abs() > 100.0 {
-            return None
+            return None;
         }
-    } 
-
+    }
     None
 }
 
@@ -266,35 +275,43 @@ fn main() {
 }
 
 
-pub fn precompute_periodic_orbits(a: f64, b: f64) -> PeriodicOrbitDatabase {
-    let mut database = PeriodicOrbitDatabase::new();
+pub fn precompute_periodic_orbits(a: f64, b: f64, max_period: usize) -> PeriodicOrbitDatabase {
+    let mut database = PeriodicOrbitDatabase::new(a, b);
 
-    for period in 1..=5{
-        println!("Searching for period-{} orbits", period);
-        // grid search
-        for i in 0..50 {
-            for j in 0..50 { 
-                let x_guess = -2.0 + 4.0 * (i as f64) / 50.0;
-                let y_guess = -2.0 + 4.0 * (j as f64) / 50.0;
+    for period in 1..=max_period {
+        let mut found_this_period = 0;
 
-                if let Some(orbit_point) = find_periodic_point_near(
-                    x_guess, y_guess, a, b, period
-                ) {
-                    database.add_if_new(orbit_point, period);
+        let grid_size = if period == 1 { 30 } else { 50 };
+
+        for i in 0..grid_size {
+            for j in 0..grid_size {
+                let x_guess = -2.0 + 4.0 * (i as f64) / grid_size as f64;
+                let y_guess = -2.0 + 4.0 * (j as f64) / grid_size as f64;
+
+                if let Some(fixed_point) = find_periodic_point_near(x_guess, y_guess, a, b, period) {
+                    let before_count = database.total_count();
+                    database.add_if_new(fixed_point)
                 }
             }
         }
     }
-
     database
 }
 
 pub struct PeriodicOrbitDatabase {
     orbits: Vec<PeriodicOrbit>,
-    spatial_index: KDTree,
+    a: f64,
+    b: f64
 }
 
 impl PeriodicOrbitDatabase {
+    pub fn new(a: f64, b: f64) -> Self {
+        Self {
+            orbits: Vec::new(),
+            a,
+            b,
+        }
+    }
     pub fn find_matching_orbit(&self, x: f64, y: f64, tolerance: f64) -> Option<&PeriodicOrbit> {
         for orbit in &self.orbits {
             for point in &orbit.points {
@@ -309,45 +326,48 @@ impl PeriodicOrbitDatabase {
         None
     }
 
-    pub fn add_if_new(&mut self, point: Point, period: usize) {
+    pub fn add_if_new(&mut self, fixed_point: FixedPoint) {
         const DUPLICATE_TOLERANCE: f64 = 1e-6;
 
         for existing_orbit in &self.orbits {
-            if existing_orbit.period != period {
+            if existing_orbit.period != fixed_point.period {
                 continue;
             }
-
             for existing_point in &existing_orbit.points {
-                let distance = ((point.x - existing_point.x).powi(2) + (point.y - existing_point.y).powi(2)).sqrt();
-
+                let distance = ((existing_point.x - fixed_point.x).powi(2) + (existing_point.y - fixed_point.y).powi(2)).sqrt();
                 if distance < DUPLICATE_TOLERANCE {
                     return;
                 }
             }
         }
-
-        self.orbits.push(self.construct_full_orbit(point, period));
+        let orbit = self.construct_full_orbit(fixed_point);
+        self.orbits.push(orbit);
     }
 
-    fn construct_full_orbit(&self, start_point: Point, period: usize) -> PeriodicOrbit {
-        let mut points = vec![start_point.clone()];
+    pub fn total_count(&self) -> usize {
+        self.orbits.len()
+    }
+
+    fn construct_full_orbit(&self, start_point: FixedPoint) -> PeriodicOrbit {
+        let mut points = vec![Point{
+            x: start_point.x,
+            y: start_point.y,
+        }];
+
         let mut x = start_point.x;
         let mut y = start_point.y;
 
-        for _ in 1..period {
-            (x, y) = henon_map(x, y, a, b);
-            points.push(Point {x, y});
+        for _ in 1..start_point.period {
+            (x, y) = henon_map(x, y, self.a, self.b);
+            points.push(Point {x, y})
         }
-
-        let stability = compute_stability(&points, self.a, self.b);
 
         PeriodicOrbit {
-            points, 
-            period,
-            stability
+            points,
+            period: start_point.period,
+            stability: start_point.stability
         }
     }
-
 
 }
 
@@ -369,6 +389,70 @@ fn initialize_circular_boundary(
     epsilon: f64,
     num_points: usize
 ) -> Vec<BoundaryPoint> {
+    (0..num_points)
+        .map(|i| {
+            let theta = 2.0 * std::f64::consts::PI * (i as f64) / (num_points as f64);
+            let x = center.0 + epsilon * theta.cos();
+            let y = center.1 + epsilon * theta.sin();
+            let nx = theta.cos();
+            let ny = theta.sin();
 
+            BoundaryPoint {
+                x,
+                y,
+                nx,
+                ny,
+                classification: PointClassification::Regular
+            }
+        }).collect()
 }
 
+
+fn evolve_boundary_step(
+    boundary: &[BoundaryPoint],
+    a: f64,
+    b: f64,
+    epsilon: f64
+) -> Vec<BoundaryPoint> {
+    boundary
+        .iter()
+        .map(|point| {
+            let (fx, fy) = henon_map(point.x as f64, point.y as f64, a, b);
+            let jac = henon_jacobian(point.x, point.y, a, b);
+
+            let jac_inv = match jac.inverse() {
+                Some(inv) => inv,
+                None => {
+                    return BoundaryPoint {
+                        x: fx,
+                        y: fy,
+                        nx: point.nx,
+                        ny: point.ny,
+                        classification: PointClassification::Regular
+                    };
+                }
+            };
+
+            let nx_new = jac_inv.j11 * point.nx + jac_inv.j21 * point.ny;
+            let ny_new = jac_inv.j12 * point.nx + jac_inv.j22 * point.ny;
+
+            let norm = (nx_new * nx_new + ny_new * ny_new).sqrt();
+
+            let (nx_norm, ny_norm) = if norm > 1e-12 {
+                (nx_new / norm, ny_new / norm)
+            } else {
+                (point.nx, point.ny)
+            };
+
+            let x_new = fx + epsilon * nx_norm;
+            let y_new = fy + epsilon * ny_norm;
+
+            BoundaryPoint {
+                x: x_new,
+                y: y_new,
+                nx: nx_norm,
+                ny: ny_norm,
+                classification: PointClassification::Regular
+            }
+        }).collect()
+}
