@@ -1,5 +1,6 @@
 mod integrator;
 mod lorenz;
+mod periodic;
 
 use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};

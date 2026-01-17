@@ -1,5 +1,4 @@
 use std::f64;
-use kdtree::KDTree;
 #[derive(Debug, Clone)]
 pub struct Point {
     pub x: f64, 
@@ -14,7 +13,7 @@ pub struct Jacobian {
     pub j22: f64
 }
 
-
+#[derive(Debug, Clone)]
 pub struct FixedPoint {
     pub x: f64, 
     pub y: f64, 
@@ -22,10 +21,34 @@ pub struct FixedPoint {
     pub stability: StabilityType,
 }
 
+
+
+#[derive(Debug, Clone)]
 pub enum StabilityType {
     Stable,
     Unstable,
     Saddle
+}
+
+
+#[derive(Debug, Clone)]
+pub struct BoundaryPoint {
+    pub x: f64,
+    pub y: f64,
+    pub nx: f64,
+    pub ny: f64,
+    pub classification: PointClassification
+}
+
+
+#[derive(Debug, Clone)]
+pub enum PointClassification {
+    Regular,
+    NearPeriodicOrbit {
+        period: usize,
+        stability: StabilityType,
+        distance: f64
+    }
 }
 
 
@@ -247,7 +270,7 @@ pub fn precompute_periodic_orbits(a: f64, b: f64) -> PeriodicOrbitDatabase {
     let mut database = PeriodicOrbitDatabase::new();
 
     for period in 1..=5{
-        println!("Searching for period-{} orbits", period)
+        println!("Searching for period-{} orbits", period);
         // grid search
         for i in 0..50 {
             for j in 0..50 { 
@@ -272,8 +295,6 @@ pub struct PeriodicOrbitDatabase {
 }
 
 impl PeriodicOrbitDatabase {
-
-
     pub fn find_matching_orbit(&self, x: f64, y: f64, tolerance: f64) -> Option<&PeriodicOrbit> {
         for orbit in &self.orbits {
             for point in &orbit.points {
@@ -334,5 +355,20 @@ pub struct PeriodicOrbit {
     pub points: Vec<Point>,
     pub period: usize,
     pub stability: StabilityType
+}
+
+impl PeriodicOrbit {
+    fn representative_point(&self) -> &Point {
+        &self.points[0]
+    }
+}
+
+
+fn initialize_circular_boundary(
+    center: (f64, f64),
+    epsilon: f64,
+    num_points: usize
+) -> Vec<BoundaryPoint> {
+
 }
 
