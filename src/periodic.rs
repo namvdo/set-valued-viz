@@ -1,6 +1,8 @@
 use std::char::MAX;
 use std::cmp::max;
 use std::f64;
+use js_sys::Math::min;
+
 #[derive(Debug, Clone)]
 pub struct Point {
     pub x: f64, 
@@ -455,4 +457,28 @@ fn evolve_boundary_step(
                 classification: PointClassification::Regular
             }
         }).collect()
+}
+
+
+fn compute_hausdorff_distance(boundary1: &[BoundaryPoint], boundary2: &[BoundaryPoint]) -> f64 {
+    let mut max_dist: f64 = 0.0;
+
+    for p1 in boundary1 {
+        let mut min_dist = f64::INFINITY;
+        for p2 in boundary2 {
+            let dist = ((p1.x - p2.x).powi(2) + (p1.y - p2.y).powi(2)).sqrt();
+            min_dist = min_dist.min(dist);
+        }
+        max_dist = max_dist.max(min_dist);
+    }
+
+    for p2 in boundary2 {
+        let mut min_dist = f64::INFINITY;
+        for p1 in boundary1 {
+            let dist = ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt();
+            min_dist = min_dist.min(dist);
+        }
+        max_dist = max_dist.max(min_dist);
+    }
+    max_dist
 }
