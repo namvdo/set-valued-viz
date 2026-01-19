@@ -1,14 +1,17 @@
+use web_sys::console;
 use std::f64;
 use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
+#[wasm_bindgen]
 pub struct Point {
     pub x: f64,
     pub y: f64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[wasm_bindgen]
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub enum StabilityType {
     Stable,
     Unstable,
@@ -91,6 +94,8 @@ pub struct PeriodicOrbit {
     pub stability: StabilityType,
 }
 
+
+#[derive(Debug)]
 pub struct BoundarySnapshot {
     pub iteration: usize,
     pub points: Vec<BoundaryPoint>,
@@ -145,6 +150,12 @@ fn compose_henon_n_times(
 
     for _ in 1..n {
         let (x_new, y_new) = henon_map(x, y, a, b);
+
+        // Bail early if diverged
+        if !x_new.is_finite() || !y_new.is_finite() || x_new.abs() > 1e10 || y_new.abs() > 1e10 {
+            return ((f64::NAN, f64::NAN), accumulated_jacobian);
+        }
+
         let jac_current = henon_jacobian(x_new, y_new, a, b);
         accumulated_jacobian = jac_current.multiply(&accumulated_jacobian);
         x = x_new;
@@ -167,7 +178,15 @@ fn find_periodic_point_near(
     let mut y = y0;
 
     for _ in 0..max_iterations {
+        if !x.is_finite() || !y.is_finite() || x.abs() > 100.0 || y.abs() > 100.0 {
+            return None;
+        }
+
         let ((fx, fy), jac_fn) = compose_henon_n_times(x, y, period, a, b);
+
+        if !fx.is_finite() || !fy.is_finite() {
+            return None;
+        }
 
         let gx = fx - x;
         let gy = fy - y;
@@ -187,6 +206,10 @@ fn find_periodic_point_near(
 
         let dx = -(jac_inv.j11 * gx + jac_inv.j12 * gy);
         let dy = -(jac_inv.j21 * gx + jac_inv.j22 * gy);
+
+        if !dx.is_finite() || !dy.is_finite() {
+            return None;
+        }
 
         x += dx;
         y += dy;
@@ -210,6 +233,8 @@ fn verify_minimal_period(point: &Point, claimed_period: usize, a: f64, b: f64) -
     }
     true
 }
+
+#[derive(Debug, Clone)]
 pub struct PeriodicOrbitDatabase {
     pub orbits: Vec<PeriodicOrbit>,
 }
@@ -344,8 +369,20 @@ fn evolve_boundary_step(
 ) -> Vec<BoundaryPoint> {
     boundary
         .iter()
+        .filter(|p| p.x.is_finite() && p.y.is_finite() && p.x.abs() < 100.0 && p.y.abs() < 100.0)
         .map(|point| {
             let (fx, fy) = henon_map(point.x, point.y, a, b);
+
+            if !fx.is_finite() || !fy.is_finite() || fx.abs() > 100.0 || fy.abs() > 100.0 {
+                return BoundaryPoint {
+                    x: fx.clamp(-100.0, 100.0),
+                    y: fy.clamp(-100.0, 100.0),
+                    nx: 0.0,
+                    ny: 0.0,
+                    classification: PointClassification::Regular,
+                };
+            }
+
             let jac = henon_jacobian(point.x, point.y, a, b);
             let jac_inv_transpose = jac.inverse().map(|j| Jacobian {
                 j11: j.j11,
@@ -359,7 +396,7 @@ fn evolve_boundary_step(
                 let ny_new = jac_it.j21 * point.nx + jac_it.j22 * point.ny;
                 let norm = (nx_new * nx_new + ny_new * ny_new).sqrt();
 
-                if norm > 1e-12 {
+                if norm > 1e-12 && norm.is_finite() {
                     let nx_normalized = nx_new / norm;
                     let ny_normalized = ny_new / norm;
 
@@ -393,29 +430,33 @@ fn evolve_boundary_step(
 }
 
 fn compute_hausdorff_distance(set_a: &[BoundaryPoint], set_b: &[BoundaryPoint]) -> f64 {
+    if set_a.is_empty() || set_b.is_empty() {
+        return f64::MAX;
+    }
+
     let max_dist_a_to_b = set_a
         .iter()
+        .filter(|p| p.x.is_finite() && p.y.is_finite())
         .map(|pa| {
             set_b
                 .iter()
+                .filter(|p| p.x.is_finite() && p.y.is_finite())
                 .map(|pb| ((pa.x - pb.x).powi(2) + (pa.y - pb.y).powi(2)).sqrt())
-                .min_by(|a, b| a.partial_cmp(b).unwrap())
-                .unwrap_or(f64::MAX)
+                .fold(f64::MAX, |a, b| a.min(b))
         })
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap_or(0.0);
+        .fold(0.0_f64, |a, b| a.max(b));
 
     let max_dist_b_to_a = set_b
         .iter()
+        .filter(|p| p.x.is_finite() && p.y.is_finite())
         .map(|pb| {
             set_a
                 .iter()
+                .filter(|p| p.x.is_finite() && p.y.is_finite())
                 .map(|pa| ((pb.x - pa.x).powi(2) + (pb.y - pa.y).powi(2)).sqrt())
-                .min_by(|a, b| a.partial_cmp(b).unwrap())
-                .unwrap_or(f64::MAX)
+                .fold(f64::MAX, |a, b| a.min(b))
         })
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap_or(0.0);
+        .fold(0.0_f64, |a, b| a.max(b));
 
     max_dist_a_to_b.max(max_dist_b_to_a)
 }
@@ -447,6 +488,8 @@ impl HenonSystemAnalysis {
         max_iterations: usize,
         convergence_tolerance: f64,
     ) {
+        console::log_1(&format!("track_boundary called with center: {:?}, num_points: {}, max_iter: {}, tolerance: {}", initial_center, num_boundary_points, max_iterations, convergence_tolerance).into());
+        self.boundary_history.clear();
         let mut current_boundary = initialize_circular_boundary(
             initial_center,
             self.epsilon,
@@ -454,6 +497,7 @@ impl HenonSystemAnalysis {
         );
 
         current_boundary = self.classify_boundary(&current_boundary);
+        
 
         self.boundary_history.push(BoundarySnapshot {
             iteration: 0,
@@ -464,12 +508,20 @@ impl HenonSystemAnalysis {
             current_boundary =
                 evolve_boundary_step(&current_boundary, self.a, self.b, self.epsilon);
 
+            if current_boundary.is_empty() {
+                console::log_1(&"Boundary is empty, breaking.".into());
+                break;
+            }
+
             let diverged_count = current_boundary
                 .iter()
                 .filter(|p| p.x.abs() > 100.0 || p.y.abs() > 100.0)
                 .count();
 
-            if diverged_count as f64 / current_boundary.len() as f64 > 0.5 {
+            console::log_1(&format!("Iteration: {}, Boundary points: {}, Diverged: {}", iter, current_boundary.len(), diverged_count).into());
+
+            if current_boundary.is_empty() || diverged_count as f64 / current_boundary.len() as f64 > 0.5 {
+                console::log_1(&"Too many points diverged, breaking.".into());
                 break;
             }
 
@@ -480,13 +532,16 @@ impl HenonSystemAnalysis {
                 points: current_boundary.clone(),
             });
 
-            if iter > 1 {
+            if iter > 1 && self.boundary_history.len() >= 2 {
                 let prev_boundary =
                     &self.boundary_history[self.boundary_history.len() - 2].points;
                 let hausdorff_distance =
                     compute_hausdorff_distance(prev_boundary, &current_boundary);
 
+                console::log_1(&format!("Hausdorff distance: {}", hausdorff_distance).into());
+
                 if hausdorff_distance < convergence_tolerance {
+                    console::log_1(&"Convergence tolerance met, breaking.".into());
                     break;
                 }
             }
@@ -668,3 +723,18 @@ impl HenonSystemWasm {
         self.system.orbit_database.total_count()
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_henon_map() {
+        let mut henon_system = HenonSystemAnalysis::new(1.4, 0.3, 0.01, 2);
+        henon_system.track_boundary((0.0, 0.0), 128, 30, 1e-4);
+        let boundaries: Vec<BoundarySnapshot> = henon_system.boundary_history;
+        println!("Boundary history: {:?}", boundaries)
+    }
+}
+
