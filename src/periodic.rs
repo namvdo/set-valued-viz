@@ -151,7 +151,6 @@ fn compose_henon_n_times(
     for _ in 1..n {
         let (x_new, y_new) = henon_map(x, y, a, b);
 
-        // Bail early if diverged
         if !x_new.is_finite() || !y_new.is_finite() || x_new.abs() > 1e10 || y_new.abs() > 1e10 {
             return ((f64::NAN, f64::NAN), accumulated_jacobian);
         }
@@ -431,35 +430,48 @@ fn evolve_boundary_step(
 
 fn compute_hausdorff_distance(set_a: &[BoundaryPoint], set_b: &[BoundaryPoint]) -> f64 {
     if set_a.is_empty() || set_b.is_empty() {
-        return f64::MAX;
+        console::log_1(&"Warning: Computing Hausdorff distance with empty set".into());
+        return f64::INFINITY;
     }
 
-    let max_dist_a_to_b = set_a
+    // Filter to only valid points
+    let valid_a: Vec<_> = set_a
         .iter()
-        .filter(|p| p.x.is_finite() && p.y.is_finite())
+        .filter(|p| p.x.is_finite() && p.y.is_finite() && p.x.abs() < 100.0 && p.y.abs() < 100.0)
+        .collect();
+    
+    let valid_b: Vec<_> = set_b
+        .iter()
+        .filter(|p| p.x.is_finite() && p.y.is_finite() && p.x.abs() < 100.0 && p.y.abs() < 100.0)
+        .collect();
+
+    if valid_a.is_empty() || valid_b.is_empty() {
+        return f64::INFINITY;
+    }
+
+    let max_dist_a_to_b = valid_a
+        .iter()
         .map(|pa| {
-            set_b
+            valid_b
                 .iter()
-                .filter(|p| p.x.is_finite() && p.y.is_finite())
                 .map(|pb| ((pa.x - pb.x).powi(2) + (pa.y - pb.y).powi(2)).sqrt())
-                .fold(f64::MAX, |a, b| a.min(b))
+                .fold(f64::INFINITY, |a, b| a.min(b))
         })
         .fold(0.0_f64, |a, b| a.max(b));
 
-    let max_dist_b_to_a = set_b
+    let max_dist_b_to_a = valid_b
         .iter()
-        .filter(|p| p.x.is_finite() && p.y.is_finite())
         .map(|pb| {
-            set_a
+            valid_a
                 .iter()
-                .filter(|p| p.x.is_finite() && p.y.is_finite())
                 .map(|pa| ((pb.x - pa.x).powi(2) + (pb.y - pa.y).powi(2)).sqrt())
-                .fold(f64::MAX, |a, b| a.min(b))
+                .fold(f64::INFINITY, |a, b| a.min(b))
         })
         .fold(0.0_f64, |a, b| a.max(b));
 
     max_dist_a_to_b.max(max_dist_b_to_a)
 }
+
 
 pub struct HenonSystemAnalysis {
     pub a: f64,
@@ -482,71 +494,109 @@ impl HenonSystemAnalysis {
     }
 
     pub fn track_boundary(
-        &mut self,
-        initial_center: (f64, f64),
-        num_boundary_points: usize,
-        max_iterations: usize,
-        convergence_tolerance: f64,
-    ) {
-        console::log_1(&format!("track_boundary called with center: {:?}, num_points: {}, max_iter: {}, tolerance: {}", initial_center, num_boundary_points, max_iterations, convergence_tolerance).into());
-        self.boundary_history.clear();
-        let mut current_boundary = initialize_circular_boundary(
-            initial_center,
-            self.epsilon,
-            num_boundary_points,
-        );
+    &mut self,
+    initial_center: (f64, f64),
+    num_boundary_points: usize,
+    max_iterations: usize,
+    convergence_tolerance: f64,
+) {
+    console::log_1(&format!("track_boundary called with center: {:?}, num_points: {}, max_iter: {}, tolerance: {}", 
+        initial_center, num_boundary_points, max_iterations, convergence_tolerance).into());
+    
+    self.boundary_history.clear();
+    
+    // Validate inputs
+    if num_boundary_points == 0 {
+        console::log_1(&"Error: num_boundary_points must be > 0".into());
+        return;
+    }
+    
+    if max_iterations == 0 {
+        console::log_1(&"Error: max_iterations must be > 0".into());
+        return;
+    }
 
-        current_boundary = self.classify_boundary(&current_boundary);
+    let mut current_boundary = initialize_circular_boundary(
+        initial_center,
+        self.epsilon,
+        num_boundary_points,
+    );
+
+    if current_boundary.is_empty() {
+        console::log_1(&"Error: Failed to initialize boundary".into());
+        return;
+    }
+
+    current_boundary = self.classify_boundary(&current_boundary);
+
+    self.boundary_history.push(BoundarySnapshot {
+        iteration: 0,
+        points: current_boundary.clone(),
+    });
+
+    for iter in 1..=max_iterations {
+        let new_boundary = evolve_boundary_step(&current_boundary, self.a, self.b, self.epsilon);
+
+        if new_boundary.is_empty() {
+            console::log_1(&format!("Boundary became empty at iteration {}", iter).into());
+            break;
+        }
+
+        let diverged_count = new_boundary
+            .iter()
+            .filter(|p| !p.x.is_finite() || !p.y.is_finite() || p.x.abs() > 100.0 || p.y.abs() > 100.0)
+            .count();
+
+        console::log_1(&format!("Iteration: {}, Boundary points: {}, Diverged: {}", 
+            iter, new_boundary.len(), diverged_count).into());
+
+        if diverged_count as f64 / new_boundary.len() as f64 > 0.5 {
+            console::log_1(&format!("Too many points diverged at iteration {}, stopping", iter).into());
+            break;
+        }
+
+        let valid_boundary: Vec<BoundaryPoint> = new_boundary
+            .into_iter()
+            .filter(|p| p.x.is_finite() && p.y.is_finite() && p.x.abs() < 100.0 && p.y.abs() < 100.0)
+            .collect();
+
+        if valid_boundary.is_empty() {
+            console::log_1(&format!("No valid points remaining at iteration {}", iter).into());
+            break;
+        }
+
+        let classified_boundary = self.classify_boundary(&valid_boundary);
         
-
         self.boundary_history.push(BoundarySnapshot {
-            iteration: 0,
-            points: current_boundary.clone(),
+            iteration: iter,
+            points: classified_boundary.clone(),
         });
 
-        for iter in 1..=max_iterations {
-            current_boundary =
-                evolve_boundary_step(&current_boundary, self.a, self.b, self.epsilon);
-
-            if current_boundary.is_empty() {
-                console::log_1(&"Boundary is empty, breaking.".into());
-                break;
-            }
-
-            let diverged_count = current_boundary
-                .iter()
-                .filter(|p| p.x.abs() > 100.0 || p.y.abs() > 100.0)
-                .count();
-
-            console::log_1(&format!("Iteration: {}, Boundary points: {}, Diverged: {}", iter, current_boundary.len(), diverged_count).into());
-
-            if current_boundary.is_empty() || diverged_count as f64 / current_boundary.len() as f64 > 0.5 {
-                console::log_1(&"Too many points diverged, breaking.".into());
-                break;
-            }
-
-            current_boundary = self.classify_boundary(&current_boundary);
-
-            self.boundary_history.push(BoundarySnapshot {
-                iteration: iter,
-                points: current_boundary.clone(),
-            });
-
-            if iter > 1 && self.boundary_history.len() >= 2 {
-                let prev_boundary =
-                    &self.boundary_history[self.boundary_history.len() - 2].points;
-                let hausdorff_distance =
-                    compute_hausdorff_distance(prev_boundary, &current_boundary);
+        if iter > 1 && self.boundary_history.len() >= 2 {
+            let prev_idx = self.boundary_history.len() - 2;
+            let prev_boundary = &self.boundary_history[prev_idx].points;
+            
+            if !prev_boundary.is_empty() && !classified_boundary.is_empty() {
+                let hausdorff_distance = compute_hausdorff_distance(prev_boundary, &classified_boundary);
 
                 console::log_1(&format!("Hausdorff distance: {}", hausdorff_distance).into());
 
-                if hausdorff_distance < convergence_tolerance {
-                    console::log_1(&"Convergence tolerance met, breaking.".into());
+                if hausdorff_distance.is_finite() && hausdorff_distance < convergence_tolerance {
+                    console::log_1(&format!("Convergence achieved at iteration {}", iter).into());
                     break;
                 }
             }
         }
+
+        current_boundary = classified_boundary;
     }
+
+    console::log_1(&format!("Tracking complete. Total snapshots: {}", self.boundary_history.len()).into());
+}
+
+
+
+ 
 
     fn classify_boundary(&self, boundary: &[BoundaryPoint]) -> Vec<BoundaryPoint> {
         boundary
