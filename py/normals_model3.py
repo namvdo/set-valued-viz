@@ -131,8 +131,12 @@ class Model(ModelBase):
         
         # scale the normals to unit length
         lengths = np.expand_dims(np.linalg.norm(normals, axis=1), axis=1)
+        zero_mask = (lengths == 0).flatten()
+        if zero_mask.any():
+            lengths[zero_mask] = 1  
+            normals[zero_mask] = input_normals[zero_mask]
+
         normals /= lengths
-        
         # scale the normals to epsilon length
         normals *= self.epsilon
         
