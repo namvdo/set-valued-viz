@@ -248,6 +248,11 @@ class ModelServer(Server):
     
 
 if __name__ == "__main__":
-    TESTADDRESS = ("localhost", 12300)
+    import argparse 
+    parser = argparse.ArgumentParser()
+    parser.add_argument("port", type=int)
+    args = parser.parse_args()
+    port = args.port
+    TESTADDRESS = ("localhost", port)
+    print(f"Starting the server at port: {port}")
     start_server(ModelServer, TESTADDRESS, "./server", "key")
-    pass
