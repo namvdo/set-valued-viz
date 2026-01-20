@@ -154,7 +154,7 @@ class ImageDrawing(ColorObj):
         camera_orbit_point = np.mean([tl,br], axis=0)
         
         # static camera position == negative z axis
-        can_show_depth = self.ndim>2
+        can_show_depth = self.ndim>2 and tl[2]!=br[2]
         can_do_perspective = camera_dist is not None and can_show_depth
         camera_pos = camera_orbit_point.copy()
         if can_show_depth:

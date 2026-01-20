@@ -709,17 +709,19 @@ class MappingFunction: # N-dimensional version of MappingFunction2D
         for i in range(l*2):
             temp = ""
             for j in range(l):
+                s = matrix[(i+j)%l][j].string
+                if s=="0":
+                    temp = "0"
+                    break
                 if len(temp)!=0: temp += "*"
                 if i>=l: j = -j
-                temp += "("+matrix[(i+j)%l][j].string+")"
-                
+                temp += "("+s+")"
+            
             if i>=l: det += "+"
             elif i>0: det += "-"
             det += temp
         det = expand(shrink(det))
-        if det=="0":
-            print("non invertible matrix")
-            return None
+        if det=="0": return None # non invertible matrix
         # inverse using the determinant
         transpose_matrix(matrix)
         for i in range(l):
@@ -742,10 +744,11 @@ def print_matrix(matrix):
 if __name__ == "__main__":
     points = np.random.random((3,2))
 
-    fx = "x*2-a"
-    fy = "y**2"
+##    fx = "x*2-a"
+##    fy = "y**2"
     
-    mf = MappingFunction(x=fx, y=fy, z="x*y")
+    mf = MappingFunction(x="1-a*x*x+y", y="b*x+z", z="x*y*z")
+    mf.set_constants(a=1.4, b=0.3)
     print(mf)
     
     print(points)
@@ -753,9 +756,15 @@ if __name__ == "__main__":
     print(outputs)
     points[:,0] = outputs[0]
     points[:,1] = outputs[1]
+
+
+##    print_matrix(mf.jacobian2D())
+    print_matrix(mf.jacobian3D())
+    # ((-(a*x+a*x)))/(((-(a*x+a*x)))*(0)*(1)-(1)*(0)*(0)-(0)*(b)*(0)+((-(a*x+a*x)))*(1)*(0)+(1)*(0)*(0)+(0)*(0)*(b))
+    print_matrix(mf.tij3D())
     
-    for row in mf.tij2D(): print(row)
-    for k,f in mf: print(k, f)
+##    for row in mf.tij2D(): print(row)
+##    for k,f in mf: print(k, f)
     
 ##    input_values = {
 ##        "x": np.linspace(-1,1,11),

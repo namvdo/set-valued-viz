@@ -1,9 +1,9 @@
 import os
 import math
 import pickle
-from time import perf_counter_ns as nspec # nanoseconds
 
 # from timepck
+from time import perf_counter_ns as nspec # nanoseconds
 def function_timer(func):
     def wrapper(*args, **kwargs):
         print(func)

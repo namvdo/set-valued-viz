@@ -289,7 +289,7 @@ if __name__ == "__main__":
     model.epsilon = 0.07
     model.update_constants(a=0.8, b=0.3)
     model.point_density = 10
-    model.first_step(0)
+    model.first_step(1)
     
     resolution = 1000
     timestep = 0
