@@ -1,0 +1,691 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import * as THREE from 'three';
+
+const ORBIT_COLORS = {
+    period1: { stable: '#e74c3c', unstable: '#c0392b', saddle: '#e67e22' },
+    period2: { stable: '#27ae60', unstable: '#229954', saddle: '#16a085' },
+    period3: { stable: '#3498db', unstable: '#2980b9', saddle: '#2c3e50' },
+    period4: { stable: '#9b59b6', unstable: '#8e44ad', saddle: '#71368a' },
+    period5: { stable: '#f39c12', unstable: '#d68910', saddle: '#ca6f1e' },
+    period6plus: { stable: '#1abc9c', unstable: '#16a085', saddle: '#138d75' },
+    regular: '#e91e63'
+};
+
+const HenonPeriodicViz = () => {
+    const canvasRef = useRef(null);
+    const rendererRef = useRef(null);
+    const sceneRef = useRef(null);
+    const cameraRef = useRef(null);
+    const systemRef = useRef(null);
+    const isProcessingRef = useRef(false);
+    const animationFrameRef = useRef(null);
+
+    const [params, setParams] = useState({
+        a: 1.4,
+        b: 0.3,
+        centerX: 0.0,
+        centerY: 0.0,
+        maxIterations: 1000,
+        maxPeriod: 6 
+    });
+
+    const [state, setState] = useState({
+        orbits: [],
+        trajectory: [],
+        currentPoint: null,
+        iteration: 0,
+        totalIterations: 0,
+        isRunning: false,
+        isReady: false,
+        showOrbits: true,
+        showTrail: false
+    });
+
+    const [filters, setFilters] = useState({
+        period1: true,
+        period2: true,
+        period3: true,
+        period4: true,
+        period5: true,
+        period6plus: false
+    });
+
+    useEffect(() => {
+        if (!canvasRef.current) return;
+
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0a0a0a);
+        sceneRef.current = scene;
+
+        const aspect = window.innerWidth / window.innerHeight;
+        const frustumSize = 3;
+        const camera = new THREE.OrthographicCamera(
+            -frustumSize * aspect / 2,
+            frustumSize * aspect / 2,
+            frustumSize / 2,
+            -frustumSize / 2,
+            0.1,
+            1000
+        );
+        camera.position.z = 5;
+        cameraRef.current = camera;
+
+        const renderer = new THREE.WebGLRenderer({
+            canvas: canvasRef.current,
+            antialias: true,
+            alpha: true
+        });
+        renderer.setSize(window.innerWidth * 0.75, window.innerHeight); 
+        renderer.setPixelRatio(window.devicePixelRatio);
+        rendererRef.current = renderer;
+
+        const axesHelper = new THREE.AxesHelper(2);
+        scene.add(axesHelper);
+
+        const gridHelper = new THREE.GridHelper(4, 20, 0x444444, 0x222222);
+        gridHelper.rotation.x = Math.PI / 2;
+        scene.add(gridHelper);
+
+        const handleResize = () => {
+            const aspect = window.innerWidth / window.innerHeight;
+            camera.left = -frustumSize * aspect / 2;
+            camera.right = frustumSize * aspect / 2;
+            camera.top = frustumSize / 2;
+            camera.bottom = -frustumSize / 2;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth * 0.75, window.innerHeight);
+        };
+
+        window.addEventListener('resize', handleResize);
+
+        const animate = () => {
+            animationFrameRef.current = requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        };
+        animate();
+
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            if (animationFrameRef.current) {
+                cancelAnimationFrame(animationFrameRef.current);
+            }
+            renderer.dispose();
+        };
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const initSystem = async () => {
+            try {
+                const wasm = await import('../pkg/henon_periodic_orbits.js');
+                await wasm.default();
+
+                if (cancelled) return;
+
+                console.log(`Initializing Davidchack & Lai algorithm with max_period=${params.maxPeriod}`);
+                const system = new wasm.HenonSystemWasm(
+                    params.a,
+                    params.b,
+                    params.maxPeriod
+                );
+
+                const orbits = system.getPeriodicOrbits();
+                console.log(`Found ${orbits.length} periodic orbits using Davidchack & Lai algorithm`);
+                
+                const periodCounts = {};
+                orbits.forEach(orbit => {
+                    periodCounts[orbit.period] = (periodCounts[orbit.period] || 0) + 1;
+                });
+                console.log('Orbit distribution by period:', periodCounts);
+                
+                systemRef.current = system;
+
+                setState(prev => ({ 
+                    ...prev, 
+                    orbits, 
+                    isReady: true, 
+                    trajectory: [],
+                    currentPoint: null,
+                    iteration: 0, 
+                    totalIterations: 0 
+                }));
+            } catch (err) {
+                console.error('Failed to initialize WASM:', err);
+            }
+        };
+
+        initSystem();
+
+        return () => {
+            cancelled = true;
+            if (systemRef.current) {
+                try {
+                    systemRef.current.free();
+                } catch (e) {
+                    console.warn('Cleanup error:', e);
+                }
+                systemRef.current = null;
+            }
+        };
+    }, [params.a, params.b, params.maxPeriod]);
+
+    useEffect(() => {
+        if (!sceneRef.current) return;
+
+        const scene = sceneRef.current;
+
+        const objectsToRemove = [];
+        scene.children.forEach(child => {
+            if (child.userData.type === 'trajectory' || child.userData.type === 'orbit') {
+                objectsToRemove.push(child);
+            }
+        });
+        objectsToRemove.forEach(obj => {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) obj.material.dispose();
+            scene.remove(obj);
+        });
+
+        if (state.showOrbits && state.orbits.length > 0) {
+            const visibleOrbits = state.orbits.filter(isOrbitVisible);
+
+            visibleOrbits.forEach(orbit => {
+                orbit.points.forEach((pt) => {
+                    const geom = new THREE.SphereGeometry(0.04, 16, 16);
+                    const color = getOrbitColor(orbit);
+                    const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(color) });
+                    const sphere = new THREE.Mesh(geom, mat);
+                    sphere.position.set(pt[0], pt[1], 0.1);
+                    sphere.userData.type = 'orbit';
+                    sphere.userData.period = orbit.period;
+                    sphere.userData.stability = orbit.stability;
+                    scene.add(sphere);
+                });
+
+                if (orbit.points.length > 1) {
+                    const lineGeom = new THREE.BufferGeometry();
+                    const positions = new Float32Array(orbit.points.length * 3);
+                    orbit.points.forEach((pt, i) => {
+                        positions[i * 3] = pt[0];
+                        positions[i * 3 + 1] = pt[1];
+                        positions[i * 3 + 2] = 0.1;
+                    });
+                    lineGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                    const lineMat = new THREE.LineBasicMaterial({
+                        color: new THREE.Color(getOrbitColor(orbit)),
+                        opacity: 0.6,
+                        transparent: true
+                    });
+                    const line = new THREE.LineLoop(lineGeom, lineMat);
+                    line.userData.type = 'orbit';
+                    scene.add(line);
+                }
+            });
+        }
+
+        if (state.showTrail && state.trajectory.length > 0) {
+            const endIdx = state.currentPoint ? state.iteration + 1 : state.trajectory.length;
+            const trajectoryPoints = state.trajectory.slice(0, endIdx);
+
+            trajectoryPoints.forEach((point, idx) => {
+                const geom = new THREE.SphereGeometry(0.02, 8, 8);
+                const color = point.classification === 'periodic' 
+                    ? new THREE.Color(getOrbitColor({ 
+                        period: point.period || 1, 
+                        stability: point.stability || 'stable' 
+                      }))
+                    : new THREE.Color('#888888');
+                const mat = new THREE.MeshBasicMaterial({ 
+                    color,
+                    opacity: 0.3 + 0.7 * (idx / trajectoryPoints.length),
+                    transparent: true
+                });
+                const sphere = new THREE.Mesh(geom, mat);
+                sphere.position.set(point.x, point.y, 0.05);
+                sphere.userData.type = 'trajectory';
+                scene.add(sphere);
+            });
+        }
+
+        if (state.currentPoint) {
+            const geom = new THREE.SphereGeometry(0.06, 16, 16);
+            const color = state.currentPoint.classification === 'periodic'
+                ? new THREE.Color(getOrbitColor({
+                    period: state.currentPoint.period || 1,
+                    stability: state.currentPoint.stability || 'stable'
+                  }))
+                : new THREE.Color('#00ffff');
+            const mat = new THREE.MeshBasicMaterial({ color });
+            const sphere = new THREE.Mesh(geom, mat);
+            sphere.position.set(state.currentPoint.x, state.currentPoint.y, 0.2);
+            sphere.userData.type = 'trajectory';
+            scene.add(sphere);
+        }
+    }, [state.currentPoint, state.trajectory, state.orbits, state.showOrbits, state.showTrail, state.iteration, filters]);
+
+    const stepForward = useCallback(() => {
+        const system = systemRef.current;
+        if (!system || !state.isReady || isProcessingRef.current) return;
+
+        isProcessingRef.current = true;
+
+        try {
+            if (state.totalIterations === 0) {
+                system.trackTrajectory(
+                    params.centerX,
+                    params.centerY,
+                    params.maxIterations
+                );
+                system.reset();
+                const totalIter = system.getTotalIterations();
+                const currentPoint = system.getCurrentPoint();
+
+                setState(prev => ({
+                    ...prev,
+                    currentPoint,
+                    trajectory: [],
+                    iteration: 0,
+                    totalIterations: totalIter
+                }));
+            } else {
+                const canStep = system.step();
+                if (canStep) {
+                    const currentPoint = system.getCurrentPoint();
+                    const currentIter = system.getCurrentIteration();
+
+                    setState(prev => ({
+                        ...prev,
+                        currentPoint,
+                        iteration: currentIter
+                    }));
+                }
+            }
+        } catch (err) {
+            console.error('Step failed:', err);
+        } finally {
+            isProcessingRef.current = false;
+        }
+    }, [state.isReady, state.totalIterations, params]);
+
+    const runFull = useCallback(() => {
+        const system = systemRef.current;
+        if (!system || !state.isReady || isProcessingRef.current) return;
+
+        isProcessingRef.current = true;
+        setState(prev => ({ ...prev, isRunning: true }));
+
+        setTimeout(() => {
+            try {
+                system.trackTrajectory(
+                    params.centerX,
+                    params.centerY,
+                    params.maxIterations
+                );
+
+                const totalIter = system.getTotalIterations();
+                const trajectory = system.getTrajectory(0, totalIter);
+
+                for (let i = 0; i < totalIter - 1; i++) {
+                    system.step();
+                }
+
+                const currentPoint = system.getCurrentPoint();
+                const currentIter = system.getCurrentIteration();
+
+                setState(prev => ({
+                    ...prev,
+                    trajectory,
+                    currentPoint,
+                    iteration: currentIter,
+                    totalIterations: totalIter,
+                    isRunning: false
+                }));
+            } catch (err) {
+                console.error('Run failed:', err);
+                setState(prev => ({ ...prev, isRunning: false }));
+            } finally {
+                isProcessingRef.current = false;
+            }
+        }, 10);
+    }, [state.isReady, params]);
+
+    const reset = useCallback(() => {
+        const system = systemRef.current;
+        if (!system || isProcessingRef.current) return;
+
+        try {
+            system.reset();
+            const currentPoint = system.getCurrentPoint();
+            setState(prev => ({
+                ...prev,
+                currentPoint,
+                iteration: 0
+            }));
+        } catch (err) {
+            console.error('Reset failed:', err);
+        }
+    }, []);
+
+    const getOrbitColor = (orbit) => {
+        const { period, stability } = orbit;
+
+        let colorSet;
+        if (period === 1) colorSet = ORBIT_COLORS.period1;
+        else if (period === 2) colorSet = ORBIT_COLORS.period2;
+        else if (period === 3) colorSet = ORBIT_COLORS.period3;
+        else if (period === 4) colorSet = ORBIT_COLORS.period4;
+        else if (period === 5) colorSet = ORBIT_COLORS.period5;
+        else colorSet = ORBIT_COLORS.period6plus;
+
+        return colorSet[stability.toLowerCase()] || colorSet.stable;
+    };
+
+    const isOrbitVisible = (orbit) => {
+        if (orbit.period === 1) return filters.period1;
+        if (orbit.period === 2) return filters.period2;
+        if (orbit.period === 3) return filters.period3;
+        if (orbit.period === 4) return filters.period4;
+        if (orbit.period === 5) return filters.period5;
+        if (orbit.period >= 6) return filters.period6plus;
+        return false;
+    };
+
+    return (
+        <div style={styles.container}>
+            <div style={styles.sidebar}>
+                <div style={styles.section}>
+                    <h3 style={styles.sectionTitle}>System Parameters</h3>
+
+                    <label style={styles.label}>
+                        a = {params.a.toFixed(2)}
+                        <input
+                            type="range"
+                            min="0.5"
+                            max="2.0"
+                            step="0.01"
+                            value={params.a}
+                            onChange={(e) => setParams({...params, a: parseFloat(e.target.value)})}
+                            style={styles.slider}
+                        />
+                    </label>
+
+                    <label style={styles.label}>
+                        b = {params.b.toFixed(2)}
+                        <input
+                            type="range"
+                            min="0.1"
+                            max="0.5"
+                            step="0.01"
+                            value={params.b}
+                            onChange={(e) => setParams({...params, b: parseFloat(e.target.value)})}
+                            style={styles.slider}
+                        />
+                    </label>
+
+                    <label style={styles.label}>
+                        Max Period = {params.maxPeriod}
+                        <input
+                            type="range"
+                            min="2"
+                            max="10"
+                            step="1"
+                            value={params.maxPeriod}
+                            onChange={(e) => setParams({...params, maxPeriod: parseInt(e.target.value)})}
+                            style={styles.slider}
+                        />
+                    </label>
+
+                    <label style={styles.label}>
+                        Max Iterations = {params.maxIterations}
+                        <input
+                            type="range"
+                            min="100"
+                            max="5000"
+                            step="100"
+                            value={params.maxIterations}
+                            onChange={(e) => setParams({...params, maxIterations: parseInt(e.target.value)})}
+                            style={styles.slider}
+                        />
+                    </label>
+                </div>
+
+                <div style={styles.section}>
+                    <h3 style={styles.sectionTitle}>Periodic Orbits (Davidchack & Lai)</h3>
+
+                    <label style={styles.checkboxLabel}>
+                        <input
+                            type="checkbox"
+                            checked={filters.period1}
+                            onChange={(e) => setFilters({...filters, period1: e.target.checked})}
+                        />
+                        <span style={{...styles.colorBox, backgroundColor: ORBIT_COLORS.period1.stable}} />
+                        Period-1 ({state.orbits.filter(o => o.period === 1).length})
+                    </label>
+
+                    <label style={styles.checkboxLabel}>
+                        <input
+                            type="checkbox"
+                            checked={filters.period2}
+                            onChange={(e) => setFilters({...filters, period2: e.target.checked})}
+                        />
+                        <span style={{...styles.colorBox, backgroundColor: ORBIT_COLORS.period2.stable}} />
+                        Period-2 ({state.orbits.filter(o => o.period === 2).length})
+                    </label>
+
+                    <label style={styles.checkboxLabel}>
+                        <input
+                            type="checkbox"
+                            checked={filters.period3}
+                            onChange={(e) => setFilters({...filters, period3: e.target.checked})}
+                        />
+                        <span style={{...styles.colorBox, backgroundColor: ORBIT_COLORS.period3.stable}} />
+                        Period-3 ({state.orbits.filter(o => o.period === 3).length})
+                    </label>
+
+                    <label style={styles.checkboxLabel}>
+                        <input
+                            type="checkbox"
+                            checked={filters.period4}
+                            onChange={(e) => setFilters({...filters, period4: e.target.checked})}
+                        />
+                        <span style={{...styles.colorBox, backgroundColor: ORBIT_COLORS.period4.stable}} />
+                        Period-4 ({state.orbits.filter(o => o.period === 4).length})
+                    </label>
+
+                    <label style={styles.checkboxLabel}>
+                        <input
+                            type="checkbox"
+                            checked={filters.period5}
+                            onChange={(e) => setFilters({...filters, period5: e.target.checked})}
+                        />
+                        <span style={{...styles.colorBox, backgroundColor: ORBIT_COLORS.period5.stable}} />
+                        Period-5 ({state.orbits.filter(o => o.period === 5).length})
+                    </label>
+
+                    <label style={styles.checkboxLabel}>
+                        <input
+                            type="checkbox"
+                            checked={filters.period6plus}
+                            onChange={(e) => setFilters({...filters, period6plus: e.target.checked})}
+                        />
+                        <span style={{...styles.colorBox, backgroundColor: ORBIT_COLORS.period6plus.stable}} />
+                        Period-6+ ({state.orbits.filter(o => o.period >= 6).length})
+                    </label>
+
+                    <label style={styles.checkboxLabel}>
+                        <input
+                            type="checkbox"
+                            checked={state.showOrbits}
+                            onChange={(e) => setState({...state, showOrbits: e.target.checked})}
+                        />
+                        Show orbit markers
+                    </label>
+
+                    <label style={styles.checkboxLabel}>
+                        <input
+                            type="checkbox"
+                            checked={state.showTrail}
+                            onChange={(e) => setState({...state, showTrail: e.target.checked})}
+                        />
+                        Show trajectory trail
+                    </label>
+                </div>
+
+                <div style={styles.section}>
+                    <h3 style={styles.sectionTitle}>Controls</h3>
+
+                    <button
+                        onClick={stepForward}
+                        disabled={!state.isReady || state.isRunning}
+                        style={styles.button}
+                    >
+                        Step Forward
+                    </button>
+
+                    <button
+                        onClick={runFull}
+                        disabled={!state.isReady || state.isRunning}
+                        style={styles.button}
+                    >
+                        {state.isRunning ? 'Computing...' : 'Run to Convergence'}
+                    </button>
+
+                    <button
+                        onClick={reset}
+                        disabled={!state.isReady || state.isRunning}
+                        style={{...styles.button, ...styles.resetButton}}
+                    >
+                        Reset
+                    </button>
+                </div>
+
+                <div style={styles.info}>
+                    <div style={styles.infoHeader}>Algorithm: Davidchack & Lai</div>
+                    <div>Status: {state.isReady ? 'Ready' : 'Loading...'}</div>
+                    <div>Iteration: {state.iteration} / {state.totalIterations}</div>
+                    {state.currentPoint && (
+                        <>
+                            <div>Position: ({state.currentPoint.x.toFixed(4)}, {state.currentPoint.y.toFixed(4)})</div>
+                            <div>Type: {state.currentPoint.classification}</div>
+                            {state.currentPoint.period && <div>Period: {state.currentPoint.period}</div>}
+                            {state.currentPoint.stability && <div>Stability: {state.currentPoint.stability}</div>}
+                        </>
+                    )}
+                    <div>Orbits found: {state.orbits.length}</div>
+                </div>
+            </div>
+
+            <div style={styles.viewport}>
+                <canvas
+                    ref={canvasRef}
+                    style={styles.canvas}
+                />
+            </div>
+        </div>
+    );
+};
+
+const styles = {
+    container: {
+        display: 'flex',
+        height: '100vh',
+        width: '100vw',
+        backgroundColor: '#0a0a0a',
+        fontFamily: 'system-ui, -apple-system, sans-serif',
+        color: '#e0e0e0',
+        overflow: 'hidden'
+    },
+    sidebar: {
+        width: '320px',
+        minWidth: '320px',
+        padding: '20px',
+        backgroundColor: '#1a1a1a',
+        borderRight: '1px solid #333',
+        overflowY: 'auto'
+    },
+    section: {
+        marginBottom: '32px'
+    },
+    sectionTitle: {
+        fontSize: '14px',
+        fontWeight: '600',
+        marginBottom: '16px',
+        color: '#fff',
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px'
+    },
+    label: {
+        display: 'flex',
+        flexDirection: 'column',
+        marginBottom: '16px',
+        fontSize: '13px',
+        color: '#b0b0b0'
+    },
+    slider: {
+        marginTop: '8px',
+        width: '100%'
+    },
+    checkboxLabel: {
+        display: 'flex',
+        alignItems: 'center',
+        marginBottom: '12px',
+        fontSize: '13px',
+        cursor: 'pointer',
+        gap: '8px'
+    },
+    colorBox: {
+        width: '16px',
+        height: '16px',
+        borderRadius: '2px',
+        display: 'inline-block'
+    },
+    button: {
+        width: '100%',
+        padding: '12px',
+        marginBottom: '8px',
+        backgroundColor: '#2d2d2d',
+        color: '#fff',
+        border: '1px solid #444',
+        borderRadius: '4px',
+        cursor: 'pointer',
+        fontSize: '13px',
+        fontWeight: '500',
+        transition: 'all 0.2s'
+    },
+    resetButton: {
+        backgroundColor: '#1a1a1a',
+        borderColor: '#555'
+    },
+    info: {
+        marginTop: '24px',
+        padding: '16px',
+        backgroundColor: '#0f0f0f',
+        borderRadius: '4px',
+        fontSize: '12px',
+        lineHeight: '1.8',
+        color: '#888'
+    },
+    infoHeader: {
+        fontSize: '13px',
+        fontWeight: '600',
+        color: '#4CAF50',
+        marginBottom: '8px'
+    },
+    viewport: {
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px',
+        overflow: 'hidden'
+    },
+    canvas: {
+        maxWidth: '100%',
+        maxHeight: '100%',
+        borderRadius: '4px',
+        display: 'block'
+    }
+};
+
+export default HenonPeriodicViz;

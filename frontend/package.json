@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "build-wasm": "wasm-pack build ../ --target web --out-dir ./src/pkg"
+    "build-wasm": "wasm-pack build ../ --target web --out-dir ./src/pkg && rm -rf ../frontend/pkg && mv ../src/pkg ../frontend/"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.6",
