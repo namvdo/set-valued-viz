@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import LorenzVisualizer from './LorenzVisualizer.jsx';
 import ParameterControls from './ParameterControls.jsx';
+import * as THREE from 'three'
+import { PerspectiveCamera } from '@react-three/drei';
 
 
 function App() {
@@ -130,9 +132,27 @@ function App() {
     setLyapunovExponent(null);
   }, []);
 
+
+  const scene = new THREE.Scene()
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000)
+  const renderer = new THREE.WebGLRenderer()
+  renderer.setSize(window.innerWidth, window.innerHeight)
+  THREE.BoxGeometry
+
+  document.body.appendChild( renderer.domElement )
+
+
   return (
     <div style={{ display: 'flex', width: '100%', height: '100vh' }}>
-      <ParameterControls
+    <THREE.Scene>
+      <PerspectiveCamera fov={75} aspect={window.innerWidth / window.innerHeight} position={5}>
+        <THREE.Mesh>
+          <THREE.BoxGeometry width={10} height={10} depth={10}/>
+          <THREE.MeshBasicMaterial color={0x00ff00}/>
+        </THREE.Mesh>
+      </PerspectiveCamera>
+    </THREE.Scene>
+      {/* <ParameterControls
         {...params}
         onParametersChange={handleParametersChange}
         onSimulate={runSimulation}
@@ -175,7 +195,7 @@ function App() {
         >
           Butterfly Effect
         </button>
-      </div>
+      </div> */}
     </div>
   );
 }

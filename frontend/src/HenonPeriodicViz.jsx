@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import * as THREE from 'three';
+import * as THREE from 'three'
+import { PerspectiveCamera } from '@react-three/drei';
+
 
 const ORBIT_COLORS = {
     period1: { stable: '#e74c3c', unstable: '#c0392b', saddle: '#e67e22' },
@@ -393,6 +395,15 @@ const HenonPeriodicViz = () => {
 
     return (
         <div style={styles.container}>
+
+            <THREE.Scene>
+      <PerspectiveCamera fov={75} aspect={window.innerWidth / window.innerHeight} position={5}>
+        <THREE.Mesh>
+          <THREE.BoxGeometry width={10} height={10} depth={10}/>
+          <THREE.MeshBasicMaterial color={0x00ff00}/>
+        </THREE.Mesh>
+      </PerspectiveCamera>
+    </THREE.Scene>
             <div style={styles.sidebar}>
                 <div style={styles.section}>
                     <h3 style={styles.sectionTitle}>System Parameters</h3>
