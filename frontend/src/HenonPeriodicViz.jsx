@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 
-// Grid configuration for Henon map visualization
 const GRID_CONFIG = {
     xRange: [-2, 2],
     yRange: [-1.5, 1.5],
@@ -10,13 +9,11 @@ const GRID_CONFIG = {
     gridColor: 0x333333
 };
 
-// Henon map function - computed in JS to avoid WASM memory issues
 const henonMap = (x, y, a, b) => ({
     x: 1.0 - a * x * x + y,
     y: b * x
 });
 
-// Create coordinate system grid with axes and labels
 const createCoordinateSystem = (scene) => {
     const { xRange, yRange, gridDivisions, axisColor, gridColor } = GRID_CONFIG;
     const [xMin, xMax] = xRange;
@@ -27,7 +24,6 @@ const createCoordinateSystem = (scene) => {
     const gridGroup = new THREE.Group();
     gridGroup.name = 'coordinate-system';
 
-    // Create vertical grid lines
     for (let i = 0; i <= gridDivisions; i++) {
         const x = xMin + i * xStep;
         const isAxis = Math.abs(x) < 0.01;
@@ -46,7 +42,6 @@ const createCoordinateSystem = (scene) => {
         gridGroup.add(line);
     }
 
-    // Create horizontal grid lines
     for (let i = 0; i <= gridDivisions; i++) {
         const y = yMin + i * yStep;
         const isAxis = Math.abs(y) < 0.01;
@@ -65,7 +60,6 @@ const createCoordinateSystem = (scene) => {
         gridGroup.add(line);
     }
 
-    // Create text labels using canvas textures
     const createTextSprite = (text, position, fontSize = 0.15) => {
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
@@ -97,7 +91,6 @@ const createCoordinateSystem = (scene) => {
         return sprite;
     };
 
-    // Add x-axis labels
     for (let i = 0; i <= gridDivisions; i++) {
         const x = xMin + i * xStep;
         if (Math.abs(x) > 0.01) {
@@ -110,7 +103,6 @@ const createCoordinateSystem = (scene) => {
         }
     }
 
-    // Add y-axis labels
     for (let i = 0; i <= gridDivisions; i++) {
         const y = yMin + i * yStep;
         if (Math.abs(y) > 0.01) {
@@ -123,13 +115,11 @@ const createCoordinateSystem = (scene) => {
         }
     }
 
-    // Add axis labels (x and y)
     const xLabel = createTextSprite('x', new THREE.Vector3(xMax + 0.2, 0, 0), 0.18);
     const yLabel = createTextSprite('y', new THREE.Vector3(0, yMax + 0.15, 0), 0.18);
     gridGroup.add(xLabel);
     gridGroup.add(yLabel);
 
-    // Add origin label
     const originLabel = createTextSprite('0', new THREE.Vector3(-0.12, -0.12, 0), 0.1);
     gridGroup.add(originLabel);
 
@@ -185,7 +175,6 @@ const HenonPeriodicViz = () => {
         period6plus: false
     });
 
-    // Initialize THREE.js scene
     useEffect(() => {
         if (!canvasRef.current) return;
 
@@ -255,7 +244,6 @@ const HenonPeriodicViz = () => {
         };
     }, []);
 
-    // Initialize WASM for periodic orbit computation only
     useEffect(() => {
         let cancelled = false;
 
@@ -292,7 +280,6 @@ const HenonPeriodicViz = () => {
                 const orbits = system.getPeriodicOrbits();
                 console.log(`Found ${orbits.length} periodic orbits`);
 
-                // Free WASM memory - we only needed the orbits
                 system.free();
 
                 setState(prev => ({
@@ -371,9 +358,7 @@ const HenonPeriodicViz = () => {
         }
 
         if (state.showTrail && state.trajectoryPoints.length > 0) {
-            const maxPoints = Math.min(state.trajectoryPoints.length, 500);
-            const startIdx = Math.max(0, state.trajectoryPoints.length - maxPoints);
-            const points = state.trajectoryPoints.slice(startIdx);
+            const points = state.trajectoryPoints;
 
             points.forEach((point, idx) => {
                 const normalizedIdx = idx / points.length;
