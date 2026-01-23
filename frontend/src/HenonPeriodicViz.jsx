@@ -1,16 +1,22 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 
+// Grid configuration for Henon map visualization
 const GRID_CONFIG = {
     xRange: [-2, 2],
     yRange: [-1.5, 1.5],
     gridDivisions: 8,
     axisColor: 0x888888,
-    gridColor: 0x333333,
-    labelColor: '#ffffff',
-    fontSize: 0.1
+    gridColor: 0x333333
 };
 
+// Henon map function - computed in JS to avoid WASM memory issues
+const henonMap = (x, y, a, b) => ({
+    x: 1.0 - a * x * x + y,
+    y: b * x
+});
+
+// Create coordinate system grid with axes and labels
 const createCoordinateSystem = (scene) => {
     const { xRange, yRange, gridDivisions, axisColor, gridColor } = GRID_CONFIG;
     const [xMin, xMax] = xRange;
@@ -21,6 +27,7 @@ const createCoordinateSystem = (scene) => {
     const gridGroup = new THREE.Group();
     gridGroup.name = 'coordinate-system';
 
+    // Create vertical grid lines
     for (let i = 0; i <= gridDivisions; i++) {
         const x = xMin + i * xStep;
         const isAxis = Math.abs(x) < 0.01;
@@ -31,7 +38,6 @@ const createCoordinateSystem = (scene) => {
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
         const material = new THREE.LineBasicMaterial({
             color: isAxis ? axisColor : gridColor,
-            linewidth: isAxis ? 2 : 1,
             transparent: true,
             opacity: isAxis ? 1.0 : 0.4
         });
@@ -40,6 +46,7 @@ const createCoordinateSystem = (scene) => {
         gridGroup.add(line);
     }
 
+    // Create horizontal grid lines
     for (let i = 0; i <= gridDivisions; i++) {
         const y = yMin + i * yStep;
         const isAxis = Math.abs(y) < 0.01;
@@ -50,7 +57,6 @@ const createCoordinateSystem = (scene) => {
         const geometry = new THREE.BufferGeometry().setFromPoints(points);
         const material = new THREE.LineBasicMaterial({
             color: isAxis ? axisColor : gridColor,
-            linewidth: isAxis ? 2 : 1,
             transparent: true,
             opacity: isAxis ? 1.0 : 0.4
         });
@@ -59,6 +65,7 @@ const createCoordinateSystem = (scene) => {
         gridGroup.add(line);
     }
 
+    // Create text labels using canvas textures
     const createTextSprite = (text, position, fontSize = 0.15) => {
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
@@ -90,6 +97,7 @@ const createCoordinateSystem = (scene) => {
         return sprite;
     };
 
+    // Add x-axis labels
     for (let i = 0; i <= gridDivisions; i++) {
         const x = xMin + i * xStep;
         if (Math.abs(x) > 0.01) {
@@ -102,6 +110,7 @@ const createCoordinateSystem = (scene) => {
         }
     }
 
+    // Add y-axis labels
     for (let i = 0; i <= gridDivisions; i++) {
         const y = yMin + i * yStep;
         if (Math.abs(y) > 0.01) {
@@ -114,11 +123,13 @@ const createCoordinateSystem = (scene) => {
         }
     }
 
+    // Add axis labels (x and y)
     const xLabel = createTextSprite('x', new THREE.Vector3(xMax + 0.2, 0, 0), 0.18);
     const yLabel = createTextSprite('y', new THREE.Vector3(0, yMax + 0.15, 0), 0.18);
     gridGroup.add(xLabel);
     gridGroup.add(yLabel);
 
+    // Add origin label
     const originLabel = createTextSprite('0', new THREE.Vector3(-0.12, -0.12, 0), 0.1);
     gridGroup.add(originLabel);
 
@@ -133,7 +144,7 @@ const ORBIT_COLORS = {
     period4: { stable: '#9b59b6', unstable: '#8e44ad', saddle: '#71368a' },
     period5: { stable: '#f39c12', unstable: '#d68910', saddle: '#ca6f1e' },
     period6plus: { stable: '#1abc9c', unstable: '#16a085', saddle: '#138d75' },
-    regular: '#e91e63'
+    trajectory: '#00ffff'
 };
 
 const HenonPeriodicViz = () => {
@@ -141,29 +152,28 @@ const HenonPeriodicViz = () => {
     const rendererRef = useRef(null);
     const sceneRef = useRef(null);
     const cameraRef = useRef(null);
-    const systemRef = useRef(null);
-    const isProcessingRef = useRef(false);
     const animationFrameRef = useRef(null);
+    const batchAnimationRef = useRef(null);
 
     const [params, setParams] = useState({
         a: 1.4,
         b: 0.3,
-        centerX: 0.0,
-        centerY: 0.0,
+        startX: 0.1,
+        startY: 0.1,
         maxIterations: 1000,
-        maxPeriod: 6 
+        maxPeriod: 5
     });
 
     const [state, setState] = useState({
         orbits: [],
-        trajectory: [],
-        currentPoint: null,
+        trajectoryPoints: [],
+        currentPoint: { x: 0.1, y: 0.1 },
         iteration: 0,
-        totalIterations: 0,
         isRunning: false,
         isReady: false,
-        showOrbits: true,
-        showTrail: false
+        showOrbits: false,
+        showTrail: true,
+        hasStarted: false
     });
 
     const [filters, setFilters] = useState({
@@ -175,6 +185,7 @@ const HenonPeriodicViz = () => {
         period6plus: false
     });
 
+    // Initialize THREE.js scene
     useEffect(() => {
         if (!canvasRef.current) return;
 
@@ -184,7 +195,6 @@ const HenonPeriodicViz = () => {
 
         const [xMin, xMax] = GRID_CONFIG.xRange;
         const [yMin, yMax] = GRID_CONFIG.yRange;
-        const gridWidth = xMax - xMin;
         const gridHeight = yMax - yMin;
         const padding = 0.5;
 
@@ -238,19 +248,26 @@ const HenonPeriodicViz = () => {
             if (animationFrameRef.current) {
                 cancelAnimationFrame(animationFrameRef.current);
             }
+            if (batchAnimationRef.current) {
+                cancelAnimationFrame(batchAnimationRef.current);
+            }
             renderer.dispose();
         };
     }, []);
 
+    // Initialize WASM for periodic orbit computation only
     useEffect(() => {
         let cancelled = false;
+
         setState(prev => ({
             ...prev,
             isReady: false,
-            trajectory: [],
-            currentPoint: null,
+            orbits: [],
+            trajectoryPoints: [],
+            currentPoint: { x: params.startX, y: params.startY },
             iteration: 0,
-            totalIterations: 0
+            hasStarted: false,
+            showOrbits: false
         }));
 
         const initSystem = async () => {
@@ -260,7 +277,7 @@ const HenonPeriodicViz = () => {
 
                 if (cancelled) return;
 
-                console.log(`Initializing Davidchack & Lai algorithm with max_period=${params.maxPeriod}`);
+                console.log(`Computing periodic orbits with max_period=${params.maxPeriod}`);
                 const system = new wasm.HenonSystemWasm(
                     params.a,
                     params.b,
@@ -273,28 +290,24 @@ const HenonPeriodicViz = () => {
                 }
 
                 const orbits = system.getPeriodicOrbits();
-                console.log(`Found ${orbits.length} periodic orbits using Davidchack & Lai algorithm`);
+                console.log(`Found ${orbits.length} periodic orbits`);
 
-                const periodCounts = {};
-                orbits.forEach(orbit => {
-                    periodCounts[orbit.period] = (periodCounts[orbit.period] || 0) + 1;
-                });
-                console.log('Orbit distribution by period:', periodCounts);
-
-                systemRef.current = system;
+                // Free WASM memory - we only needed the orbits
+                system.free();
 
                 setState(prev => ({
                     ...prev,
                     orbits,
                     isReady: true,
-                    trajectory: [],
-                    currentPoint: null,
+                    currentPoint: { x: params.startX, y: params.startY },
+                    trajectoryPoints: [],
                     iteration: 0,
-                    totalIterations: 0
+                    hasStarted: false,
+                    showOrbits: false
                 }));
             } catch (err) {
                 console.error('Failed to initialize WASM:', err);
-                setState(prev => ({ ...prev, isReady: false }));
+                setState(prev => ({ ...prev, isReady: true, orbits: [] }));
             }
         };
 
@@ -302,16 +315,8 @@ const HenonPeriodicViz = () => {
 
         return () => {
             cancelled = true;
-            if (systemRef.current) {
-                try {
-                    systemRef.current.free();
-                } catch (e) {
-                    console.warn('Cleanup error:', e);
-                }
-                systemRef.current = null;
-            }
         };
-    }, [params.a, params.b, params.maxPeriod]);
+    }, [params.a, params.b, params.maxPeriod, params.startX, params.startY]);
 
     useEffect(() => {
         if (!sceneRef.current) return;
@@ -335,14 +340,12 @@ const HenonPeriodicViz = () => {
 
             visibleOrbits.forEach(orbit => {
                 orbit.points.forEach((pt) => {
-                    const geom = new THREE.SphereGeometry(0.04, 16, 16);
+                    const geom = new THREE.SphereGeometry(0.03, 12, 12);
                     const color = getOrbitColor(orbit);
                     const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(color) });
                     const sphere = new THREE.Mesh(geom, mat);
                     sphere.position.set(pt[0], pt[1], 0.1);
                     sphere.userData.type = 'orbit';
-                    sphere.userData.period = orbit.period;
-                    sphere.userData.stability = orbit.stability;
                     scene.add(sphere);
                 });
 
@@ -357,7 +360,7 @@ const HenonPeriodicViz = () => {
                     lineGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
                     const lineMat = new THREE.LineBasicMaterial({
                         color: new THREE.Color(getOrbitColor(orbit)),
-                        opacity: 0.6,
+                        opacity: 0.5,
                         transparent: true
                     });
                     const line = new THREE.LineLoop(lineGeom, lineMat);
@@ -367,21 +370,20 @@ const HenonPeriodicViz = () => {
             });
         }
 
-        if (state.showTrail && state.trajectory.length > 0) {
-            const endIdx = state.currentPoint ? state.iteration + 1 : state.trajectory.length;
-            const trajectoryPoints = state.trajectory.slice(0, endIdx);
+        if (state.showTrail && state.trajectoryPoints.length > 0) {
+            const maxPoints = Math.min(state.trajectoryPoints.length, 500);
+            const startIdx = Math.max(0, state.trajectoryPoints.length - maxPoints);
+            const points = state.trajectoryPoints.slice(startIdx);
 
-            trajectoryPoints.forEach((point, idx) => {
-                const geom = new THREE.SphereGeometry(0.02, 8, 8);
-                const color = point.classification === 'periodic' 
-                    ? new THREE.Color(getOrbitColor({ 
-                        period: point.period || 1, 
-                        stability: point.stability || 'stable' 
-                      }))
-                    : new THREE.Color('#888888');
-                const mat = new THREE.MeshBasicMaterial({ 
-                    color,
-                    opacity: 0.3 + 0.7 * (idx / trajectoryPoints.length),
+            points.forEach((point, idx) => {
+                const normalizedIdx = idx / points.length;
+                const baseSize = 0.012;
+                const size = baseSize * (0.3 + 0.7 * normalizedIdx);
+
+                const geom = new THREE.SphereGeometry(size, 6, 6);
+                const mat = new THREE.MeshBasicMaterial({
+                    color: new THREE.Color(ORBIT_COLORS.trajectory),
+                    opacity: 0.2 + 0.6 * normalizedIdx,
                     transparent: true
                 });
                 const sphere = new THREE.Mesh(geom, mat);
@@ -391,177 +393,118 @@ const HenonPeriodicViz = () => {
             });
         }
 
-        if (state.currentPoint) {
-            const geom = new THREE.SphereGeometry(0.06, 16, 16);
-            const color = state.currentPoint.classification === 'periodic'
-                ? new THREE.Color(getOrbitColor({
-                    period: state.currentPoint.period || 1,
-                    stability: state.currentPoint.stability || 'stable'
-                  }))
-                : new THREE.Color('#00ffff');
-            const mat = new THREE.MeshBasicMaterial({ color });
+        if (state.hasStarted && state.currentPoint) {
+            const geom = new THREE.SphereGeometry(0.04, 16, 16);
+            const mat = new THREE.MeshBasicMaterial({
+                color: new THREE.Color('#ffffff')
+            });
             const sphere = new THREE.Mesh(geom, mat);
             sphere.position.set(state.currentPoint.x, state.currentPoint.y, 0.2);
             sphere.userData.type = 'trajectory';
             scene.add(sphere);
         }
-    }, [state.currentPoint, state.trajectory, state.orbits, state.showOrbits, state.showTrail, state.iteration, filters]);
-
-    const initializeTrajectory = useCallback(() => {
-        const system = systemRef.current;
-        if (!system || !state.isReady) return false;
-
-        try {
-            system.trackTrajectory(
-                params.centerX,
-                params.centerY,
-                params.maxIterations
-            );
-            system.reset();
-
-            const totalIter = system.getTotalIterations();
-            if (totalIter === 0) {
-                console.warn('No trajectory computed');
-                return false;
-            }
-
-            const currentPoint = system.getCurrentPoint();
-            const trajectory = system.getTrajectory(0, totalIter);
-
-            setState(prev => ({
-                ...prev,
-                currentPoint,
-                trajectory,
-                iteration: 0,
-                totalIterations: totalIter
-            }));
-
-            return true;
-        } catch (err) {
-            console.error('Failed to initialize trajectory:', err);
-            return false;
-        }
-    }, [state.isReady, params.centerX, params.centerY, params.maxIterations]);
+    }, [state.currentPoint, state.trajectoryPoints, state.orbits, state.showOrbits, state.showTrail, state.iteration, state.hasStarted, filters]);
 
     const stepForward = useCallback(() => {
-        const system = systemRef.current;
-        if (!system || !state.isReady || isProcessingRef.current) return;
+        if (!state.isReady || state.isRunning) return;
 
-        isProcessingRef.current = true;
+        const { x, y } = state.currentPoint;
 
-        try {
-            if (state.totalIterations === 0) {
-                const success = initializeTrajectory();
-                if (!success) {
-                    console.error('Failed to initialize trajectory');
-                }
-            } else {
-                const canStep = system.step();
-                if (canStep) {
-                    const currentPoint = system.getCurrentPoint();
-                    const currentIter = system.getCurrentIteration();
-
-                    setState(prev => ({
-                        ...prev,
-                        currentPoint,
-                        iteration: currentIter
-                    }));
-                }
-            }
-        } catch (err) {
-            console.error('Step failed:', err);
+        if (!isFinite(x) || !isFinite(y) || Math.abs(x) > 10 || Math.abs(y) > 10) {
+            console.warn('Point diverged, resetting');
             setState(prev => ({
                 ...prev,
-                currentPoint: null,
-                trajectory: [],
+                currentPoint: { x: params.startX, y: params.startY },
+                trajectoryPoints: [],
                 iteration: 0,
-                totalIterations: 0
+                hasStarted: false
             }));
-        } finally {
-            isProcessingRef.current = false;
+            return;
         }
-    }, [state.isReady, state.totalIterations, initializeTrajectory]);
 
-    const runFull = useCallback(() => {
-        const system = systemRef.current;
-        if (!system || !state.isReady || isProcessingRef.current) return;
+        const nextPoint = henonMap(x, y, params.a, params.b);
 
-        isProcessingRef.current = true;
+        setState(prev => ({
+            ...prev,
+            currentPoint: nextPoint,
+            trajectoryPoints: [...prev.trajectoryPoints, { x, y }],
+            iteration: prev.iteration + 1,
+            hasStarted: true
+        }));
+    }, [state.isReady, state.isRunning, state.currentPoint, params.a, params.b, params.startX, params.startY]);
+
+    const runToConvergence = useCallback(() => {
+        if (!state.isReady || state.isRunning) return;
+
         setState(prev => ({ ...prev, isRunning: true }));
 
-        requestAnimationFrame(() => {
-            try {
-                system.trackTrajectory(
-                    params.centerX,
-                    params.centerY,
-                    params.maxIterations
-                );
+        let currentX = state.currentPoint.x;
+        let currentY = state.currentPoint.y;
+        let iteration = state.iteration;
+        const newPoints = [...state.trajectoryPoints];
+        const batchSize = 5; 
 
-                const totalIter = system.getTotalIterations();
-                if (totalIter === 0) {
-                    console.warn('No trajectory computed - point may have diverged');
+        const animateStep = () => {
+            for (let i = 0; i < batchSize && iteration < params.maxIterations; i++) {
+                if (!isFinite(currentX) || !isFinite(currentY) ||
+                    Math.abs(currentX) > 10 || Math.abs(currentY) > 10) {
+                    console.warn('Point diverged at iteration', iteration);
                     setState(prev => ({
                         ...prev,
                         isRunning: false,
-                        trajectory: [],
-                        currentPoint: null,
-                        iteration: 0,
-                        totalIterations: 0
+                        showOrbits: true,
+                        hasStarted: true,
+                        trajectoryPoints: newPoints,
+                        currentPoint: { x: currentX, y: currentY },
+                        iteration
                     }));
-                    isProcessingRef.current = false;
                     return;
                 }
 
-                const trajectory = system.getTrajectory(0, totalIter);
+                newPoints.push({ x: currentX, y: currentY });
+                const next = henonMap(currentX, currentY, params.a, params.b);
+                currentX = next.x;
+                currentY = next.y;
+                iteration++;
+            }
 
-                system.reset();
-                for (let i = 0; i < totalIter - 1; i++) {
-                    if (!system.step()) break;
-                }
+            setState(prev => ({
+                ...prev,
+                currentPoint: { x: currentX, y: currentY },
+                trajectoryPoints: [...newPoints],
+                iteration,
+                hasStarted: true
+            }));
 
-                const currentPoint = system.getCurrentPoint();
-                const currentIter = system.getCurrentIteration();
-
-                setState(prev => ({
-                    ...prev,
-                    trajectory,
-                    currentPoint,
-                    iteration: currentIter,
-                    totalIterations: totalIter,
-                    isRunning: false
-                }));
-            } catch (err) {
-                console.error('Run failed:', err);
+            if (iteration < params.maxIterations) {
+                batchAnimationRef.current = requestAnimationFrame(animateStep);
+            } else {
                 setState(prev => ({
                     ...prev,
                     isRunning: false,
-                    trajectory: [],
-                    currentPoint: null,
-                    iteration: 0,
-                    totalIterations: 0
+                    showOrbits: true
                 }));
-            } finally {
-                isProcessingRef.current = false;
             }
-        });
-    }, [state.isReady, params.centerX, params.centerY, params.maxIterations]);
+        };
+
+        batchAnimationRef.current = requestAnimationFrame(animateStep);
+    }, [state.isReady, state.isRunning, state.currentPoint, state.iteration, state.trajectoryPoints, params.a, params.b, params.maxIterations]);
 
     const reset = useCallback(() => {
-        const system = systemRef.current;
-        if (!system || isProcessingRef.current) return;
-
-        try {
-            system.reset();
-            const currentPoint = system.getCurrentPoint();
-            setState(prev => ({
-                ...prev,
-                currentPoint,
-                iteration: 0
-            }));
-        } catch (err) {
-            console.error('Reset failed:', err);
+        if (batchAnimationRef.current) {
+            cancelAnimationFrame(batchAnimationRef.current);
         }
-    }, []);
+
+        setState(prev => ({
+            ...prev,
+            currentPoint: { x: params.startX, y: params.startY },
+            trajectoryPoints: [],
+            iteration: 0,
+            isRunning: false,
+            hasStarted: false,
+            showOrbits: false
+        }));
+    }, [params.startX, params.startY]);
 
     const getOrbitColor = (orbit) => {
         const { period, stability } = orbit;
@@ -603,6 +546,7 @@ const HenonPeriodicViz = () => {
                             value={params.a}
                             onChange={(e) => setParams({...params, a: parseFloat(e.target.value)})}
                             style={styles.slider}
+                            disabled={state.isRunning}
                         />
                     </label>
 
@@ -616,6 +560,7 @@ const HenonPeriodicViz = () => {
                             value={params.b}
                             onChange={(e) => setParams({...params, b: parseFloat(e.target.value)})}
                             style={styles.slider}
+                            disabled={state.isRunning}
                         />
                     </label>
 
@@ -629,6 +574,7 @@ const HenonPeriodicViz = () => {
                             value={params.maxPeriod}
                             onChange={(e) => setParams({...params, maxPeriod: parseInt(e.target.value)})}
                             style={styles.slider}
+                            disabled={state.isRunning}
                         />
                     </label>
 
@@ -642,12 +588,13 @@ const HenonPeriodicViz = () => {
                             value={params.maxIterations}
                             onChange={(e) => setParams({...params, maxIterations: parseInt(e.target.value)})}
                             style={styles.slider}
+                            disabled={state.isRunning}
                         />
                     </label>
                 </div>
 
                 <div style={styles.section}>
-                    <h3 style={styles.sectionTitle}>Periodic Orbits (Davidchack & Lai)</h3>
+                    <h3 style={styles.sectionTitle}>Periodic Orbits</h3>
 
                     <label style={styles.checkboxLabel}>
                         <input
@@ -702,16 +649,6 @@ const HenonPeriodicViz = () => {
                     <label style={styles.checkboxLabel}>
                         <input
                             type="checkbox"
-                            checked={filters.period6plus}
-                            onChange={(e) => setFilters({...filters, period6plus: e.target.checked})}
-                        />
-                        <span style={{...styles.colorBox, backgroundColor: ORBIT_COLORS.period6plus.stable}} />
-                        Period-6+ ({state.orbits.filter(o => o.period >= 6).length})
-                    </label>
-
-                    <label style={styles.checkboxLabel}>
-                        <input
-                            type="checkbox"
                             checked={state.showOrbits}
                             onChange={(e) => setState({...state, showOrbits: e.target.checked})}
                         />
@@ -740,16 +677,16 @@ const HenonPeriodicViz = () => {
                     </button>
 
                     <button
-                        onClick={runFull}
+                        onClick={runToConvergence}
                         disabled={!state.isReady || state.isRunning}
-                        style={styles.button}
+                        style={{...styles.button, ...styles.runButton}}
                     >
-                        {state.isRunning ? 'Computing...' : 'Run to Convergence'}
+                        {state.isRunning ? 'Running...' : 'Run to Max Iterations'}
                     </button>
 
                     <button
                         onClick={reset}
-                        disabled={!state.isReady || state.isRunning}
+                        disabled={state.isRunning}
                         style={{...styles.button, ...styles.resetButton}}
                     >
                         Reset
@@ -757,18 +694,14 @@ const HenonPeriodicViz = () => {
                 </div>
 
                 <div style={styles.info}>
-                    <div style={styles.infoHeader}>Algorithm: Davidchack & Lai</div>
-                    <div>Status: {state.isReady ? 'Ready' : 'Loading...'}</div>
-                    <div>Iteration: {state.iteration} / {state.totalIterations}</div>
-                    {state.currentPoint && (
-                        <>
-                            <div>Position: ({state.currentPoint.x.toFixed(4)}, {state.currentPoint.y.toFixed(4)})</div>
-                            <div>Type: {state.currentPoint.classification}</div>
-                            {state.currentPoint.period && <div>Period: {state.currentPoint.period}</div>}
-                            {state.currentPoint.stability && <div>Stability: {state.currentPoint.stability}</div>}
-                        </>
+                    <div style={styles.infoHeader}>Henon Map: x' = 1 - ax^2 + y, y' = bx</div>
+                    <div>Status: {state.isReady ? (state.isRunning ? 'Running...' : 'Ready') : 'Loading...'}</div>
+                    <div>Iteration: {state.iteration} / {params.maxIterations}</div>
+                    {state.hasStarted && (
+                        <div>Position: ({state.currentPoint.x.toFixed(4)}, {state.currentPoint.y.toFixed(4)})</div>
                     )}
                     <div>Orbits found: {state.orbits.length}</div>
+                    <div>Trail points: {state.trajectoryPoints.length}</div>
                 </div>
             </div>
 
@@ -848,6 +781,10 @@ const styles = {
         fontSize: '13px',
         fontWeight: '500',
         transition: 'all 0.2s'
+    },
+    runButton: {
+        backgroundColor: '#1a4a1a',
+        borderColor: '#2a6a2a'
     },
     resetButton: {
         backgroundColor: '#1a1a1a',

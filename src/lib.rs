@@ -1,0 +1,8 @@
+mod periodic;
+pub use periodic::*;
+
+mod lorenz;
+pub use lorenz::*;
+
+mod func_equation;
+pub use func_equation::*;
