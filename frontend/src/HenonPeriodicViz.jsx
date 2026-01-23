@@ -1,7 +1,130 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import * as THREE from 'three'
-import { PerspectiveCamera } from '@react-three/drei';
+import * as THREE from 'three';
 
+const GRID_CONFIG = {
+    xRange: [-2, 2],
+    yRange: [-1.5, 1.5],
+    gridDivisions: 8,
+    axisColor: 0x888888,
+    gridColor: 0x333333,
+    labelColor: '#ffffff',
+    fontSize: 0.1
+};
+
+const createCoordinateSystem = (scene) => {
+    const { xRange, yRange, gridDivisions, axisColor, gridColor } = GRID_CONFIG;
+    const [xMin, xMax] = xRange;
+    const [yMin, yMax] = yRange;
+    const xStep = (xMax - xMin) / gridDivisions;
+    const yStep = (yMax - yMin) / gridDivisions;
+
+    const gridGroup = new THREE.Group();
+    gridGroup.name = 'coordinate-system';
+
+    for (let i = 0; i <= gridDivisions; i++) {
+        const x = xMin + i * xStep;
+        const isAxis = Math.abs(x) < 0.01;
+        const points = [
+            new THREE.Vector3(x, yMin, -0.01),
+            new THREE.Vector3(x, yMax, -0.01)
+        ];
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({
+            color: isAxis ? axisColor : gridColor,
+            linewidth: isAxis ? 2 : 1,
+            transparent: true,
+            opacity: isAxis ? 1.0 : 0.4
+        });
+        const line = new THREE.Line(geometry, material);
+        line.userData.isGrid = true;
+        gridGroup.add(line);
+    }
+
+    for (let i = 0; i <= gridDivisions; i++) {
+        const y = yMin + i * yStep;
+        const isAxis = Math.abs(y) < 0.01;
+        const points = [
+            new THREE.Vector3(xMin, y, -0.01),
+            new THREE.Vector3(xMax, y, -0.01)
+        ];
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({
+            color: isAxis ? axisColor : gridColor,
+            linewidth: isAxis ? 2 : 1,
+            transparent: true,
+            opacity: isAxis ? 1.0 : 0.4
+        });
+        const line = new THREE.Line(geometry, material);
+        line.userData.isGrid = true;
+        gridGroup.add(line);
+    }
+
+    const createTextSprite = (text, position, fontSize = 0.15) => {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = 128;
+        canvas.height = 64;
+
+        context.fillStyle = 'transparent';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+
+        context.font = 'Bold 32px Arial';
+        context.fillStyle = '#aaaaaa';
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillText(text, canvas.width / 2, canvas.height / 2);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.minFilter = THREE.LinearFilter;
+
+        const material = new THREE.SpriteMaterial({
+            map: texture,
+            transparent: true,
+            depthTest: false
+        });
+        const sprite = new THREE.Sprite(material);
+        sprite.position.copy(position);
+        sprite.scale.set(fontSize * 2, fontSize, 1);
+        sprite.userData.isGrid = true;
+
+        return sprite;
+    };
+
+    for (let i = 0; i <= gridDivisions; i++) {
+        const x = xMin + i * xStep;
+        if (Math.abs(x) > 0.01) {
+            const label = createTextSprite(
+                x.toFixed(1),
+                new THREE.Vector3(x, yMin - 0.15, 0),
+                0.12
+            );
+            gridGroup.add(label);
+        }
+    }
+
+    for (let i = 0; i <= gridDivisions; i++) {
+        const y = yMin + i * yStep;
+        if (Math.abs(y) > 0.01) {
+            const label = createTextSprite(
+                y.toFixed(1),
+                new THREE.Vector3(xMin - 0.2, y, 0),
+                0.12
+            );
+            gridGroup.add(label);
+        }
+    }
+
+    const xLabel = createTextSprite('x', new THREE.Vector3(xMax + 0.2, 0, 0), 0.18);
+    const yLabel = createTextSprite('y', new THREE.Vector3(0, yMax + 0.15, 0), 0.18);
+    gridGroup.add(xLabel);
+    gridGroup.add(yLabel);
+
+    const originLabel = createTextSprite('0', new THREE.Vector3(-0.12, -0.12, 0), 0.1);
+    gridGroup.add(originLabel);
+
+    scene.add(gridGroup);
+    return gridGroup;
+};
 
 const ORBIT_COLORS = {
     period1: { stable: '#e74c3c', unstable: '#c0392b', saddle: '#e67e22' },
@@ -59,13 +182,21 @@ const HenonPeriodicViz = () => {
         scene.background = new THREE.Color(0x0a0a0a);
         sceneRef.current = scene;
 
-        const aspect = window.innerWidth / window.innerHeight;
-        const frustumSize = 3;
+        const [xMin, xMax] = GRID_CONFIG.xRange;
+        const [yMin, yMax] = GRID_CONFIG.yRange;
+        const gridWidth = xMax - xMin;
+        const gridHeight = yMax - yMin;
+        const padding = 0.5;
+
+        const aspect = (window.innerWidth * 0.75) / window.innerHeight;
+        const frustumHeight = gridHeight + padding * 2;
+        const frustumWidth = frustumHeight * aspect;
+
         const camera = new THREE.OrthographicCamera(
-            -frustumSize * aspect / 2,
-            frustumSize * aspect / 2,
-            frustumSize / 2,
-            -frustumSize / 2,
+            -frustumWidth / 2,
+            frustumWidth / 2,
+            frustumHeight / 2,
+            -frustumHeight / 2,
             0.1,
             1000
         );
@@ -77,23 +208,19 @@ const HenonPeriodicViz = () => {
             antialias: true,
             alpha: true
         });
-        renderer.setSize(window.innerWidth * 0.75, window.innerHeight); 
+        renderer.setSize(window.innerWidth * 0.75, window.innerHeight);
         renderer.setPixelRatio(window.devicePixelRatio);
         rendererRef.current = renderer;
 
-        const axesHelper = new THREE.AxesHelper(2);
-        scene.add(axesHelper);
-
-        const gridHelper = new THREE.GridHelper(4, 20, 0x444444, 0x222222);
-        gridHelper.rotation.x = Math.PI / 2;
-        scene.add(gridHelper);
+        createCoordinateSystem(scene);
 
         const handleResize = () => {
-            const aspect = window.innerWidth / window.innerHeight;
-            camera.left = -frustumSize * aspect / 2;
-            camera.right = frustumSize * aspect / 2;
-            camera.top = frustumSize / 2;
-            camera.bottom = -frustumSize / 2;
+            const aspect = (window.innerWidth * 0.75) / window.innerHeight;
+            const newFrustumWidth = frustumHeight * aspect;
+            camera.left = -newFrustumWidth / 2;
+            camera.right = newFrustumWidth / 2;
+            camera.top = frustumHeight / 2;
+            camera.bottom = -frustumHeight / 2;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth * 0.75, window.innerHeight);
         };
@@ -117,6 +244,14 @@ const HenonPeriodicViz = () => {
 
     useEffect(() => {
         let cancelled = false;
+        setState(prev => ({
+            ...prev,
+            isReady: false,
+            trajectory: [],
+            currentPoint: null,
+            iteration: 0,
+            totalIterations: 0
+        }));
 
         const initSystem = async () => {
             try {
@@ -132,28 +267,34 @@ const HenonPeriodicViz = () => {
                     params.maxPeriod
                 );
 
+                if (cancelled) {
+                    system.free();
+                    return;
+                }
+
                 const orbits = system.getPeriodicOrbits();
                 console.log(`Found ${orbits.length} periodic orbits using Davidchack & Lai algorithm`);
-                
+
                 const periodCounts = {};
                 orbits.forEach(orbit => {
                     periodCounts[orbit.period] = (periodCounts[orbit.period] || 0) + 1;
                 });
                 console.log('Orbit distribution by period:', periodCounts);
-                
+
                 systemRef.current = system;
 
-                setState(prev => ({ 
-                    ...prev, 
-                    orbits, 
-                    isReady: true, 
+                setState(prev => ({
+                    ...prev,
+                    orbits,
+                    isReady: true,
                     trajectory: [],
                     currentPoint: null,
-                    iteration: 0, 
-                    totalIterations: 0 
+                    iteration: 0,
+                    totalIterations: 0
                 }));
             } catch (err) {
                 console.error('Failed to initialize WASM:', err);
+                setState(prev => ({ ...prev, isReady: false }));
             }
         };
 
@@ -178,7 +319,7 @@ const HenonPeriodicViz = () => {
         const scene = sceneRef.current;
 
         const objectsToRemove = [];
-        scene.children.forEach(child => {
+        scene.traverse(child => {
             if (child.userData.type === 'trajectory' || child.userData.type === 'orbit') {
                 objectsToRemove.push(child);
             }
@@ -266,6 +407,42 @@ const HenonPeriodicViz = () => {
         }
     }, [state.currentPoint, state.trajectory, state.orbits, state.showOrbits, state.showTrail, state.iteration, filters]);
 
+    const initializeTrajectory = useCallback(() => {
+        const system = systemRef.current;
+        if (!system || !state.isReady) return false;
+
+        try {
+            system.trackTrajectory(
+                params.centerX,
+                params.centerY,
+                params.maxIterations
+            );
+            system.reset();
+
+            const totalIter = system.getTotalIterations();
+            if (totalIter === 0) {
+                console.warn('No trajectory computed');
+                return false;
+            }
+
+            const currentPoint = system.getCurrentPoint();
+            const trajectory = system.getTrajectory(0, totalIter);
+
+            setState(prev => ({
+                ...prev,
+                currentPoint,
+                trajectory,
+                iteration: 0,
+                totalIterations: totalIter
+            }));
+
+            return true;
+        } catch (err) {
+            console.error('Failed to initialize trajectory:', err);
+            return false;
+        }
+    }, [state.isReady, params.centerX, params.centerY, params.maxIterations]);
+
     const stepForward = useCallback(() => {
         const system = systemRef.current;
         if (!system || !state.isReady || isProcessingRef.current) return;
@@ -274,22 +451,10 @@ const HenonPeriodicViz = () => {
 
         try {
             if (state.totalIterations === 0) {
-                system.trackTrajectory(
-                    params.centerX,
-                    params.centerY,
-                    params.maxIterations
-                );
-                system.reset();
-                const totalIter = system.getTotalIterations();
-                const currentPoint = system.getCurrentPoint();
-
-                setState(prev => ({
-                    ...prev,
-                    currentPoint,
-                    trajectory: [],
-                    iteration: 0,
-                    totalIterations: totalIter
-                }));
+                const success = initializeTrajectory();
+                if (!success) {
+                    console.error('Failed to initialize trajectory');
+                }
             } else {
                 const canStep = system.step();
                 if (canStep) {
@@ -305,10 +470,17 @@ const HenonPeriodicViz = () => {
             }
         } catch (err) {
             console.error('Step failed:', err);
+            setState(prev => ({
+                ...prev,
+                currentPoint: null,
+                trajectory: [],
+                iteration: 0,
+                totalIterations: 0
+            }));
         } finally {
             isProcessingRef.current = false;
         }
-    }, [state.isReady, state.totalIterations, params]);
+    }, [state.isReady, state.totalIterations, initializeTrajectory]);
 
     const runFull = useCallback(() => {
         const system = systemRef.current;
@@ -317,7 +489,7 @@ const HenonPeriodicViz = () => {
         isProcessingRef.current = true;
         setState(prev => ({ ...prev, isRunning: true }));
 
-        setTimeout(() => {
+        requestAnimationFrame(() => {
             try {
                 system.trackTrajectory(
                     params.centerX,
@@ -326,10 +498,25 @@ const HenonPeriodicViz = () => {
                 );
 
                 const totalIter = system.getTotalIterations();
+                if (totalIter === 0) {
+                    console.warn('No trajectory computed - point may have diverged');
+                    setState(prev => ({
+                        ...prev,
+                        isRunning: false,
+                        trajectory: [],
+                        currentPoint: null,
+                        iteration: 0,
+                        totalIterations: 0
+                    }));
+                    isProcessingRef.current = false;
+                    return;
+                }
+
                 const trajectory = system.getTrajectory(0, totalIter);
 
+                system.reset();
                 for (let i = 0; i < totalIter - 1; i++) {
-                    system.step();
+                    if (!system.step()) break;
                 }
 
                 const currentPoint = system.getCurrentPoint();
@@ -345,12 +532,19 @@ const HenonPeriodicViz = () => {
                 }));
             } catch (err) {
                 console.error('Run failed:', err);
-                setState(prev => ({ ...prev, isRunning: false }));
+                setState(prev => ({
+                    ...prev,
+                    isRunning: false,
+                    trajectory: [],
+                    currentPoint: null,
+                    iteration: 0,
+                    totalIterations: 0
+                }));
             } finally {
                 isProcessingRef.current = false;
             }
-        }, 10);
-    }, [state.isReady, params]);
+        });
+    }, [state.isReady, params.centerX, params.centerY, params.maxIterations]);
 
     const reset = useCallback(() => {
         const system = systemRef.current;
@@ -395,15 +589,6 @@ const HenonPeriodicViz = () => {
 
     return (
         <div style={styles.container}>
-
-            <THREE.Scene>
-      <PerspectiveCamera fov={75} aspect={window.innerWidth / window.innerHeight} position={5}>
-        <THREE.Mesh>
-          <THREE.BoxGeometry width={10} height={10} depth={10}/>
-          <THREE.MeshBasicMaterial color={0x00ff00}/>
-        </THREE.Mesh>
-      </PerspectiveCamera>
-    </THREE.Scene>
             <div style={styles.sidebar}>
                 <div style={styles.section}>
                     <h3 style={styles.sectionTitle}>System Parameters</h3>
