@@ -1,6 +1,9 @@
 from __equation import *
 from __points_and_masks import *
 
+import meshlib.mrmeshnumpy as mn
+import meshlib.mrmeshpy as mm
+
 class ModelBase(): # 2D
     epsilon = 0.01
     start_point = None
@@ -26,6 +29,56 @@ class ModelBase(): # 2D
         new.function = self.function.copy()
         return new
 
+
+
+
+def detect_sparse_gaps_using_meshlib(points, normals, min_distance):
+    cloud = mn.pointCloudFromPoints(points, normals)
+    mesh = mm.triangulatePointCloud(cloud)
+    
+    index_triangles = []
+    
+    for faceid in mesh.topology.getValidFaces():
+        tv = mesh.topology.getTriVerts(faceid)
+        triangle = [int(i) for i in tv]
+        d = np.linalg.norm(np.diff(points[np.array(triangle+[triangle[0]])], axis=0), axis=1).max()
+        
+        if d>min_distance:
+            index_triangles.append(triangle)
+    return index_triangles
+    
+def detect_dense_gaps_using_meshlib(points, normals, min_distance):
+    cloud = mn.pointCloudFromPoints(points, normals)
+    mesh = mm.triangulatePointCloud(cloud)
+    
+    vertices_to_remove = set()
+    triangle_sets = []
+    index_triangles = []
+    
+    def triangle_shares_vertices(tr):
+        min_len = 6
+        for tr1 in triangle_sets:
+            l = len(tr|tr1)
+            min_len = min(min_len, l)
+            if min_len<5: break # share atleast 2 vertices
+        return 6-min_len
+
+    for faceid in mesh.topology.getValidFaces():
+        tv = mesh.topology.getTriVerts(faceid)
+        triangle = [int(i) for i in tv]
+        d = np.linalg.norm(np.diff(points[np.array(triangle+[triangle[0]])], axis=0), axis=1).max()
+        
+        if d<min_distance:
+            ts = set(triangle)
+            shares = triangle_shares_vertices(ts)
+            if shares>0: continue
+            index_triangles.append(triangle)
+            vertices_to_remove |= ts
+            triangle_sets.append(ts)
+    return vertices_to_remove, index_triangles
+
+
+
 class Model(ModelBase):
     gap_detection_attempts = 10
     point_density = 10 # point density (relative to epsilon)
@@ -34,9 +87,7 @@ class Model(ModelBase):
     def __init__(self):
         self.start_point = np.zeros(3)
         self.function = MappingFunction(x="x", y="y", z="z")
-        self.point_density = 10
-        self.point_ceiling = 500 # soft ceiling for points (increases allowed distance between points after the ceiling)
-    
+        
     def update_start(self, x:float=None, y:float=None, z:float=None):
         if x is not None: self.start_point[0] = x
         if y is not None: self.start_point[1] = y
@@ -95,7 +146,7 @@ class Model(ModelBase):
         self.points, self.normals = points, normals
         
         if self.points.shape[1]==3:
-            # TODO: gap detection for 3D objects
+            self._gap_detection_loops_3D()
             pass
         else:
             self._gap_detection_loops_2D()
@@ -200,7 +251,7 @@ class Model(ModelBase):
         return mask
         
     def _increase_precision_2D(self, gap_mask):
-        # create extra points to fill the model with using previous step's points
+        # create extra points to fill the model using previous step's points
         
         # create a average point between two points, that were marked as a gap
         # do the same with normals
@@ -256,6 +307,88 @@ class Model(ModelBase):
         if not inside.all() and inside.any():
             point_delta -= inside.sum()
             self._remove_items_with_mask(~inside)
+
+
+
+
+
+
+
+    def _decrease_precision_3D(self, removal_set):
+        if not removal_set: return False
+        # remove too dense points
+        print("removing", len(removal_set))
+        remove_mask = np.zeros(len(self.points), dtype=np.bool_)
+        for i in removal_set: remove_mask[i] = True
+        self.points = self.points[~remove_mask]
+        self.normals = self.normals[~remove_mask]
+        self.prev_points = self.prev_points[~remove_mask]
+        self.prev_normals = self.prev_normals[~remove_mask]
+        #
+        return True
+        
+
+    def _increase_precision_3D(self, triangles):
+        # create extra points to fill the model using previous step's points
+        
+        if not triangles: return False
+        print("adding", len(triangles))
+        
+        # translate triangle indexes to points
+        triangles = np.array(triangles, dtype=np.int32)
+        more_points = self.prev_points[triangles]
+        more_normals = self.prev_normals[triangles]
+        # calculate the triangle centers
+        more_points = np.mean(more_points, axis=1)
+        more_normals = np.mean(more_normals, axis=1)
+        #
+        
+        # expand prev_points with the new ones
+        self.prev_points = np.append(self.prev_points, more_points, axis=0)
+        self.prev_normals = np.append(self.prev_normals, more_normals, axis=0)
+        #
+        
+        # process the created points and normals to get them caught up to current step
+        more_points, more_normals = self.__process_step(more_points, more_normals)
+        #
+        
+        # expand points with the new ones
+        self.points = np.append(self.points, more_points, axis=0)
+        self.normals = np.append(self.normals, more_normals, axis=0)
+        #
+        
+        if self.points.shape[0]>10000:
+            print("points", self.points.shape)
+            raise Exception("TOO MANY POINTS")
+        
+        # unlike 2D, no need to sort points
+        return True
+
+    def _min_distance_between_points_3D(self):
+        d = self._min_distance_between_points()
+        d /= self.point_density
+        r = len(self.points)/self.point_ceiling
+        d *= r
+        return d
+    
+    def _gap_detection_loops_3D(self):
+        for i in range(self.gap_detection_attempts):
+            d = self._min_distance_between_points_3D()
+##            print(d, len(self.points))
+            triangles = detect_sparse_gaps_using_meshlib(self.points, self.normals, d*2)
+            done = not self._increase_precision_3D(triangles)
+            if done: break
+        
+        for i in range(self.gap_detection_attempts):
+            d = self._min_distance_between_points_3D()
+##            print(d, len(self.points))
+            remove, triangles = detect_dense_gaps_using_meshlib(self.points, self.normals, d)
+            done = not (self._increase_precision_3D(triangles) | self._decrease_precision_3D(remove))
+            if done: break
+        
+        inside = self._trim_inside_mask()
+        if not inside.all() and inside.any():
+            self._remove_items_with_mask(~inside)
     
     
 
@@ -269,7 +402,7 @@ if __name__ == "__main__":
         drawing.set_color(r=0, g=0, b=0)
         drawing.set_color_bg(r=1, g=1, b=1)
         
-        obj = drawing.circles(model.points, model.epsilon/100)
+        obj = drawing.circles(model.points, model.epsilon/200)
 ##        obj = drawing.points(model.points)
         obj.set_color(r=1, a=.5)
         obj.set_color_bg(b=1, a=.5)
@@ -288,12 +421,15 @@ if __name__ == "__main__":
         
     
     model = Model()
+    model.gap_detection_attempts = 10
 ##    model.update_function(x="1-a*x*x+y", y="b*x")
-    model.update_function(x="1-a*x*x+y+z", y="b*x", z="z")
-    model.epsilon = 0.07
+##    model.update_function(x="cos(x+a)", y="cos(y+b*z)", z="x")
+##    model.update_function(x="cos(y)**2+sin(z)*y", y="x", z="z")
+    model.update_function(x="x", y="y", z="z")
+    model.epsilon = 1.
     model.update_constants(a=0.8, b=0.3)
-    model.point_density = 10
-    model.first_step(0)
+    model.point_density = 20
+    model.first_step(1)
     
     resolution = 1000
     timestep = 0
@@ -302,6 +438,7 @@ if __name__ == "__main__":
 ##        input()
         for plot in plotting_grid(1, 1):
             print(model.next_step())
+            print(model.points.shape)
 ##            print(timestep)
             test_draw(plot, model, resolution)
             plot.set_title(f"step: {timestep}")
