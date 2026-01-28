@@ -6,3 +6,5 @@ pub use lorenz::*;
 
 mod func_equation;
 pub use func_equation::*;
+mod unstable_manifold;
+pub use unstable_manifold::*;
