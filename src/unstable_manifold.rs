@@ -1,7 +1,5 @@
-use nalbegra::{Matrix2, Vector2, Vector4};
-use nalgebra::{Vector, Vector2};
+use nalgebra::{Vector2, Matrix2};
 use core::f64;
-use std::f64;
 
 #[derive(Debug, Clone, Copy)]
 pub struct HenonParams {
@@ -73,15 +71,15 @@ impl HenonParams {
     pub fn henon_map(&self, pos: &Vector2<f64>) -> Vector2<f64> {
         let x = pos.x; 
         let y = pos.y; 
-        Vector2::new(
-            1 - self.a * x * x + y,
+        return Vector2::new(
+            1.0 - self.a * x * x + y,
             self.b * x
-        )
+        );
     }
 
     pub fn jacobian(&self, pos: Vector2<f64>) -> Matrix2<f64> {
         Matrix2::new(
-            -2 * self.a * pos.x, 1.0,
+            -2.0 * self.a * pos.x, 1.0,
             self.b, 0.0
         )
     }
@@ -157,9 +155,9 @@ impl UnstableManifoldComputer {
         let initial_normal = Vector2::new(
             -saddle.unstable_eigenvector.y,
             saddle.unstable_eigenvector.x 
-        );
+        ).normalize();  
 
-        let mut state_0 = ExtendedState{
+        let state_0 = ExtendedState{
             pos: vec_0, 
             normal: initial_normal
         };
@@ -176,70 +174,29 @@ impl UnstableManifoldComputer {
         loop {
             let state_new = self.params.extended_map(state_old, n_period);
             let dist_diff = (state_new.pos - state_old.pos).norm();
+
             if j >= self.config.max_iter {
                 return Trajectory { 
                     points: trajectory, 
                     stop_reason: StopReason::MaxIterations 
-                }
-            }
-
-            if trajectory.len() >= self.config.max_points {
-                return Trajectory { 
-                    points: trajectory, 
-                    stop_reason: StopReason::MaxPoints
-                }
+                };
             }
 
             if dist_diff < self.config.conv_tol && j >= 30 {
                 return Trajectory { 
                     points: trajectory, 
                     stop_reason: StopReason::Converged
-                }
+                };
             }
 
-            let dist_to_stable = stable_points.iter()
+            let dist_to_saddles = other_saddles.iter()
             .map(|sp| (state_new.pos - sp).norm())
             .min_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(f64::INFINITY);
 
-            if dist_to_stable < self.config.stable_tol {
-                return Trajectory {
-                    points: trajectory, 
-                    stop_reason: StopReason::StablePointReached
-                }
-            }
-
-            // adaptive refinement: add intermediate points if gap too large
-            if dist_to_stable > self.config.spacing_tol || dist_diff.isnan() {
-                let refined = self.refine_segment(
-                    vec_0, 
-                    dist_vec_0,
-                    state_old,
-                    state_new,
-                    j,
-                    n_period,
-                    start_time
-                );
-
-                match refined { 
-                    Ok(points) => {
-                        trajectory.extend(points);
-                    }
-                    Err(reason) => {
-                        return Trajectory { 
-                            points: trajectory, 
-                            stop_reason: reason
-                        }
-                    }
-                }
-            } else {
-                trajectory.push(state_new);
-            }
-
-
+            
         }
-
-    }
+    } 
 
     fn refine_segment(
         &self,
@@ -309,6 +266,49 @@ impl UnstableManifoldComputer {
         (traj_plus, traj_minus)
     }
 
-    
 
+
+}
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+
+    fn test_unstable_manifold_computer() {
+        let params = HenonParams {
+            a: 1.4,
+            b: 0.3,
+            epsilon: 0.01
+        };
+
+        let config = ManifoldConfig {
+            max_iter: 1000,
+            ..Default::default()
+        };
+
+        let saddle = SaddlePoint {
+            position: Vector2::new(0.631, 0.189),
+            period: 1,
+            unstable_eigenvector: Vector2::new(0.9, 0.1).normalize(),
+            eigenvalue: 2.5
+        };
+
+
+        let other_saddles = vec![
+            Vector2::new(-1.131, 0.339),
+            Vector2::new(0.339, -1.131)
+        ];
+
+        let computer = UnstableManifoldComputer::new(params, config);
+        let (traj_plus, traj_minus) = computer.compute_manifold(&saddle, &other_saddles);
+
+        println!("Trajectory (+v): {} points, reason: {:?}", 
+                 traj_plus.points.len(), traj_plus.stop_reason);
+        println!("Trajectory (-v): {} points, reason: {:?}", 
+                 traj_minus.points.len(), traj_minus.stop_reason);
+    }
 }
