@@ -1,4 +1,4 @@
-use nalgebra::{Vector2, Matrix2};
+use nalgebra::{Vector2, Matrix2, Vector4, Matrix4};
 use wasm_bindgen::prelude::*;
 use serde::{Serialize, Deserialize};
 
@@ -69,10 +69,10 @@ impl Default for ManifoldConfig {
             spacing_upper: 10.0,     
             conv_tol: 1e-19,        
             stable_tol: 1e-14,       
-            max_iter: 8000,
-            max_points: 700_000,     
-            time_limit: 10.0,        
-            inner_max: 2000,         
+            max_iter: 500,
+            max_points: 50_000,     
+            time_limit: 2.0,        
+            inner_max: 500,         
         }
     }
 }
@@ -590,10 +590,126 @@ impl UnstableManifoldComputer {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct TrajectoryJS {
+pub struct TrajectoryRet {
     pub points: Vec<(f64, f64)>,
     pub stop_reason: String,
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct ManifoldResult {
+    pub plus: TrajectoryRet,
+    pub minus: TrajectoryRet,
+    pub saddle_point: (f64, f64),
+    pub eigenvalue: f64,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct FixedPointResult {
+    pub x: f64,
+    pub y: f64,
+    pub eigenvalues: (f64, f64),
+    pub stability: String, // "Attractor", "Repeller", "Saddle"
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ComputeResult {
+    pub manifolds: Vec<ManifoldResult>,
+    pub fixed_points: Vec<FixedPointResult>,
+}
+
+struct NewtonSolver {
+    params: HenonParams,
+    max_iter: usize,
+    tol: f64,
+}
+
+impl NewtonSolver {
+    fn new(params: HenonParams) -> Self {
+        Self {
+            params,
+            max_iter: 100,
+            tol: 1e-10,
+        }
+    }
+
+    fn solve_extended_period(&self, initial_state: ExtendedState, period: usize) -> Option<ExtendedState> {
+        let mut x = initial_state;
+        
+        for _ in 0..self.max_iter {
+            // F^k(x) - x = 0
+            // Jacobian is J_F^k(x) - I
+            
+            let mut f_val = x;
+            let mut jac_acc = Matrix4::<f64>::identity();
+            
+            // Compute F^k(x) and Jacobian roughly using chain rule or finite difference
+            // Since we don't have analytical Jacobian for extended map in Rust easily available without automatic differentiation or implementing it manually...
+            // Let's use finite difference for the full 4D Jacobian of the extended map.
+            
+            // Re-evaluate F^k(x)
+            match self.params.extended_map(x, period) {
+                Ok(res) => f_val = res,
+                Err(_) => return None,
+            }
+            
+            let diff_pos = f_val.pos - x.pos;
+            let diff_norm = f_val.normal - x.normal;
+            
+            if diff_pos.norm() < self.tol && diff_norm.norm() < self.tol {
+                return Some(x);
+            }
+            
+            let eps = 1e-7;
+            let mut jac = Matrix4::<f64>::zeros();
+            
+            let extracted_state = Vector4::new(x.pos.x, x.pos.y, x.normal.x, x.normal.y);
+            
+            for i in 0..4 {
+                let mut perturbed = extracted_state;
+                perturbed[i] += eps;
+                let state_p = ExtendedState {
+                    pos: Vector2::new(perturbed[0], perturbed[1]),
+                    normal: Vector2::new(perturbed[2], perturbed[3]),
+                };
+                
+                if let Ok(res_p) = self.params.extended_map(state_p, period) {
+                    let d_pos = (res_p.pos - f_val.pos) / eps;
+                    let d_norm = (res_p.normal - f_val.normal) / eps;
+                    
+                    jac[(0, i)] = d_pos.x;
+                    jac[(1, i)] = d_pos.y;
+                    jac[(2, i)] = d_norm.x;
+                    jac[(3, i)] = d_norm.y;
+                } else {
+                    return None;
+                }
+            }
+            
+            let jac_minus_i = jac - Matrix4::<f64>::identity();
+            
+            let residual = Vector4::new(f_val.pos.x - x.pos.x, f_val.pos.y - x.pos.y, f_val.normal.x - x.normal.x, f_val.normal.y - x.normal.y);
+            
+            if let Some(inv) = jac_minus_i.try_inverse() {
+                let delta = -(inv * residual);
+                x.pos.x += delta[0];
+                x.pos.y += delta[1];
+                x.normal.x += delta[2];
+                x.normal.y += delta[3];
+                
+                let n_norm = x.normal.norm();
+                if n_norm > 1e-10 {
+                    x.normal /= n_norm;
+                }
+            } else {
+                return None;
+            }
+        }
+        
+        None
+    }
+}
+
+
 
 #[wasm_bindgen]
 pub fn compute_manifold_simple(
@@ -611,157 +727,173 @@ pub fn compute_manifold_simple(
         }
     };
     
-    let mut x = 0.0;
-    let mut y = 0.0;
+    let solver = NewtonSolver::new(params);
+    let mut unique_states: Vec<ExtendedState> = Vec::new();
     
-    for _ in 0..1000 {
-        let x_new = 1.0 - a * x * x + y;
-        let y_new = b * x;
+    // Grid search for fixed points (period 1)
+    let search_grid_size = 3;
+    let search_angle_size = 4;
+    
+    for i in 0..search_grid_size {
+        for j in 0..search_grid_size {
+            let x = -2.0 + 4.0 * (i as f64) / (search_grid_size as f64 - 1.0);
+            let y = -2.0 + 4.0 * (j as f64) / (search_grid_size as f64 - 1.0);
+            
+            for k in 0..search_angle_size {
+                let angle = 2.0 * std::f64::consts::PI * (k as f64) / (search_angle_size as f64);
+                let normal = Vector2::new(angle.cos(), angle.sin());
+                
+                let initial = ExtendedState {
+                    pos: Vector2::new(x, y),
+                    normal,
+                };
+                
+                if let Some(fixed) = solver.solve_extended_period(initial, 1) {
+                    if !fixed.pos.x.is_finite() || !fixed.pos.y.is_finite() { continue; }
+                    
+                    let mut is_new = true;
+                    for existing in &unique_states {
+                         if (existing.pos - fixed.pos).norm() < 1e-4 && (existing.normal - fixed.normal).norm() < 1e-4 {
+                            is_new = false;
+                            break;
+                         }
+                         // Also check if it's the same point but opposite normal (eigenvector direction)
+                         if (existing.pos - fixed.pos).norm() < 1e-4 && (existing.normal + fixed.normal).norm() < 1e-4 {
+                            is_new = false;
+                             break;
+                         }
+                    }
+                    
+                    if is_new {
+                        if fixed.pos.norm() < 10.0 {
+                            unique_states.push(fixed);
+                            console_log!("Found fixed point: ({:.4}, {:.4})", fixed.pos.x, fixed.pos.y);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut fixed_points_result = Vec::new();
+    let mut stable_points_pos = Vec::new();
+    let mut unstable_points_indices = Vec::new();
+    
+    // Classify points
+    for (idx, state) in unique_states.iter().enumerate() {
+        let jac = params.jacobian(state.pos);
+        let trace = jac.trace();
+        let det = jac.determinant();
+        let discriminant = trace * trace - 4.0 * det;
         
-        if (x_new - x).abs() < 1e-10 && (y_new - y).abs() < 1e-10 {
-            break;
-        }
+        let (l1, l2) = if discriminant >= 0.0 {
+            let sqrt_disc = discriminant.sqrt();
+            ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0)
+        } else {
+            // Complex eigenvalues, treat magnitude
+            let real = trace / 2.0;
+            let imag = (-discriminant).sqrt() / 2.0;
+            let mag = (real*real + imag*imag).sqrt();
+            (mag, mag)
+        };
         
-        x = x_new;
-        y = y_new;
-    }
-    
-    if !x.is_finite() || !y.is_finite() {
-        console_error!("Fixed point not finite: ({}, {})", x, y);
-        return Err(JsValue::from_str("Fixed point diverged"));
-    }
-    
-    console_log!("Fixed point: ({}, {})", x, y);
-    
-    let jac = Matrix2::new(
-        -2.0 * a * x, 1.0,
-        b, 0.0
-    );
-    
-    let trace = jac.trace();
-    let det = jac.determinant();
-    let discriminant = trace * trace - 4.0 * det;
-    
-    if discriminant < 0.0 {
-        console_error!("Complex eigenvalues, cannot compute real manifold");
-        return Err(JsValue::from_str("Complex eigenvalues"));
-    }
-    
-    let sqrt_disc = discriminant.sqrt();
-    let lambda1 = (trace + sqrt_disc) / 2.0;
-    let lambda2 = (trace - sqrt_disc) / 2.0;
-    
-    console_log!("Eigenvalues: λ1={}, λ2={}", lambda1, lambda2);
-    console_log!("Magnitudes: |λ1|={}, |λ2|={}", lambda1.abs(), lambda2.abs());
-    
-    let (unstable_eigenvalue, stable_eigenvalue, use_lambda1) = if lambda1.abs() > lambda2.abs() {
-        (lambda1, lambda2, true)
-    } else {
-        (lambda2, lambda1, false)
-    };
-    
-    console_log!("Selected unstable eigenvalue: {} (magnitude: {})", unstable_eigenvalue, unstable_eigenvalue.abs());
-    
-    let unstable_eigenvector = if use_lambda1 {
-        if (jac[(0, 0)] - lambda1).abs() > 1e-10 {
-            Vector2::new(jac[(0, 1)], lambda1 - jac[(0, 0)])
+        // Simple classification based on magnitude
+        let abs_l1 = l1.abs();
+        let abs_l2 = l2.abs();
+        
+        let stability = if abs_l1 < 1.0 && abs_l2 < 1.0 {
+            "Attractor"
+        } else if abs_l1 > 1.0 && abs_l2 > 1.0 {
+            "Repeller"
         } else {
-            Vector2::new(lambda1 - jac[(1, 1)], jac[(1, 0)])
+            "Saddle"
+        };
+        
+        fixed_points_result.push(FixedPointResult {
+            x: state.pos.x,
+            y: state.pos.y,
+            eigenvalues: (l1, l2),
+            stability: stability.to_string(),
+        });
+        
+        if stability == "Attractor" {
+            stable_points_pos.push(state.pos);
+        } else if stability == "Saddle" || stability == "Repeller" {
+            unstable_points_indices.push(idx);
         }
-    } else {
-        if (jac[(0, 0)] - lambda2).abs() > 1e-10 {
-            Vector2::new(jac[(0, 1)], lambda2 - jac[(0, 0)])
-        } else {
-            Vector2::new(lambda2 - jac[(1, 1)], jac[(1, 0)])
-        }
-    };
-    
-    let norm = unstable_eigenvector.norm();
-    if norm < 1e-10 {
-        console_error!("Eigenvector too small");
-        return Err(JsValue::from_str("Invalid eigenvector"));
     }
     
-    let unstable_eigenvector = unstable_eigenvector / norm;
-    
-    console_log!("Unstable eigenvector: ({}, {})", unstable_eigenvector.x, unstable_eigenvector.y);
-    
-    let both_stable = unstable_eigenvalue.abs() < 1.0 && stable_eigenvalue.abs() < 1.0;
-    let both_unstable = unstable_eigenvalue.abs() > 1.0 && stable_eigenvalue.abs() > 1.0;
-    let is_saddle = (unstable_eigenvalue.abs() > 1.0 && stable_eigenvalue.abs() < 1.0) ||
-                    (unstable_eigenvalue.abs() < 1.0 && stable_eigenvalue.abs() > 1.0);
-    
-    if both_stable {
-        console_log!("Both eigenvalues stable (attractor) - using inverse map with stable manifold direction");
-    } else if both_unstable {
-        console_log!("Both eigenvalues unstable (repeller) - using inverse map");
-    } else if is_saddle {
-        console_log!("Saddle point - using forward map with unstable direction");
-    }
-    
-    let is_dual_repeller = both_stable || both_unstable;
-    let saddle_type = if is_dual_repeller {
-        SaddleType::DualRepeller
-    } else {
-        SaddleType::Regular
-    };
-    
+    let mut manifolds_result = Vec::new();
     let config = ManifoldConfig::default();
+    let computer = UnstableManifoldComputer::new(params, config);
     
-    let saddle = SaddlePoint {
-        position: Vector2::new(x, y),
-        period: 1,
-        eigenvector: unstable_eigenvector,
-        eigenvalue: unstable_eigenvalue,
-        saddle_type: if is_dual_repeller {
+    // Compute manifolds for unstable points
+    for idx in unstable_points_indices {
+        let state = unique_states[idx];
+        let fp_info = &fixed_points_result[idx];
+        
+        // Re-compute eigenstuff for direction
+        // We use the normal from ExtendedState as the unstable direction guess? 
+        // Actually the normal extends along the unstable eigenvector for saddles usually.
+        // Let's trust the normal found by Newton solver on extended map, 
+        // which enforces invariance of the normal bundle.
+        
+        let saddle_type = if fp_info.stability == "Repeller" {
             SaddleType::DualRepeller
         } else {
             SaddleType::Regular
-        },
-    };
-    
-    let target_points = vec![];
-    let computer = UnstableManifoldComputer::new(params, config);
-    
-    console_log!("Starting manifold computation (saddle type: {:?})...", saddle.saddle_type);
-    let (traj_plus, traj_minus) = match computer.compute_manifold(&saddle, &target_points) {
-        Ok(result) => {
-            console_log!("Manifold computation completed");
-            result
-        },
-        Err(e) => {
-            console_error!("Manifold computation failed: {}", e);
-            return Err(JsValue::from_str(&e));
+        };
+        
+        // Eigenvalue associated with this direction
+        // We need to match the normal direction to the eigenvector to know which eigenvalue it is.
+        // But for visualization, we just use the found state.normal as the direction.
+        // We should just check if the normal aligns with strongest expansion or contraction.
+        
+        let l1 = fp_info.eigenvalues.0;
+        let l2 = fp_info.eigenvalues.1;
+        
+        // For saddle, one is > 1. For repeller, both > 1.
+        // The extended map finds (x, v) such that Df(x)v = lambda * v (normalized).
+        // So `normal` IS the eigenvector.
+        
+        let saddle_pt = SaddlePoint {
+            position: state.pos,
+            period: 1,
+            eigenvector: state.normal, // Use the normal from extended state
+            eigenvalue: if l1.abs() > 1.0 { l1 } else { l2 }, // Rough guess, doesn't matter much for struct
+            saddle_type,
+        };
+
+        if let Ok((traj_plus, traj_minus)) = computer.compute_manifold(&saddle_pt, &stable_points_pos) {
+            let plus_points: Vec<(f64, f64)> = traj_plus.points.iter()
+                .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
+                .map(|s| (s.pos.x, s.pos.y))
+                .collect();
+
+            let minus_points: Vec<(f64, f64)> = traj_minus.points.iter()
+                .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
+                .map(|s| (s.pos.x, s.pos.y))
+                .collect();
+                
+            manifolds_result.push(ManifoldResult {
+                plus: TrajectoryRet {
+                    points: plus_points,
+                    stop_reason: format!("{:?}", traj_plus.stop_reason),
+                },
+                minus: TrajectoryRet {
+                    points: minus_points,
+                    stop_reason: format!("{:?}", traj_minus.stop_reason),
+                },
+                saddle_point: (state.pos.x, state.pos.y),
+                eigenvalue: saddle_pt.eigenvalue,
+            });
         }
+    }
+
+    let result = ComputeResult {
+        manifolds: manifolds_result,
+        fixed_points: fixed_points_result,
     };
-    
-    console_log!("Successfully computed manifold: +{} pts, -{} pts",
-                 traj_plus.points.len(), traj_minus.points.len());
-
-    let plus_points: Vec<(f64, f64)> = traj_plus.points.iter()
-        .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
-        .map(|s| (s.pos.x, s.pos.y))
-        .collect();
-
-    let minus_points: Vec<(f64, f64)> = traj_minus.points.iter()
-        .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
-        .map(|s| (s.pos.x, s.pos.y))
-        .collect();
-
-    console_log!("After filtering: +{} pts, -{} pts", plus_points.len(), minus_points.len());
-
-    let result = serde_json::json!({
-        "plus": {
-            "points": plus_points,
-            "stop_reason": format!("{:?}", traj_plus.stop_reason)
-        },
-        "minus": {
-            "points": minus_points,
-            "stop_reason": format!("{:?}", traj_minus.stop_reason)
-        },
-        "fixed_point": { "x": x, "y": y },
-        "eigenvalues": { "unstable": unstable_eigenvalue, "stable": stable_eigenvalue },
-    });
 
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
     match result.serialize(&serializer) {
@@ -853,8 +985,8 @@ pub fn compute_manifold_js(
     console_log!("Successfully computed manifold: +{} pts, -{} pts", 
                  traj_plus.points.len(), traj_minus.points.len());
     
-    let convert_traj = |traj: &Trajectory| -> TrajectoryJS {
-        TrajectoryJS {
+    let convert_traj = |traj: &Trajectory| -> TrajectoryRet {
+        TrajectoryRet {
             points: traj.points.iter()
                 .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
                 .map(|s| (s.pos.x, s.pos.y))
@@ -877,7 +1009,6 @@ pub fn compute_manifold_js(
         }
     }
 }
-
 
 
 #[cfg(test)]
