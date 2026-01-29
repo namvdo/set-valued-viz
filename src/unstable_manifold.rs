@@ -1,7 +1,18 @@
 use nalgebra::{Vector2, Matrix2};
-use std::time::Instant;
 use wasm_bindgen::prelude::*;
 use serde::{Serialize, Deserialize};
+
+#[cfg(target_arch = "wasm32")]
+fn get_time_secs() -> f64 {
+    js_sys::Date::now() / 1000.0
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn get_time_secs() -> f64 {
+    use std::time::Instant;
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_secs_f64()
+}
 
 #[wasm_bindgen]
 extern "C" {
@@ -13,18 +24,17 @@ extern "C" {
 
 macro_rules! console_log {
     ($($t:tt)*) => {
-        #[cfg(target_arch = "wasm32")]
-        log(&format_args!($($t)*).to_string())
+        log(&format!($($t)*))
     }
 }
+
 
 macro_rules! console_error {
     ($($t:tt)*) => {
-        #[cfg(target_arch = "wasm32")]
-        error(&format_args!($($t)*).to_string())
+        error(&format!($($t)*))
     }
 }
-
+#[wasm_bindgen]
 #[derive(Debug, Clone, Copy)]
 pub struct HenonParams {
     pub a: f64,
@@ -55,7 +65,7 @@ impl Default for ManifoldConfig {
     fn default() -> Self {
         Self {
             perturb_tol: 1e-5,
-            spacing_tol: 2e-4,      
+            spacing_tol: 1e-3,      
             spacing_upper: 10.0,     
             conv_tol: 1e-19,        
             stable_tol: 1e-14,       
@@ -294,7 +304,7 @@ impl UnstableManifoldComputer {
         }
         
         let spacing_tol = if saddle.saddle_type == SaddleType::DualRepeller {
-            5e-3 
+            1e-3 
         } else {
             self.config.spacing_tol  
         };
@@ -348,7 +358,7 @@ impl UnstableManifoldComputer {
         let mut traj_add = vec![state_0, state_1];
         let mut vec_iter_old = state_1;
 
-        let start_time = Instant::now();
+        let start_time = get_time_secs(); 
         let mut j = 1;
         
         let mut log_counter = 0;
@@ -427,7 +437,9 @@ impl UnstableManifoldComputer {
                 console_log!("Refining segment at iteration {} (dist_diff={})", j, dist_diff);
                 match self.refine_segment(
                     vec_0,
+                    initial_normal,
                     dist_vec_0,
+                    state_1.normal,
                     vec_iter_old,
                     vec_iter,
                     j,
@@ -460,14 +472,16 @@ impl UnstableManifoldComputer {
     fn refine_segment(
         &self,
         vec_0: Vector2<f64>,
+        initial_normal: Vector2<f64>,
         dist_vec_0: Vector2<f64>,
+        normal_1: Vector2<f64>,
         state_old: ExtendedState,
         state_new: ExtendedState,
         iter_count: usize,
         n_period: usize,
         map_fn: &dyn Fn(ExtendedState, usize) -> Result<ExtendedState, String>,
         spacing_tol: f64,
-        start_time: Instant
+        start_time: f64
     ) -> Result<Vec<ExtendedState>, StopReason> {
         let mut params: Vec<f64> = vec![0.0, 1.0];
         let mut points = vec![state_old, state_new];
@@ -491,31 +505,34 @@ impl UnstableManifoldComputer {
                 .collect();
 
             if gaps.is_empty() {
-                break;  
+                break;
             }
+
+            let mut filled_any = false;
 
             for &gap_idx in gaps.iter().rev() {
                 if gap_idx + 1 >= params.len() {
                     console_error!("Gap index out of bounds: {} >= {}", gap_idx + 1, params.len());
                     continue;
                 }
-                
+
                 let t_mid = (params[gap_idx] + params[gap_idx + 1]) / 2.0;
 
                 let intermediate_pos = vec_0 + t_mid * dist_vec_0;
-                
+
                 if !intermediate_pos.x.is_finite() || !intermediate_pos.y.is_finite() {
                     continue;
                 }
-                
-                let intermediate_normal = Vector2::new(-dist_vec_0.y, dist_vec_0.x);
-                let norm = intermediate_normal.norm();
-                
+
+                // Interpolate normal between initial_normal and normal_1 based on t_mid
+                let intermediate_normal_unnorm = initial_normal + t_mid * (normal_1 - initial_normal);
+                let norm = intermediate_normal_unnorm.norm();
+
                 if norm < 1e-10 {
                     continue;
                 }
-                
-                let intermediate_normal = intermediate_normal / norm;
+
+                let intermediate_normal = intermediate_normal_unnorm / norm;
 
                 let intermediate_state = ExtendedState {
                     pos: intermediate_pos,
@@ -524,18 +541,23 @@ impl UnstableManifoldComputer {
 
                 let mapped_state = match map_fn(intermediate_state, n_period * iter_count) {
                     Ok(s) => s,
-                    Err(e) => {
-                        console_log!("Map failed in refinement: {}", e);
+                    Err(_) => {
                         continue;
                     }
                 };
-                
+
                 if !mapped_state.pos.x.is_finite() || !mapped_state.pos.y.is_finite() {
                     continue;
                 }
 
                 points.insert(gap_idx + 1, mapped_state);
                 params.insert(gap_idx + 1, t_mid);
+                filled_any = true;
+            }
+
+            // If no gaps were filled, stop trying (all midpoints diverged)
+            if !filled_any {
+                break;
             }
 
             k += 1;
@@ -545,7 +567,8 @@ impl UnstableManifoldComputer {
                 return Err(StopReason::MaxIterations);
             }
 
-            if start_time.elapsed().as_secs_f64() > self.config.time_limit {
+            let elapsed = get_time_secs() - start_time;
+            if elapsed > self.config.time_limit {
                 console_log!("Time limit exceeded in refinement");
                 return Err(StopReason::TimeExceeded);
             }
@@ -712,27 +735,36 @@ pub fn compute_manifold_simple(
         }
     };
     
-    console_log!("Successfully computed manifold: +{} pts, -{} pts", 
+    console_log!("Successfully computed manifold: +{} pts, -{} pts",
                  traj_plus.points.len(), traj_minus.points.len());
-    
-    let convert_traj = |traj: &Trajectory| -> TrajectoryJS {
-        TrajectoryJS {
-            points: traj.points.iter()
-                .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
-                .map(|s| (s.pos.x, s.pos.y))
-                .collect(),
-            stop_reason: format!("{:?}", traj.stop_reason),
-        }
-    };
-    
+
+    let plus_points: Vec<(f64, f64)> = traj_plus.points.iter()
+        .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
+        .map(|s| (s.pos.x, s.pos.y))
+        .collect();
+
+    let minus_points: Vec<(f64, f64)> = traj_minus.points.iter()
+        .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
+        .map(|s| (s.pos.x, s.pos.y))
+        .collect();
+
+    console_log!("After filtering: +{} pts, -{} pts", plus_points.len(), minus_points.len());
+
     let result = serde_json::json!({
-        "plus": convert_traj(&traj_plus),
-        "minus": convert_traj(&traj_minus),
+        "plus": {
+            "points": plus_points,
+            "stop_reason": format!("{:?}", traj_plus.stop_reason)
+        },
+        "minus": {
+            "points": minus_points,
+            "stop_reason": format!("{:?}", traj_minus.stop_reason)
+        },
         "fixed_point": { "x": x, "y": y },
         "eigenvalues": { "unstable": unstable_eigenvalue, "stable": stable_eigenvalue },
     });
-    
-    match serde_wasm_bindgen::to_value(&result) {
+
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    match result.serialize(&serializer) {
         Ok(v) => Ok(v),
         Err(e) => {
             console_error!("Serialization error: {:?}", e);
@@ -835,8 +867,9 @@ pub fn compute_manifold_js(
         "plus": convert_traj(&traj_plus),
         "minus": convert_traj(&traj_minus),
     });
-    
-    match serde_wasm_bindgen::to_value(&result) {
+
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    match result.serialize(&serializer) {
         Ok(v) => Ok(v),
         Err(e) => {
             console_error!("Serialization error: {:?}", e);
