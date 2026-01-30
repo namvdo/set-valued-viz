@@ -119,7 +119,7 @@ const ORBIT_COLORS = {
     periodicBlue: '#3498db'
 };
 
-const CombinedViz = () => {
+const SetValuedViz = () => {
     const canvasRef = useRef(null);
     const rendererRef = useRef(null);
     const sceneRef = useRef(null);
@@ -129,9 +129,10 @@ const CombinedViz = () => {
     const manifoldDebounceRef = useRef(null);
 
     const [mode, setMode] = useState('periodic'); // 'periodic' or 'manifold'
+    const [wasmModule, setWasmModule] = useState(null);
 
     const [params, setParams] = useState({
-        a: 1.12,      // Default from Python notebook
+        a: 0.4,
         b: 0.3,
         epsilon: 0.0625,
         startX: 0.1,
@@ -163,6 +164,26 @@ const CombinedViz = () => {
         period1: true, period2: true, period3: true,
         period4: true, period5: true, period6plus: false
     });
+
+    // Ulam method state
+    const [ulamState, setUlamState] = useState({
+        gridBoxes: [],
+        invariantMeasure: null,
+        leftEigenvector: null, // backward invariant measure
+        transitions: null, // array of {index, probability}
+        selectedBoxIndex: null,
+        currentBoxIndex: -1,
+        isComputing: false,
+        subdivisions: 20,
+        pointsPerBox: 64, // 8x8 grid per box
+        epsilon: 0.05, // epsilon ball radius for set-valued transitions
+        showUlamOverlay: false,
+        showTransitions: true,
+        showCurrentBox: true, // highlight box containing current trajectory point
+        needsRecompute: false // flag for auto-recompute
+    });
+
+    const ulamComputerRef = useRef(null);
 
     // Tooltip state for showing point info on hover/click
     const [tooltip, setTooltip] = useState({
@@ -230,6 +251,21 @@ const CombinedViz = () => {
         };
     }, []);
 
+    // Load WASM module once
+    useEffect(() => {
+        const loadWasm = async () => {
+            try {
+                const wasm = await import('../pkg/henon_periodic_orbits.js');
+                await wasm.default();
+                setWasmModule(wasm);
+                console.log('WASM module loaded successfully');
+            } catch (err) {
+                console.error('Failed to load WASM module:', err);
+            }
+        };
+        loadWasm();
+    }, []);
+
     const computeJacobian = useCallback((x, y) => {
         const a = params.a;
         const b = params.b;
@@ -251,6 +287,50 @@ const CombinedViz = () => {
 
         raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
 
+        // First check for Ulam box hover if overlay is visible
+        if (ulamState.showUlamOverlay && ulamState.gridBoxes.length > 0) {
+            const ulamMesh = sceneRef.current.getObjectByName('ulam-grid');
+            if (ulamMesh) {
+                const intersects = raycasterRef.current.intersectObject(ulamMesh);
+                if (intersects.length > 0 && intersects[0].instanceId !== undefined) {
+                    const boxIndex = intersects[0].instanceId;
+                    const box = ulamState.gridBoxes[boxIndex];
+                    const measure = ulamState.invariantMeasure ? ulamState.invariantMeasure[boxIndex] : 0;
+                    const maxMeasure = ulamState.invariantMeasure ? Math.max(...ulamState.invariantMeasure) : 1;
+
+                    // Get transition info if we have the computer reference
+                    let numTransitions = 0;
+                    let topTransitions = [];
+                    if (ulamComputerRef.current) {
+                        const trans = ulamComputerRef.current.get_transitions(boxIndex);
+                        if (trans && trans.length > 0) {
+                            numTransitions = trans.length;
+                            // Get top 3 transitions by probability
+                            topTransitions = trans.sort((a, b) => b.probability - a.probability).slice(0, 3);
+                        }
+                    }
+
+                    setTooltip({
+                        visible: true,
+                        x: event.clientX,
+                        y: event.clientY,
+                        data: {
+                            type: 'Ulam Box',
+                            boxIndex: boxIndex,
+                            pos: { x: box.center[0], y: box.center[1] },
+                            measure: measure,
+                            measurePercent: maxMeasure > 0 ? (measure / maxMeasure * 100) : 0,
+                            numTransitions: numTransitions,
+                            topTransitions: topTransitions,
+                            isCurrentBox: boxIndex === ulamState.currentBoxIndex
+                        }
+                    });
+                    return; 
+                }
+            }
+        }
+
+        // Check for periodic points / fixed points
         const meshes = [];
         sceneRef.current.traverse((obj) => {
             if (obj.isMesh && (obj.userData.type === 'orbit' || obj.userData.type === 'fixedPoint')) {
@@ -282,31 +362,78 @@ const CombinedViz = () => {
         } else {
             setTooltip(prev => prev.visible ? { ...prev, visible: false } : prev);
         }
-    }, [computeJacobian]);
+    }, [computeJacobian, ulamState.showUlamOverlay, ulamState.gridBoxes, ulamState.invariantMeasure, ulamState.currentBoxIndex]);
+
+
+
+    useEffect(() => {
+        if (!canvasRef.current || !sceneRef.current || !cameraRef.current) return;
+        const rect = canvasRef.current.getBoundingClientRect();
+    }, [handleMouseMove]);
+
+
+    // Handle Ulam interaction
+    const handleUlamClick = useCallback((index) => {
+        if (!ulamComputerRef.current) return;
+
+        const transitions = ulamComputerRef.current.get_transitions(index);
+        setUlamState(prev => ({
+            ...prev,
+            selectedBoxIndex: index,
+            transitions: transitions // array of {index, probability}
+        }));
+    }, []);
 
     useEffect(() => {
         const canvas = canvasRef.current;
         if (!canvas) return;
 
+        const handleClick = (event) => {
+            if (!ulamState.showUlamOverlay || !ulamState.gridBoxes.length) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+            raycasterRef.current.setFromCamera(new THREE.Vector2(x, y), cameraRef.current);
+
+            const scene = sceneRef.current;
+            const ulamMesh = scene.getObjectByName('ulam-grid');
+
+            if (ulamMesh) {
+                const intersects = raycasterRef.current.intersectObject(ulamMesh);
+                if (intersects.length > 0) {
+                    const instanceId = intersects[0].instanceId;
+                    if (instanceId !== undefined) {
+                        handleUlamClick(instanceId);
+                    }
+                } else {
+                    setUlamState(prev => ({ ...prev, selectedBoxIndex: null, transitions: null }));
+                }
+            }
+        };
+
         canvas.addEventListener('mousemove', handleMouseMove);
+        canvas.addEventListener('click', handleClick);
 
         return () => {
             canvas.removeEventListener('mousemove', handleMouseMove);
+            canvas.removeEventListener('click', handleClick);
         };
-    }, [handleMouseMove]);
+    }, [handleMouseMove, ulamState.showUlamOverlay, ulamState.gridBoxes.length, handleUlamClick]);
 
-    // Load WASM and compute periodic orbits when params change
+    // Compute periodic orbits when params change and WASM is ready
     useEffect(() => {
+        if (!wasmModule) return;
+
         let cancelled = false;
         setPeriodicState(prev => ({ ...prev, isReady: false, orbits: [], trajectoryPoints: [], iteration: 0, hasStarted: false, showOrbits: false }));
 
-        const initSystem = async () => {
+        const initSystem = () => {
             try {
-                const wasm = await import('../pkg/henon_periodic_orbits.js');
-                await wasm.default();
                 if (cancelled) return;
 
-                const system = new wasm.HenonSystemWasm(params.a, params.b, params.maxPeriod);
+                const system = new wasmModule.HenonSystemWasm(params.a, params.b, params.maxPeriod);
                 if (cancelled) { system.free(); return; }
 
                 const orbits = system.getPeriodicOrbits();
@@ -317,35 +444,31 @@ const CombinedViz = () => {
                     currentPoint: { x: params.startX, y: params.startY }
                 }));
             } catch (err) {
-                console.error('Failed to initialize WASM:', err);
+                console.error('Failed to compute periodic orbits:', err);
                 setPeriodicState(prev => ({ ...prev, isReady: true, orbits: [] }));
             }
         };
         initSystem();
         return () => { cancelled = true; };
-    }, [params.a, params.b, params.maxPeriod, params.startX, params.startY]);
+    }, [wasmModule, params.a, params.b, params.maxPeriod, params.startX, params.startY]);
 
-    // Compute manifolds when mode is 'manifold' using periodic orbits (debounced)
     useEffect(() => {
         if (mode !== 'manifold') return;
 
-        // Clear any pending computation
         if (manifoldDebounceRef.current) {
             clearTimeout(manifoldDebounceRef.current);
         }
 
         setManifoldState(prev => ({ ...prev, isComputing: true }));
 
-        manifoldDebounceRef.current = setTimeout(async () => {
+        manifoldDebounceRef.current = setTimeout(() => {
+            if (!wasmModule) return;
             try {
-                const wasm = await import('../pkg/henon_periodic_orbits.js');
-                await wasm.default();
-
                 // Use periodic orbits from the periodic state if available
                 // Otherwise fall back to the simple computation
                 if (periodicState.orbits && periodicState.orbits.length > 0) {
                     console.log('Using periodic orbits for manifold:', periodicState.orbits.length, 'orbits');
-                    const result = wasm.compute_manifold_from_orbits(
+                    const result = wasmModule.compute_manifold_from_orbits(
                         params.a,
                         params.b,
                         params.epsilon,
@@ -360,7 +483,7 @@ const CombinedViz = () => {
                     });
                 } else {
                     console.log('No periodic orbits available, using simple computation');
-                    const result = wasm.compute_manifold_simple(params.a, params.b, params.epsilon);
+                    const result = wasmModule.compute_manifold_simple(params.a, params.b, params.epsilon);
 
                     setManifoldState({
                         manifolds: result.manifolds || [],
@@ -380,7 +503,7 @@ const CombinedViz = () => {
                 clearTimeout(manifoldDebounceRef.current);
             }
         };
-    }, [mode, params.a, params.b, params.epsilon, periodicState.orbits]);
+    }, [mode, params.a, params.b, params.epsilon, periodicState.orbits, wasmModule]);
 
     useEffect(() => {
         if (!sceneRef.current) return;
@@ -480,8 +603,6 @@ const CombinedViz = () => {
                 });
             });
 
-            // Render fixed points with distinct colors and sizes
-            // Handle both capitalized ("Attractor") and lowercase ("stable") stability strings
             manifoldState.fixedPoints.forEach(fp => {
                 const stabLower = (fp.stability || '').toLowerCase();
                 const isAttractor = stabLower === 'attractor' || stabLower === 'stable';
@@ -574,6 +695,7 @@ const CombinedViz = () => {
         setPeriodicState(prev => ({ ...prev, currentPoint: { x: params.startX, y: params.startY }, trajectoryPoints: [], iteration: 0, isRunning: false, hasStarted: false, showOrbits: false }));
     }, [params.startX, params.startY]);
 
+
     const totalManifoldPoints = useMemo(() => {
         let count = 0;
         manifoldState.manifolds.forEach(m => {
@@ -582,6 +704,228 @@ const CombinedViz = () => {
         });
         return count;
     }, [manifoldState.manifolds]);
+
+    const computeUlam = useCallback(async () => {
+        if (!wasmModule) return;
+        setUlamState(prev => ({ ...prev, isComputing: true, needsRecompute: false }));
+        try {
+            const { UlamComputer } = wasmModule;
+            if (!UlamComputer) {
+                console.error('UlamComputer export is missing from WASM module!');
+                throw new Error('UlamComputer definition missing');
+            }
+
+            const computer = new UlamComputer(
+                params.a,
+                params.b,
+                ulamState.subdivisions,
+                ulamState.pointsPerBox,
+                ulamState.epsilon
+            );
+
+            ulamComputerRef.current = computer;
+            const boxes = computer.get_grid_boxes();
+            const invariantMeasure = computer.get_invariant_measure();
+            const leftEigenvector = computer.get_left_eigenvector();
+
+            // Get current box if we have a trajectory
+            let currentBoxIndex = -1;
+            if (periodicState.hasStarted && periodicState.currentPoint) {
+                currentBoxIndex = computer.get_box_index(
+                    periodicState.currentPoint.x,
+                    periodicState.currentPoint.y
+                );
+            }
+
+            setUlamState(prev => ({
+                ...prev,
+                isComputing: false,
+                gridBoxes: boxes,
+                invariantMeasure: invariantMeasure,
+                leftEigenvector: leftEigenvector,
+                currentBoxIndex: currentBoxIndex,
+                selectedBoxIndex: null,
+                transitions: null
+            }));
+
+        } catch (err) {
+            console.error("Ulam computation failed:", err);
+            setUlamState(prev => ({ ...prev, isComputing: false }));
+        }
+    }, [wasmModule, params.a, params.b, ulamState.subdivisions, ulamState.pointsPerBox, ulamState.epsilon, periodicState.hasStarted, periodicState.currentPoint]);
+
+    // Auto-compute Ulam when overlay is enabled and we have no grid yet
+    useEffect(() => {
+        if (ulamState.showUlamOverlay && wasmModule && ulamState.gridBoxes.length === 0 && !ulamState.isComputing) {
+            computeUlam();
+        }
+    }, [ulamState.showUlamOverlay, wasmModule, ulamState.gridBoxes.length, ulamState.isComputing, computeUlam]);
+
+    // Update current box index when trajectory point changes
+    useEffect(() => {
+        if (!ulamComputerRef.current || !ulamState.showUlamOverlay) return;
+
+        if (periodicState.hasStarted && periodicState.currentPoint) {
+            const boxIdx = ulamComputerRef.current.get_box_index(
+                periodicState.currentPoint.x,
+                periodicState.currentPoint.y
+            );
+
+            if (boxIdx !== ulamState.currentBoxIndex) {
+                // Also get transitions from current box
+                const transitions = boxIdx >= 0 ? ulamComputerRef.current.get_transitions(boxIdx) : null;
+                setUlamState(prev => ({
+                    ...prev,
+                    currentBoxIndex: boxIdx,
+                    // If showing current box, update transitions to show from current position
+                    transitions: prev.showCurrentBox ? transitions : prev.transitions,
+                    selectedBoxIndex: prev.showCurrentBox ? boxIdx : prev.selectedBoxIndex
+                }));
+            }
+        }
+    }, [periodicState.currentPoint, periodicState.hasStarted, ulamState.showUlamOverlay, ulamState.currentBoxIndex]);
+
+
+    useEffect(() => {
+        const scene = sceneRef.current;
+        if (!scene) return;
+
+        const cleanup = () => {
+            const oldMesh = scene.getObjectByName('ulam-grid');
+            if (oldMesh) {
+                oldMesh.geometry.dispose();
+                oldMesh.material.dispose();
+                scene.remove(oldMesh);
+            }
+        };
+
+        if (!ulamState.showUlamOverlay || !ulamState.gridBoxes.length) {
+            cleanup();
+            return;
+        }
+
+        cleanup();
+
+        const boxes = ulamState.gridBoxes;
+        const count = boxes.length;
+        const geometry = new THREE.PlaneGeometry(1, 1);
+        const material = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.5, // Base opacity, vertex colors will modulate
+            side: THREE.DoubleSide,
+            depthWrite: false // Good for overlays
+        });
+
+        const mesh = new THREE.InstancedMesh(geometry, material, count);
+        mesh.name = 'ulam-grid';
+        mesh.userData.type = 'ulamGrid';
+
+        const dummy = new THREE.Object3D();
+        const color = new THREE.Color();
+
+        // Build map of transitions for fast lookup if selected
+        const transitionMap = new Map();
+        if (ulamState.selectedBoxIndex !== null && ulamState.transitions) {
+            ulamState.transitions.forEach(t => {
+                transitionMap.set(t.index, t.probability);
+            });
+        }
+
+        let maxMeasure = 0;
+        if (ulamState.invariantMeasure) {
+            maxMeasure = Math.max(...ulamState.invariantMeasure);
+        }
+
+        boxes.forEach((box, i) => {
+            const cx = box.center[0];
+            const cy = box.center[1];
+            const rx = box.radius[0];
+            const ry = box.radius[1];
+
+            dummy.position.set(cx, cy, -0.05); // Slightly behind orbits
+            dummy.scale.set(rx * 2 * 0.95, ry * 2 * 0.95, 1);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(i, dummy.matrix);
+
+            // Coloring logic - Priority: Current Box > Selected Box > Transitions > Invariant Measure
+            const isCurrentBox = ulamState.showCurrentBox && i === ulamState.currentBoxIndex;
+            const isSelectedBox = ulamState.selectedBoxIndex !== null && i === ulamState.selectedBoxIndex;
+
+            if (isCurrentBox && !isSelectedBox) {
+                // Current trajectory position box - bright magenta
+                color.setHex(0xff00ff);
+                mesh.setColorAt(i, color);
+            } else if (ulamState.selectedBoxIndex !== null) {
+                // Interaction mode: Show transitions from selected box
+                if (i === ulamState.selectedBoxIndex) {
+                    color.setHex(0x00ffff); // Cyan for source
+                    mesh.setColorAt(i, color);
+                } else if (transitionMap.has(i)) {
+                    const prob = transitionMap.get(i);
+                    // Heatmap: Blue (low) -> Red (high)
+                    color.setHSL(0.7 - prob * 0.7, 1.0, 0.5);
+                    mesh.setColorAt(i, color);
+                } else {
+                    // Dim unrelated boxes
+                    color.setHex(0x222222);
+                    mesh.setColorAt(i, color);
+                }
+            } else if (ulamState.invariantMeasure && ulamState.invariantMeasure.length === count) {
+                // Invariant Measure mode
+                const measure = ulamState.invariantMeasure[i];
+                if (measure > 0) {
+                    // Log scale often looks better for measures
+                    const intensity = measure / maxMeasure;
+                    // Viridis-like or simple Heatmap: Dark Blue -> Green -> Yellow
+                    // HSL: 0.66 (Blue) -> 0.16 (Yellow)
+                    const h = 0.66 - (intensity * 0.5);
+                    color.setHSL(h, 1.0, 0.5);
+                    mesh.setColorAt(i, color);
+                } else {
+                    color.setHex(0x111111);
+                    mesh.setColorAt(i, color);
+                }
+            } else {
+                color.setHex(0x333333);
+                mesh.setColorAt(i, color);
+            }
+        });
+
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+
+        scene.add(mesh);
+
+        return cleanup;
+    }, [ulamState.showUlamOverlay, ulamState.gridBoxes, ulamState.selectedBoxIndex, ulamState.transitions, ulamState.invariantMeasure, ulamState.currentBoxIndex, ulamState.showCurrentBox]);
+
+    useEffect(() => {
+        if (!sceneRef.current) return;
+        const scene = sceneRef.current;
+
+        const toRemove = [];
+        scene.traverse(child => {
+            if (mode !== 'periodic' && (child.userData.type === 'orbit' || child.userData.type === 'trajectory' || child.userData.type === 'orbitLine')) {
+                toRemove.push(child);
+            }
+            if (mode !== 'manifold' && (child.userData.type === 'manifold' || child.userData.type === 'fixedPoint')) {
+                toRemove.push(child);
+            }
+            if (mode !== 'ulam' && child.userData.type === 'ulamGrid') {
+                // Do NOT remove ulamGrid based on mode. Remove only if !showUlamOverlay (handled in ulam render effect)
+                // So we remove this check.
+            }
+        });
+
+        toRemove.forEach(obj => {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) obj.material.dispose();
+            scene.remove(obj);
+        });
+    }, [mode]);
+
+
 
     return (
         <div style={styles.container}>
@@ -643,6 +987,100 @@ const CombinedViz = () => {
                                 style={styles.slider} />
                         </label>
                     )}
+
+                    {/* Ulam Settings Section */}
+                    <div style={{ marginTop: '16px', borderTop: '1px solid #333', paddingTop: '16px' }}>
+                        <label style={styles.checkboxLabel}>
+                            <input type="checkbox" checked={ulamState.showUlamOverlay}
+                                onChange={(e) => setUlamState({ ...ulamState, showUlamOverlay: e.target.checked })} />
+                            Show Ulam Grid
+                        </label>
+
+                        {ulamState.showUlamOverlay && (
+                            <>
+                                <label style={styles.checkboxLabel}>
+                                    <input type="checkbox" checked={ulamState.showTransitions}
+                                        onChange={(e) => setUlamState({ ...ulamState, showTransitions: e.target.checked })} />
+                                    Show Transitions
+                                </label>
+                                {mode === 'periodic' && (
+                                    <label style={styles.checkboxLabel}>
+                                        <input type="checkbox" checked={ulamState.showCurrentBox}
+                                            onChange={(e) => setUlamState({ ...ulamState, showCurrentBox: e.target.checked })} />
+                                        Track Current Position
+                                    </label>
+                                )}
+
+                                <label style={styles.label}>
+                                    <div style={styles.paramRow}>
+                                        <span>Epsilon (ε) =</span>
+                                        <input type="number" step="0.01" min="0.001" max="0.5" value={ulamState.epsilon}
+                                            onChange={(e) => setUlamState({ ...ulamState, epsilon: parseFloat(e.target.value) || 0.05 })}
+                                            style={styles.numberInput} disabled={ulamState.isComputing} />
+                                    </div>
+                                    <input type="range" min="0.01" max="0.3" step="0.01" value={ulamState.epsilon}
+                                        onChange={(e) => setUlamState({ ...ulamState, epsilon: parseFloat(e.target.value) })}
+                                        style={styles.slider} disabled={ulamState.isComputing} />
+                                    <span style={{ fontSize: '10px', color: '#666' }}>Ball radius for boundary detection</span>
+                                </label>
+
+                                <label style={styles.label}>
+                                    <div style={styles.paramRow}>
+                                        <span>Grid =</span>
+                                        <input type="number" step="1" min="10" max="80" value={ulamState.subdivisions}
+                                            onChange={(e) => setUlamState({ ...ulamState, subdivisions: parseInt(e.target.value) || 10 })}
+                                            style={styles.numberInput} disabled={ulamState.isComputing} />
+                                    </div>
+                                    <input type="range" min="10" max="60" step="5" value={ulamState.subdivisions}
+                                        onChange={(e) => setUlamState({ ...ulamState, subdivisions: parseInt(e.target.value) })}
+                                        style={styles.slider} disabled={ulamState.isComputing} />
+                                </label>
+                                <label style={styles.label}>
+                                    <div style={styles.paramRow}>
+                                        <span>Samples =</span>
+                                        <input type="number" step="16" min="16" max="256" value={ulamState.pointsPerBox}
+                                            onChange={(e) => setUlamState({ ...ulamState, pointsPerBox: parseInt(e.target.value) || 64 })}
+                                            style={styles.numberInput} disabled={ulamState.isComputing} />
+                                    </div>
+                                    <input type="range" min="16" max="256" step="16" value={ulamState.pointsPerBox}
+                                        onChange={(e) => setUlamState({ ...ulamState, pointsPerBox: parseInt(e.target.value) })}
+                                        style={styles.slider} disabled={ulamState.isComputing} />
+                                    <span style={{ fontSize: '10px', color: '#666' }}>Points per box (√n × √n grid)</span>
+                                </label>
+                                <button onClick={computeUlam} disabled={ulamState.isComputing} style={styles.button}>
+                                    {ulamState.isComputing ? 'Computing...' : 'Recompute Ulam Grid'}
+                                </button>
+
+                                {ulamState.gridBoxes.length > 0 && (
+                                    <div style={{ marginTop: '12px', padding: '8px', background: '#0f0f0f', borderRadius: '4px' }}>
+                                        <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '6px' }}>
+                                            Invariant Measure
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                            <span style={{ fontSize: '10px', color: '#666' }}>Low</span>
+                                            <div style={{
+                                                flex: 1,
+                                                height: '12px',
+                                                borderRadius: '2px',
+                                                background: 'linear-gradient(to right, hsl(238, 100%, 50%), hsl(180, 100%, 50%), hsl(100, 100%, 50%), hsl(60, 100%, 50%))'
+                                            }} />
+                                            <span style={{ fontSize: '10px', color: '#666' }}>High</span>
+                                        </div>
+                                        <div style={{ fontSize: '9px', color: '#555', marginTop: '4px' }}>
+                                            Probability of trajectory visiting each region
+                                        </div>
+                                    </div>
+                                )}
+
+                                {ulamState.currentBoxIndex >= 0 && (
+                                    <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                                        Current box: {ulamState.currentBoxIndex}
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+
                     {mode === 'periodic' && (
                         <>
                             <label style={styles.label}>
@@ -761,55 +1199,95 @@ const CombinedViz = () => {
                         padding: '12px',
                         zIndex: 1000,
                         pointerEvents: 'none',
-                        minWidth: '200px',
-                        maxWidth: '300px',
+                        minWidth: '180px',
+                        maxWidth: '280px',
                         boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
                         fontSize: '12px',
                         fontFamily: 'monospace'
                     }}>
                         <div style={{ fontWeight: 'bold', color: '#fff', marginBottom: '8px', borderBottom: '1px solid #444', paddingBottom: '4px' }}>
                             {tooltip.data.type}
+                            {tooltip.data.isCurrentBox && <span style={{ color: '#ff00ff', marginLeft: '8px' }}>● Current</span>}
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
-                            <span style={{ color: '#888' }}>Position:</span>
-                            <span style={{ color: '#00ccff' }}>
-                                ({tooltip.data.pos.x.toFixed(4)}, {tooltip.data.pos.y.toFixed(4)})
-                            </span>
 
-                            <span style={{ color: '#888' }}>Stability:</span>
-                            <span style={{
-                                color: (tooltip.data.stability?.toLowerCase() === 'attractor' || tooltip.data.stability?.toLowerCase() === 'stable') ? '#27ae60' :
-                                    (tooltip.data.stability?.toLowerCase() === 'repeller' || tooltip.data.stability?.toLowerCase() === 'unstable') ? '#e74c3c' : '#e74c3c'
-                            }}>
-                                {tooltip.data.stability || 'Unknown'}
-                            </span>
+                        {/* Ulam Box Tooltip */}
+                        {tooltip.data.type === 'Ulam Box' ? (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '6px 12px' }}>
+                                <span style={{ color: '#888' }}>Box #:</span>
+                                <span style={{ color: '#00ccff' }}>{tooltip.data.boxIndex}</span>
 
-                            <span style={{ color: '#888' }}>Period:</span>
-                            <span style={{ color: '#ddd' }}>{tooltip.data.period}</span>
+                                <span style={{ color: '#888' }}>Center:</span>
+                                <span style={{ color: '#ddd' }}>
+                                    ({tooltip.data.pos.x.toFixed(2)}, {tooltip.data.pos.y.toFixed(2)})
+                                </span>
 
-                            {tooltip.data.jacobian && (
-                                <>
-                                    <span style={{ color: '#888' }}>Jacobian:</span>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', background: '#333', padding: '4px', borderRadius: '2px' }}>
-                                        <span>{tooltip.data.jacobian.j11?.toFixed(3)}</span>
-                                        <span>{tooltip.data.jacobian.j12?.toFixed(3)}</span>
-                                        <span>{tooltip.data.jacobian.j21?.toFixed(3)}</span>
-                                        <span>{tooltip.data.jacobian.j22?.toFixed(3)}</span>
-                                    </div>
-
-                                    <span style={{ color: '#888' }}>Det/Trace:</span>
-                                    <span style={{ color: '#ddd' }}>
-                                        D={tooltip.data.jacobian.det?.toFixed(3)}, Tr={tooltip.data.jacobian.trace?.toFixed(3)}
+                                <span style={{ color: '#888' }}>Measure:</span>
+                                <span style={{ color: '#4CAF50' }}>
+                                    {(tooltip.data.measure * 100).toFixed(2)}%
+                                    <span style={{ color: '#666', marginLeft: '4px' }}>
+                                        ({tooltip.data.measurePercent.toFixed(0)}% of max)
                                     </span>
-                                </>
-                            )}
-                        </div>
+                                </span>
+
+                                <span style={{ color: '#888' }}>Transitions:</span>
+                                <span style={{ color: '#ddd' }}>{tooltip.data.numTransitions} boxes</span>
+
+                                {tooltip.data.topTransitions && tooltip.data.topTransitions.length > 0 && (
+                                    <>
+                                        <span style={{ color: '#888' }}>Top targets:</span>
+                                        <div style={{ fontSize: '10px' }}>
+                                            {tooltip.data.topTransitions.map((t, i) => (
+                                                <div key={i} style={{ color: '#ff9800' }}>
+                                                    → Box {t.index}: {(t.probability * 100).toFixed(1)}%
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        ) : (
+                            /* Periodic/Fixed Point Tooltip */
+                            <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '8px 16px' }}>
+                                <span style={{ color: '#888' }}>Position:</span>
+                                <span style={{ color: '#00ccff' }}>
+                                    ({tooltip.data.pos.x.toFixed(4)}, {tooltip.data.pos.y.toFixed(4)})
+                                </span>
+
+                                <span style={{ color: '#888' }}>Stability:</span>
+                                <span style={{
+                                    color: (tooltip.data.stability?.toLowerCase() === 'attractor' || tooltip.data.stability?.toLowerCase() === 'stable') ? '#27ae60' :
+                                        (tooltip.data.stability?.toLowerCase() === 'repeller' || tooltip.data.stability?.toLowerCase() === 'unstable') ? '#e74c3c' : '#e74c3c'
+                                }}>
+                                    {tooltip.data.stability || 'Unknown'}
+                                </span>
+
+                                <span style={{ color: '#888' }}>Period:</span>
+                                <span style={{ color: '#ddd' }}>{tooltip.data.period}</span>
+
+                                {tooltip.data.jacobian && (
+                                    <>
+                                        <span style={{ color: '#888' }}>Jacobian:</span>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', background: '#333', padding: '4px', borderRadius: '2px' }}>
+                                            <span>{tooltip.data.jacobian.j11?.toFixed(3)}</span>
+                                            <span>{tooltip.data.jacobian.j12?.toFixed(3)}</span>
+                                            <span>{tooltip.data.jacobian.j21?.toFixed(3)}</span>
+                                            <span>{tooltip.data.jacobian.j22?.toFixed(3)}</span>
+                                        </div>
+
+                                        <span style={{ color: '#888' }}>Det/Trace:</span>
+                                        <span style={{ color: '#ddd' }}>
+                                            D={tooltip.data.jacobian.det?.toFixed(3)}, Tr={tooltip.data.jacobian.trace?.toFixed(3)}
+                                        </span>
+                                    </>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
         </div>
     );
-};
+}
 
 const styles = {
     container: { display: 'flex', height: '100vh', width: '100vw', backgroundColor: '#0a0a0a', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#e0e0e0', overflow: 'hidden' },
@@ -835,4 +1313,4 @@ const styles = {
     canvas: { display: 'block' }
 };
 
-export default CombinedViz;
+export default SetValuedViz;
