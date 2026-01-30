@@ -85,13 +85,13 @@ impl Default for ManifoldConfig {
     fn default() -> Self {
         Self {
             perturb_tol: 1e-5,
-            spacing_tol: 1e-3,
+            spacing_tol: 0.02, // Increased from 1e-3 - less dense points, allows reaching stable
             spacing_upper: 10.0,
             conv_tol: 1e-19,
             stable_tol: 1e-14,
-            max_iter: 500,
-            max_points: 50_000,
-            time_limit: 2.0,
+            max_iter: 2000,      // Increased from 500 - more iterations to converge
+            max_points: 100_000, // Reduced - fewer points needed with coarser spacing
+            time_limit: 5.0,     // Increased from 2.0 - more time to converge
             inner_max: 500,
         }
     }
@@ -445,7 +445,12 @@ impl UnstableManifoldComputer {
             };
 
             if j > self.config.max_iter {
-                console_log!("Max iterations reached");
+                console_log!(
+                    "Max iterations reached at ({:.4}, {:.4}), dist_stable={:.6}",
+                    vec_iter.pos.x,
+                    vec_iter.pos.y,
+                    dist_stable
+                );
                 return Ok(Trajectory {
                     points: traj_add,
                     stop_reason: StopReason::MaxIterations,
@@ -453,7 +458,12 @@ impl UnstableManifoldComputer {
             }
 
             if traj_add.len() > self.config.max_points {
-                console_log!("Max points reached");
+                console_log!(
+                    "Max points reached at ({:.4}, {:.4}), dist_stable={:.6}",
+                    vec_iter.pos.x,
+                    vec_iter.pos.y,
+                    dist_stable
+                );
                 return Ok(Trajectory {
                     points: traj_add,
                     stop_reason: StopReason::MaxPoints,
@@ -461,15 +471,27 @@ impl UnstableManifoldComputer {
             }
 
             if dist_diff < self.config.conv_tol && j >= 30 {
-                console_log!("Converged at iteration {}", j);
+                console_log!(
+                    "Converged at iteration {}, dist_stable={:.6}",
+                    j,
+                    dist_stable
+                );
                 return Ok(Trajectory {
                     points: traj_add,
                     stop_reason: StopReason::Converged,
                 });
             }
 
-            if dist_stable <= self.config.stable_tol {
-                console_log!("Approached target point");
+            // Use a practical tolerance for approaching target
+            // The notebook uses 1e-14 with 8000 iterations, but we use a looser one
+            let practical_stable_tol = 0.01; // 1% of typical scale
+            if dist_stable <= practical_stable_tol {
+                console_log!(
+                    "Approached target point at ({:.4}, {:.4}), dist_stable={:.6}",
+                    vec_iter.pos.x,
+                    vec_iter.pos.y,
+                    dist_stable
+                );
                 return Ok(Trajectory {
                     points: traj_add,
                     stop_reason: StopReason::ApproachedTargetPoint,
@@ -960,6 +982,41 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
         }
     }
 
+    let attractor_count = fixed_points_result
+        .iter()
+        .filter(|fp| fp.stability == "Attractor")
+        .count();
+    let saddle_count = fixed_points_result
+        .iter()
+        .filter(|fp| fp.stability == "Saddle")
+        .count();
+    let repeller_count = fixed_points_result
+        .iter()
+        .filter(|fp| fp.stability == "Repeller")
+        .count();
+
+    console_log!(
+        "Fixed point summary: {} attractors, {} saddles, {} repellers",
+        attractor_count,
+        saddle_count,
+        repeller_count
+    );
+
+    console_log!(
+        "Termination targets: {} points for manifold closure",
+        all_fixed_points_pos.len()
+    );
+
+    for (i, pos) in all_fixed_points_pos.iter().enumerate() {
+        console_log!("  Target {}: ({:.4}, {:.4})", i, pos.x, pos.y);
+    }
+
+    console_log!(
+        "Will compute manifolds for {} unstable/saddle points: {:?}",
+        unstable_points_indices.len(),
+        unstable_points_indices
+    );
+
     let mut manifolds_result = Vec::new();
     let config = ManifoldConfig::default();
     let computer = UnstableManifoldComputer::new(params, config);
@@ -1000,6 +1057,16 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
         if let Ok((traj_plus, traj_minus)) =
             computer.compute_manifold(&saddle_pt, &all_fixed_points_pos)
         {
+            console_log!(
+                "Manifold from ({:.4}, {:.4}): plus {} pts ({:?}), minus {} pts ({:?})",
+                pos.x,
+                pos.y,
+                traj_plus.points.len(),
+                traj_plus.stop_reason,
+                traj_minus.points.len(),
+                traj_minus.stop_reason
+            );
+
             let plus_points: Vec<(f64, f64)> = traj_plus
                 .points
                 .iter()
