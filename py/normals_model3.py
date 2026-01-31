@@ -317,7 +317,7 @@ class Model(ModelBase):
     def _decrease_precision_3D(self, removal_set):
         if not removal_set: return False
         # remove too dense points
-        print("removing", len(removal_set))
+##        print("removing", len(removal_set))
         remove_mask = np.zeros(len(self.points), dtype=np.bool_)
         for i in removal_set: remove_mask[i] = True
         self.points = self.points[~remove_mask]
@@ -332,7 +332,7 @@ class Model(ModelBase):
         # create extra points to fill the model using previous step's points
         
         if not triangles: return False
-        print("adding", len(triangles))
+##        print("adding", len(triangles))
         
         # translate triangle indexes to points
         triangles = np.array(triangles, dtype=np.int32)
@@ -357,9 +357,9 @@ class Model(ModelBase):
         self.normals = np.append(self.normals, more_normals, axis=0)
         #
         
-        if self.points.shape[0]>10000:
-            print("points", self.points.shape)
-            raise Exception("TOO MANY POINTS")
+##        if self.points.shape[0]>10000:
+##            print("points", self.points.shape)
+##            raise Exception("TOO MANY POINTS")
         
         # unlike 2D, no need to sort points
         return True
@@ -425,7 +425,7 @@ if __name__ == "__main__":
 ##    model.update_function(x="1-a*x*x+y", y="b*x")
 ##    model.update_function(x="cos(x+a)", y="cos(y+b*z)", z="x")
 ##    model.update_function(x="cos(y)**2+sin(z)*y", y="x", z="z")
-    model.update_function(x="x", y="y", z="z")
+    model.update_function(x="x/2", y="y/3+cos(x)**2", z="z/2")
     model.epsilon = 1.
     model.update_constants(a=0.8, b=0.3)
     model.point_density = 20
