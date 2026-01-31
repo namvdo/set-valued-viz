@@ -183,21 +183,32 @@ const SetValuedViz = () => {
         needsRecompute: false // flag for auto-recompute
     });
 
+    // Parameter animation state for manifold mode
+    const [animationState, setAnimationState] = useState({
+        isAnimating: false,
+        parameter: 'a', // 'a', 'b', or 'epsilon'
+        rangeValue: 0.1, // the range amount (e.g., 0.1 means go from current to current+0.1 or current-0.1)
+        direction: 1, // +1 for positive direction, -1 for negative direction
+        steps: 10, // number of steps to divide the range
+        currentStep: 0, // current step in the animation
+        baseValue: null, // the original value when animation started
+        targetValue: null // the target value at the end of animation
+    });
+
+    const animationIntervalRef = useRef(null);
+
     const ulamComputerRef = useRef(null);
 
-    // Tooltip state for showing point info on hover/click
     const [tooltip, setTooltip] = useState({
         visible: false,
         x: 0,
         y: 0,
-        data: null // { type, period, pos, stability, eigenvalues, jacobian }
+        data: null 
     });
 
-    // Raycaster for point picking
     const raycasterRef = useRef(new THREE.Raycaster());
     const mouseRef = useRef(new THREE.Vector2());
 
-    // Three.js setup
     useEffect(() => {
         if (!canvasRef.current) return;
 
@@ -325,7 +336,7 @@ const SetValuedViz = () => {
                             isCurrentBox: boxIndex === ulamState.currentBoxIndex
                         }
                     });
-                    return; 
+                    return;
                 }
             }
         }
@@ -504,6 +515,63 @@ const SetValuedViz = () => {
             }
         };
     }, [mode, params.a, params.b, params.epsilon, periodicState.orbits, wasmModule]);
+
+    // Sequential animation - advance to next step only when manifold computation completes
+    useEffect(() => {
+        if (!animationState.isAnimating || mode !== 'manifold') {
+            return;
+        }
+
+        // Only advance when manifold is ready (not computing)
+        if (manifoldState.isComputing) {
+            return;
+        }
+
+        const { parameter, rangeValue, direction, steps, currentStep, baseValue } = animationState;
+
+        // Check if we've completed all steps
+        if (currentStep >= steps) {
+            // Animation complete
+            setAnimationState(prev => ({
+                ...prev,
+                isAnimating: false
+            }));
+            return;
+        }
+
+        // Calculate the next value
+        const stepSize = rangeValue / steps;
+        const nextStep = currentStep + 1;
+        const nextValue = baseValue + (direction * stepSize * nextStep);
+
+        // Update the parameter and advance step
+        setParams(p => ({ ...p, [parameter]: parseFloat(nextValue.toFixed(4)) }));
+        setAnimationState(prev => ({
+            ...prev,
+            currentStep: nextStep
+        }));
+
+    }, [animationState.isAnimating, animationState.currentStep, manifoldState.isComputing, mode]);
+
+    const startAnimation = useCallback(() => {
+        const baseVal = params[animationState.parameter];
+        const targetVal = baseVal + (animationState.direction * animationState.rangeValue);
+        setAnimationState(prev => ({
+            ...prev,
+            isAnimating: true,
+            baseValue: baseVal,
+            targetValue: targetVal,
+            currentStep: 0
+        }));
+    }, [params, animationState.parameter, animationState.direction, animationState.rangeValue]);
+
+    const stopAnimation = useCallback(() => {
+        setAnimationState(prev => ({
+            ...prev,
+            isAnimating: false,
+            currentStep: 0
+        }));
+    }, []);
 
     useEffect(() => {
         if (!sceneRef.current) return;
@@ -986,6 +1054,155 @@ const SetValuedViz = () => {
                                 onChange={(e) => setParams({ ...params, epsilon: parseFloat(e.target.value) })}
                                 style={styles.slider} />
                         </label>
+                    )}
+
+                    {/* Parameter Animation Section (manifold mode only) */}
+                    {mode === 'manifold' && (
+                        <div style={{ marginTop: '16px', borderTop: '1px solid #333', paddingTop: '16px' }}>
+                            <h4 style={{ fontSize: '12px', fontWeight: '600', marginBottom: '12px', color: '#888' }}>Parameter Animation</h4>
+
+                            <label style={styles.label}>
+                                <div style={styles.paramRow}>
+                                    <span>Animate:</span>
+                                    <select
+                                        value={animationState.parameter}
+                                        onChange={(e) => setAnimationState(prev => ({ ...prev, parameter: e.target.value }))}
+                                        style={{ ...styles.numberInput, width: '100px' }}
+                                        disabled={animationState.isAnimating}
+                                    >
+                                        <option value="a">a</option>
+                                        <option value="b">b</option>
+                                        <option value="epsilon">epsilon</option>
+                                    </select>
+                                </div>
+                            </label>
+
+                            <label style={styles.label}>
+                                <div style={styles.paramRow}>
+                                    <span>Direction:</span>
+                                    <div style={{ display: 'flex', gap: '4px' }}>
+                                        <button
+                                            onClick={() => setAnimationState(prev => ({ ...prev, direction: -1 }))}
+                                            style={{
+                                                ...styles.button,
+                                                width: '40px',
+                                                padding: '4px',
+                                                marginBottom: 0,
+                                                backgroundColor: animationState.direction === -1 ? '#3d5afe' : '#2d2d2d'
+                                            }}
+                                            disabled={animationState.isAnimating}
+                                        >−</button>
+                                        <button
+                                            onClick={() => setAnimationState(prev => ({ ...prev, direction: 1 }))}
+                                            style={{
+                                                ...styles.button,
+                                                width: '40px',
+                                                padding: '4px',
+                                                marginBottom: 0,
+                                                backgroundColor: animationState.direction === 1 ? '#3d5afe' : '#2d2d2d'
+                                            }}
+                                            disabled={animationState.isAnimating}
+                                        >+</button>
+                                    </div>
+                                </div>
+                            </label>
+
+                            <label style={styles.label}>
+                                <div style={styles.paramRow}>
+                                    <span>Range:</span>
+                                    <input
+                                        type="number"
+                                        step="0.05"
+                                        min="0.01"
+                                        max="1.0"
+                                        value={animationState.rangeValue}
+                                        onChange={(e) => setAnimationState(prev => ({ ...prev, rangeValue: parseFloat(e.target.value) || 0.1 }))}
+                                        style={styles.numberInput}
+                                        disabled={animationState.isAnimating}
+                                    />
+                                </div>
+                                <input
+                                    type="range"
+                                    min="0.01"
+                                    max="0.5"
+                                    step="0.01"
+                                    value={animationState.rangeValue}
+                                    onChange={(e) => setAnimationState(prev => ({ ...prev, rangeValue: parseFloat(e.target.value) }))}
+                                    style={styles.slider}
+                                    disabled={animationState.isAnimating}
+                                />
+                            </label>
+
+                            <label style={styles.label}>
+                                <div style={styles.paramRow}>
+                                    <span>Steps:</span>
+                                    <input
+                                        type="number"
+                                        step="1"
+                                        min="5"
+                                        max="30"
+                                        value={animationState.steps}
+                                        onChange={(e) => setAnimationState(prev => ({ ...prev, steps: parseInt(e.target.value) || 10 }))}
+                                        style={styles.numberInput}
+                                        disabled={animationState.isAnimating}
+                                    />
+                                </div>
+                                <input
+                                    type="range"
+                                    min="5"
+                                    max="30"
+                                    step="1"
+                                    value={animationState.steps}
+                                    onChange={(e) => setAnimationState(prev => ({ ...prev, steps: parseInt(e.target.value) }))}
+                                    style={styles.slider}
+                                    disabled={animationState.isAnimating}
+                                />
+                            </label>
+
+                            <button
+                                onClick={animationState.isAnimating ? stopAnimation : startAnimation}
+                                disabled={manifoldState.isComputing && !animationState.isAnimating}
+                                style={{
+                                    ...styles.button,
+                                    backgroundColor: animationState.isAnimating ? '#8b0000' : '#1a4a1a',
+                                    borderColor: animationState.isAnimating ? '#b22222' : '#2a6a2a'
+                                }}
+                            >
+                                {animationState.isAnimating ? '⏹ Stop' : '▶ Play'}
+                            </button>
+
+                            {animationState.isAnimating && (
+                                <div style={{ marginTop: '8px', padding: '8px', background: '#0f0f0f', borderRadius: '4px' }}>
+                                    <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px' }}>
+                                        {animationState.parameter}: {animationState.baseValue?.toFixed(3)} → {animationState.targetValue?.toFixed(3)}
+                                    </div>
+                                    <div style={{ fontSize: '11px', color: '#888' }}>
+                                        Current: <span style={{ color: '#4CAF50', fontWeight: 'bold' }}>
+                                            {params[animationState.parameter].toFixed(4)}
+                                        </span>
+                                    </div>
+                                    <div style={{ fontSize: '10px', color: '#555', marginTop: '4px' }}>
+                                        Step {animationState.currentStep} / {animationState.steps}
+                                        {manifoldState.isComputing && <span style={{ color: '#ff9800', marginLeft: '8px' }}>Computing...</span>}
+                                    </div>
+                                    {/* Progress bar */}
+                                    <div style={{
+                                        marginTop: '6px',
+                                        height: '4px',
+                                        backgroundColor: '#333',
+                                        borderRadius: '2px',
+                                        overflow: 'hidden'
+                                    }}>
+                                        <div style={{
+                                            width: `${(animationState.currentStep / animationState.steps) * 100}%`,
+                                            height: '100%',
+                                            backgroundColor: '#4CAF50',
+                                            transition: 'width 0.3s ease'
+                                        }} />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     )}
 
                     {/* Ulam Settings Section */}
