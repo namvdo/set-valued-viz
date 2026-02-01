@@ -13,28 +13,10 @@ Rather than tracking every possible point within the noise ball $B_\epsilon(f(x)
 
 
 
-## Visualization tool
-## Features
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| **Algorithm 1 Implementation** | ✅ Done | Core boundary tracking with normal vector transformation |
-| **Interactive 2D Visualization** | ✅ Done | Real-time rendering with Three.js (mapped points, noise circles, boundaries) |
-| **Step-by-Step Execution** | ✅ Done | Detailed iteration-by-iteration inspection mode |
-| **Batch Execution** | ✅ Done | Automatic iteration until convergence ("Run Full" mode) |
-| **Divergence Detection** | ✅ Done | Monitors escaping points and halts when >50% diverge |
-| **Real-Time Parameter Control** | ✅ Done | Interactive sliders for $a$, $b$, $\epsilon$, $x_0$, $y_0$ |
-| **Multi-Mode Visualization** | ✅ Done | Toggle between all elements, mapped points only, noise circles only, etc. |
-| **Hausdorff Distance** | 🔄 Planned | Rigorous convergence assessment using $d_H(M_n, M_{n-1})$ |
-| **Bifurcation Visualization** | 🔄 Planned | Detect and visualize topological and boundary bifurcations |
-| **Color-Coded Orbits** | 🔄 Planned | Distinguish fixed points, periodic points, and singular points |
-| **Export Functionality** | 🔄 Planned | PNG screenshots, CSV data export, MP4 animations |
-| **Parameter Space Exploration** | 🔄 Planned | Visual indicators for bifurcation regions in $(a, b, \epsilon)$ space |
-
-![Set-valued dynamical system with additive bounded noise Visualization](./images/algo1_viz.png)
+![Set-valued dynamical system with additive bounded noise Visualization](./images/sdsv_oulu_demo.png)
 
 ### An example of a 4-periodic point found with A = 1.4 and B = 0.3
-![4-periodic point](./images/4_periodic_point.png)
+![4-periodic point](./images/sdsv_oulu_periodic_point_demo.png)
 ## **Getting Started**
 ### **1. Clone the Repository**
 
