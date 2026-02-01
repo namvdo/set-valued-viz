@@ -197,13 +197,26 @@ const SetValuedViz = () => {
 
     const animationIntervalRef = useRef(null);
 
+    // Video recording state
+    const [recordingState, setRecordingState] = useState({
+        isRecording: false,
+        isEncoding: false,
+        frameCount: 0,
+        recordingEnabled: false, // toggle for recording with animation
+        encodingProgress: 0,
+        error: null
+    });
+
+    const recordedFramesRef = useRef([]);
+    const encoderWorkerRef = useRef(null);
+
     const ulamComputerRef = useRef(null);
 
     const [tooltip, setTooltip] = useState({
         visible: false,
         x: 0,
         y: 0,
-        data: null 
+        data: null
     });
 
     const raycasterRef = useRef(new THREE.Raycaster());
@@ -553,9 +566,37 @@ const SetValuedViz = () => {
 
     }, [animationState.isAnimating, animationState.currentStep, manifoldState.isComputing, mode]);
 
-    const startAnimation = useCallback(() => {
+    const startAnimation = useCallback(async () => {
         const baseVal = params[animationState.parameter];
         const targetVal = baseVal + (animationState.direction * animationState.rangeValue);
+
+        // Capture initial frame if recording
+        if (recordingState.recordingEnabled && canvasRef.current) {
+            try {
+                const canvas = canvasRef.current;
+                const width = 1280;
+                const height = 720;
+                const offscreen = new OffscreenCanvas(width, height);
+                const ctx = offscreen.getContext('2d');
+                ctx.drawImage(canvas, 0, 0, width, height);
+
+                // Draw parameter overlay
+                const overlayText = `a = ${params.a.toFixed(4)}  b = ${params.b.toFixed(4)}  ε = ${params.epsilon.toFixed(4)}`;
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(10, height - 40, 400, 30);
+                ctx.font = 'bold 16px monospace';
+                ctx.fillStyle = '#4CAF50';
+                ctx.fillText(overlayText, 20, height - 18);
+
+                const bitmap = await createImageBitmap(offscreen);
+                recordedFramesRef.current.push(bitmap);
+                setRecordingState(prev => ({ ...prev, frameCount: 1 }));
+                console.log('Initial frame captured');
+            } catch (err) {
+                console.error('Initial frame capture error:', err);
+            }
+        }
+
         setAnimationState(prev => ({
             ...prev,
             isAnimating: true,
@@ -563,7 +604,7 @@ const SetValuedViz = () => {
             targetValue: targetVal,
             currentStep: 0
         }));
-    }, [params, animationState.parameter, animationState.direction, animationState.rangeValue]);
+    }, [params, animationState.parameter, animationState.direction, animationState.rangeValue, recordingState.recordingEnabled]);
 
     const stopAnimation = useCallback(() => {
         setAnimationState(prev => ({
@@ -572,6 +613,192 @@ const SetValuedViz = () => {
             currentStep: 0
         }));
     }, []);
+
+    const captureFrame = useCallback(async () => {
+        if (!canvasRef.current || !recordingState.recordingEnabled) return null;
+
+        const canvas = canvasRef.current;
+        const width = 1280;
+        const height = 720;
+
+        const offscreen = new OffscreenCanvas(width, height);
+        const ctx = offscreen.getContext('2d');
+
+        ctx.drawImage(canvas, 0, 0, width, height);
+
+        const overlayText = `a = ${params.a.toFixed(4)}  b = ${params.b.toFixed(4)}  ε = ${params.epsilon.toFixed(4)}`;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(10, height - 40, 400, 30);
+        ctx.font = 'bold 16px monospace';
+        ctx.fillStyle = '#4CAF50';
+        ctx.fillText(overlayText, 20, height - 18);
+
+        const bitmap = await createImageBitmap(offscreen);
+        return bitmap;
+    }, [params.a, params.b, params.epsilon, recordingState.recordingEnabled]);
+
+    // Initialize video encoder worker
+    const initEncoderWorker = useCallback(() => {
+        if (encoderWorkerRef.current) {
+            encoderWorkerRef.current.terminate();
+        }
+
+        const worker = new Worker(
+            new URL('./videoEncoder.worker.js', import.meta.url),
+            { type: 'classic' }
+        );
+
+        worker.onmessage = (e) => {
+            const { type, blob, frameCount, error } = e.data;
+
+            switch (type) {
+                case 'ready':
+                    console.log('Encoder ready');
+                    break;
+                case 'progress':
+                    setRecordingState(prev => ({ ...prev, frameCount: frameCount }));
+                    break;
+                case 'complete':
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    const filename = generateFilename();
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+
+                    setRecordingState(prev => ({
+                        ...prev,
+                        isEncoding: false,
+                        isRecording: false,
+                        recordingEnabled: false
+                    }));
+                    recordedFramesRef.current = [];
+                    break;
+                case 'error':
+                    console.error('Encoder error:', error);
+                    setRecordingState(prev => ({ ...prev, error, isEncoding: false }));
+                    break;
+            }
+        };
+
+        encoderWorkerRef.current = worker;
+        return worker;
+    }, []);
+
+    const generateFilename = useCallback(() => {
+        const aStr = params.a.toFixed(3).replace('.', 'p');
+        const bStr = params.b.toFixed(3).replace('.', 'p');
+        const epsStr = params.epsilon.toFixed(4).replace('.', 'p');
+        const paramName = animationState.parameter;
+        const startStr = (animationState.baseValue || 0).toFixed(3).replace('.', 'p').replace('-', 'm');
+        const endStr = (animationState.targetValue || 0).toFixed(3).replace('.', 'p').replace('-', 'm');
+
+        return `henon_${paramName}_a${aStr}_b${bStr}_eps${epsStr}_${startStr}_to_${endStr}.mp4`;
+    }, [params.a, params.b, params.epsilon, animationState.parameter, animationState.baseValue, animationState.targetValue]);
+
+    const startEncoding = useCallback(async () => {
+        if (recordedFramesRef.current.length === 0) {
+            console.warn('No frames to encode');
+            return;
+        }
+
+        setRecordingState(prev => ({ ...prev, isEncoding: true, encodingProgress: 0 }));
+
+        const worker = initEncoderWorker();
+
+        worker.postMessage({
+            type: 'init',
+            data: {
+                width: 1280,
+                height: 720,
+                fps: 2,
+                filename: generateFilename()
+            }
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const fps = 2;
+        const frameDuration = 1000000 / fps; // microseconds (500ms per frame)
+
+        for (let i = 0; i < recordedFramesRef.current.length; i++) {
+            const frame = recordedFramesRef.current[i];
+            worker.postMessage({
+                type: 'frame',
+                data: {
+                    imageData: frame,
+                    timestamp: i * frameDuration,
+                    duration: frameDuration
+                }
+            });
+
+            if (i % 5 === 0) {
+                await new Promise(resolve => setTimeout(resolve, 10));
+            }
+        }
+
+        worker.postMessage({ type: 'finish' });
+    }, [initEncoderWorker, generateFilename]);
+
+    // Simple frame capture: capture whenever manifold finishes computing while recording
+    const wasComputingRef = useRef(false);
+
+    useEffect(() => {
+        const wasComputing = wasComputingRef.current;
+        const isComputing = manifoldState.isComputing;
+        wasComputingRef.current = isComputing;
+
+        // Only care about recording during animation
+        if (!recordingState.recordingEnabled || !animationState.isAnimating) {
+            return;
+        }
+
+        // Capture when manifold computation finishes (true -> false transition)
+        if (wasComputing && !isComputing) {
+            console.log(`[Recording] Manifold finished, capturing frame for step ${animationState.currentStep}...`);
+
+            // Use requestAnimationFrame to ensure render is complete
+            requestAnimationFrame(async () => {
+                try {
+                    const frame = await captureFrame();
+                    if (frame) {
+                        recordedFramesRef.current.push(frame);
+                        setRecordingState(prev => ({ ...prev, frameCount: recordedFramesRef.current.length }));
+                        console.log(`[Recording] Frame ${recordedFramesRef.current.length} captured`);
+                    } else {
+                        console.log('[Recording] captureFrame returned null');
+                    }
+                } catch (err) {
+                    console.error('[Recording] Frame capture error:', err);
+                }
+            });
+        }
+    }, [manifoldState.isComputing, animationState.isAnimating, recordingState.recordingEnabled, animationState.currentStep, captureFrame]);
+
+    // Start encoding when animation finishes (if recording was enabled and frames were captured)
+    useEffect(() => {
+        // Trigger encoding when: animation stops, recording was enabled, we have frames, and not already encoding
+        if (!animationState.isAnimating && recordingState.recordingEnabled && recordedFramesRef.current.length > 0 && !recordingState.isEncoding) {
+            console.log(`[Recording] Animation finished with ${recordedFramesRef.current.length} frames, starting encoding...`);
+            startEncoding();
+        }
+    }, [animationState.isAnimating, recordingState.recordingEnabled, recordingState.isEncoding, startEncoding]);
+
+    // Toggle recording mode
+    const toggleRecording = useCallback(() => {
+        if (recordingState.recordingEnabled) {
+            // Disable recording
+            setRecordingState(prev => ({ ...prev, recordingEnabled: false }));
+            recordedFramesRef.current = [];
+        } else {
+            // Enable recording
+            setRecordingState(prev => ({ ...prev, recordingEnabled: true, frameCount: 0, error: null }));
+            recordedFramesRef.current = [];
+        }
+    }, [recordingState.recordingEnabled]);
 
     useEffect(() => {
         if (!sceneRef.current) return;
@@ -1159,17 +1386,75 @@ const SetValuedViz = () => {
                                 />
                             </label>
 
-                            <button
-                                onClick={animationState.isAnimating ? stopAnimation : startAnimation}
-                                disabled={manifoldState.isComputing && !animationState.isAnimating}
-                                style={{
-                                    ...styles.button,
-                                    backgroundColor: animationState.isAnimating ? '#8b0000' : '#1a4a1a',
-                                    borderColor: animationState.isAnimating ? '#b22222' : '#2a6a2a'
-                                }}
-                            >
-                                {animationState.isAnimating ? '⏹ Stop' : '▶ Play'}
-                            </button>
+                            {/* Play and Record buttons */}
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                                <button
+                                    onClick={animationState.isAnimating ? stopAnimation : startAnimation}
+                                    disabled={(manifoldState.isComputing && !animationState.isAnimating) || recordingState.isEncoding}
+                                    style={{
+                                        ...styles.button,
+                                        flex: 1,
+                                        marginBottom: 0,
+                                        backgroundColor: animationState.isAnimating ? '#8b0000' : '#1a4a1a',
+                                        borderColor: animationState.isAnimating ? '#b22222' : '#2a6a2a'
+                                    }}
+                                >
+                                    {animationState.isAnimating ? '⏹ Stop' : '▶ Play'}
+                                    {recordingState.recordingEnabled && !animationState.isAnimating && ' & Rec'}
+                                </button>
+                                <button
+                                    onClick={toggleRecording}
+                                    disabled={animationState.isAnimating || recordingState.isEncoding}
+                                    style={{
+                                        ...styles.button,
+                                        width: '50px',
+                                        marginBottom: 0,
+                                        backgroundColor: recordingState.recordingEnabled ? '#b22222' : '#2d2d2d',
+                                        borderColor: recordingState.recordingEnabled ? '#ff4444' : '#444'
+                                    }}
+                                    title={recordingState.recordingEnabled ? 'Recording enabled - will record next animation' : 'Enable recording'}
+                                >
+                                    {recordingState.recordingEnabled ? '🔴' : '⏺'}
+                                </button>
+                            </div>
+
+                            {/* Recording status */}
+                            {recordingState.recordingEnabled && !animationState.isAnimating && !recordingState.isEncoding && (
+                                <div style={{ marginTop: '8px', padding: '6px', background: '#1a0a0a', borderRadius: '4px', border: '1px solid #b22222' }}>
+                                    <div style={{ fontSize: '11px', color: '#ff6666' }}>
+                                        🔴 Recording armed - Press Play to start
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Encoding status */}
+                            {recordingState.isEncoding && (
+                                <div style={{ marginTop: '8px', padding: '8px', background: '#0a0a1a', borderRadius: '4px', border: '1px solid #3d5afe' }}>
+                                    <div style={{ fontSize: '11px', color: '#7986cb', marginBottom: '4px' }}>
+                                        🔄 Encoding video... ({recordingState.frameCount} frames)
+                                    </div>
+                                    <div style={{
+                                        height: '4px',
+                                        backgroundColor: '#1a1a2e',
+                                        borderRadius: '2px',
+                                        overflow: 'hidden'
+                                    }}>
+                                        <div style={{
+                                            width: '100%',
+                                            height: '100%',
+                                            backgroundColor: '#3d5afe',
+                                            animation: 'pulse 1s infinite'
+                                        }} />
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Error message */}
+                            {recordingState.error && (
+                                <div style={{ marginTop: '8px', padding: '6px', background: '#1a0a0a', borderRadius: '4px', fontSize: '10px', color: '#ff6666' }}>
+                                    Error: {recordingState.error}
+                                </div>
+                            )}
 
                             {animationState.isAnimating && (
                                 <div style={{ marginTop: '8px', padding: '8px', background: '#0f0f0f', borderRadius: '4px' }}>
@@ -1180,6 +1465,11 @@ const SetValuedViz = () => {
                                         Current: <span style={{ color: '#4CAF50', fontWeight: 'bold' }}>
                                             {params[animationState.parameter].toFixed(4)}
                                         </span>
+                                        {recordingState.recordingEnabled && (
+                                            <span style={{ color: '#ff6666', marginLeft: '8px' }}>
+                                                📹 {recordingState.frameCount} frames
+                                            </span>
+                                        )}
                                     </div>
                                     <div style={{ fontSize: '10px', color: '#555', marginTop: '4px' }}>
                                         Step {animationState.currentStep} / {animationState.steps}
@@ -1196,7 +1486,7 @@ const SetValuedViz = () => {
                                         <div style={{
                                             width: `${(animationState.currentStep / animationState.steps) * 100}%`,
                                             height: '100%',
-                                            backgroundColor: '#4CAF50',
+                                            backgroundColor: recordingState.recordingEnabled ? '#ff6666' : '#4CAF50',
                                             transition: 'width 0.3s ease'
                                         }} />
                                     </div>
