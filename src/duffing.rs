@@ -1,18 +1,14 @@
-use nalgebra::{Matrix2, Matrix4, Vector2, Vector4};
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Mutex;
+use nalgebra::{Matrix2, Vector2};
 use wasm_bindgen::prelude::*;
 
 use crate::ExtendedState;
-
 
 #[wasm_bindgen]
 #[derive(Debug, Clone, Copy)]
 pub struct DuffingParams {
     pub a: f64,
     pub b: f64,
-    pub epsilon: f64
+    pub epsilon: f64,
 }
 
 impl DuffingParams {
@@ -42,7 +38,7 @@ impl DuffingParams {
             return Err("Invalid position: non finite coordinates".to_string());
         }
 
-        let new_x = pos.y; 
+        let new_x = pos.y;
         let new_y = -self.b * pos.x + self.a * pos.y - pos.y.powi(3);
 
         if !new_x.is_finite() || !new_y.is_finite() {
@@ -51,7 +47,6 @@ impl DuffingParams {
 
         Ok(Vector2::new(new_x, new_y))
     }
-
 
     pub fn duffing_map_inverse(&self, pos: &Vector2<f64>) -> Result<Vector2<f64>, String> {
         if !pos.x.is_finite() || !pos.y.is_finite() {
@@ -71,20 +66,20 @@ impl DuffingParams {
     }
 
     pub fn jacobian(&self, pos: Vector2<f64>) -> Matrix2<f64> {
-        return Matrix2::new(
-            0.0, 1.0,
-            -self.b, self.a - 3.0 * pos.y.powi(2)
-        );
+        return Matrix2::new(0.0, 1.0, -self.b, self.a - 3.0 * pos.y.powi(2));
     }
-
 
     // transform normal vector using J^(-1) ^ T
     pub fn transform_normal(
-        &self, 
+        &self,
         pos: Vector2<f64>,
-        normal: Vector2<f64>
+        normal: Vector2<f64>,
     ) -> Result<Vector2<f64>, String> {
-        if !pos.x.is_finite() || !pos.y.is_finite() || !normal.x.is_finite() || !normal.y.is_finite() {
+        if !pos.x.is_finite()
+            || !pos.y.is_finite()
+            || !normal.x.is_finite()
+            || !normal.y.is_finite()
+        {
             return Err("Invalid position or normal: non finite coordinates".to_string());
         }
 
@@ -98,21 +93,16 @@ impl DuffingParams {
 
         let factor = self.a - 3.0 * pos.y.powi(2);
 
-        let jac_inv_t = Matrix2::new(
-            factor / self.b, 
-            1.0,
-            -1.0 / self.b,
-            0.0
-        );
+        let jac_inv_t = Matrix2::new(factor / self.b, 1.0, -1.0 / self.b, 0.0);
 
         let transformed = jac_inv_t * normal;
-        let norm = transformed.norm(); 
+        let norm = transformed.norm();
 
         if !norm.is_finite() || norm < 1e-10 {
             return Ok(normal);
         }
 
-        let result = transformed / norm; 
+        let result = transformed / norm;
         if !result.x.is_finite() || !result.y.is_finite() {
             return Ok(normal);
         }
@@ -120,11 +110,16 @@ impl DuffingParams {
         return Ok(result);
     }
 
-
     pub fn transform_normal_inverse(
-        &self, pos: Vector2<f64>, normal: Vector2<f64>
+        &self,
+        pos: Vector2<f64>,
+        normal: Vector2<f64>,
     ) -> Result<Vector2<f64>, String> {
-        if !pos.x.is_finite() || !pos.y.is_finite() || !normal.x.is_finite() || !normal.y.is_finite() {
+        if !pos.x.is_finite()
+            || !pos.y.is_finite()
+            || !normal.x.is_finite()
+            || !normal.y.is_finite()
+        {
             return Err("Invalid position or normal: non finite coordinates".to_string());
         }
 
@@ -147,54 +142,74 @@ impl DuffingParams {
             return Ok(normal);
         }
         return Ok(result);
-
     }
 
-    // apply duffing map to position 
-    // transform normal vector 
+    // apply duffing map to position
+    // transform normal vector
     // project outward by epsilon
 
-    pub fn extended_map(&self, state: ExtendedState, n_periods: usize) -> Result<ExtendedState, String> {
+    pub fn extended_map(
+        &self,
+        state: ExtendedState,
+        n_periods: usize,
+    ) -> Result<ExtendedState, String> {
         let mut current = state;
 
         for iter in 0..n_periods {
             let new_pos = self.duffing_map(&current.pos)?;
             let new_normal = self.transform_normal(current.pos, current.normal)?;
-            let projected_pos = new_pos + self.epsilon * new_normal; 
+            let projected_pos = new_pos + self.epsilon * new_normal;
 
             if !projected_pos.x.is_finite() || !projected_pos.y.is_finite() {
                 return Err(format!("Non-finite position at iteration: {}", iter));
             }
 
             if projected_pos.x.abs() > 1000.0 || projected_pos.y.abs() > 1000.0 {
-                return Err(format!("Position diverged at iteration: {}", iter))
+                return Err(format!("Position diverged at iteration: {}", iter));
             }
 
-            current = ExtendedState { pos: projected_pos, normal: new_normal }
+            current = ExtendedState {
+                pos: projected_pos,
+                normal: new_normal,
+            }
         }
 
         Ok(current)
     }
 
     // extended map inverse (for dual repeller)
-    pub fn extended_map_inverse(&self, state: ExtendedState, n_periods: usize) -> Result<ExtendedState, String> {
+    pub fn extended_map_inverse(
+        &self,
+        state: ExtendedState,
+        n_periods: usize,
+    ) -> Result<ExtendedState, String> {
         let mut current = state;
 
         for iter in 0..n_periods {
             let unprojected_pos = current.pos - self.epsilon * current.normal;
 
             if !unprojected_pos.x.is_finite() || !unprojected_pos.y.is_finite() {
-                return Err(format!("Non-finite unprojected position at iteration: {}", iter));
+                return Err(format!(
+                    "Non-finite unprojected position at iteration: {}",
+                    iter
+                ));
             }
 
             let new_pos = self.duffing_map_inverse(&unprojected_pos)?;
             let new_normal = self.transform_normal_inverse(unprojected_pos, current.normal)?;
 
-            if !new_pos.x.is_finite() || !new_pos.y.is_finite() || !new_normal.x.is_finite() || !new_normal.y.is_finite() {
+            if !new_pos.x.is_finite()
+                || !new_pos.y.is_finite()
+                || !new_normal.x.is_finite()
+                || !new_normal.y.is_finite()
+            {
                 return Err(format!("Non-finite new state at iteration: {}", iter));
             }
 
-            current = ExtendedState { pos: new_pos, normal: new_normal };
+            current = ExtendedState {
+                pos: new_pos,
+                normal: new_normal,
+            };
         }
 
         Ok(current)
