@@ -3,22 +3,101 @@ use std::f64;
 use wasm_bindgen::prelude::*;
 use web_sys::console;
 
-use crate::henon_periodic::{
-    Jacobian, PeriodicOrbit, PeriodicOrbitDatabase, PeriodicOrbitJS, Point, PointClassification,
-    StabilityType, TrajectoryPoint, TrajectoryPointJS,
-};
-
-/// Duffing map: x_{n+1} = y_n, y_{n+1} = -b * x_n + a*y_n - y_n^3
-fn duffing_map(x: f64, y: f64, a: f64, b: f64) -> (f64, f64) {
-    (y, -b * x + a * y - y * y * y)
+#[derive(Debug, Clone, Copy)]
+#[wasm_bindgen]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
 }
 
-fn duffing_jacobian(_x: f64, y: f64, a: f64, b: f64) -> Jacobian {
+#[wasm_bindgen]
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum StabilityType {
+    Stable,
+    Unstable,
+    Saddle,
+}
+
+#[derive(Debug, Clone)]
+pub enum PointClassification {
+    Regular,
+    NearPeriodicOrbit {
+        period: usize,
+        stability: StabilityType,
+        distance: f64,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct Jacobian {
+    pub j11: f64,
+    pub j12: f64,
+    pub j21: f64,
+    pub j22: f64,
+}
+
+impl Jacobian {
+    pub fn inverse(&self) -> Option<Jacobian> {
+        let det = self.j11 * self.j22 - self.j12 * self.j21;
+        if det.abs() < 1e-12 {
+            return None;
+        }
+        Some(Jacobian {
+            j11: self.j22 / det,
+            j12: -self.j12 / det,
+            j21: -self.j21 / det,
+            j22: self.j11 / det,
+        })
+    }
+
+    pub fn multiply(&self, other: &Jacobian) -> Jacobian {
+        Jacobian {
+            j11: self.j11 * other.j11 + self.j12 * other.j21,
+            j12: self.j11 * other.j12 + self.j12 * other.j22,
+            j21: self.j21 * other.j11 + self.j22 * other.j21,
+            j22: self.j21 * other.j12 + self.j22 * other.j22,
+        }
+    }
+
+    pub fn eigenvalues(&self) -> (f64, f64, bool) {
+        let trace = self.j11 + self.j22;
+        let det = self.j11 * self.j22 - self.j12 * self.j21;
+        let discriminant = trace * trace - 4.0 * det;
+
+        if discriminant >= 0.0 {
+            let sqrt_disc = discriminant.sqrt();
+            ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0, false)
+        } else {
+            let modulus = det.sqrt();
+            (modulus, modulus, true)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PeriodicOrbit {
+    pub points: Vec<Point>,
+    pub period: usize,
+    pub stability: StabilityType,
+}
+
+#[derive(Debug, Clone)]
+pub struct TrajectoryPoint {
+    pub x: f64,
+    pub y: f64,
+    pub classification: PointClassification,
+}
+
+fn henon_map(x: f64, y: f64, a: f64, b: f64) -> (f64, f64) {
+    (1.0 - a * x * x + y, b * x)
+}
+
+fn henon_jacobian(x: f64, _y: f64, a: f64, b: f64) -> Jacobian {
     Jacobian {
-        j11: 0.0,
+        j11: -2.0 * a * x,
         j12: 1.0,
-        j21: -b,
-        j22: a - 3.0 * y * y,
+        j21: b,
+        j22: 0.0,
     }
 }
 
@@ -45,7 +124,7 @@ fn classify_stability(jac: &Jacobian) -> StabilityType {
     }
 }
 
-fn compose_duffing_n_times(x0: f64, y0: f64, n: usize, a: f64, b: f64) -> ((f64, f64), Jacobian) {
+fn compose_henon_n_times(x0: f64, y0: f64, n: usize, a: f64, b: f64) -> ((f64, f64), Jacobian) {
     let mut x = x0;
     let mut y = y0;
 
@@ -61,23 +140,23 @@ fn compose_duffing_n_times(x0: f64, y0: f64, n: usize, a: f64, b: f64) -> ((f64,
         );
     }
 
-    let mut accumulated_jacobian = duffing_jacobian(x, y, a, b);
-    (x, y) = duffing_map(x, y, a, b);
+    let mut accumulated_jacobian = henon_jacobian(x, y, a, b);
+    (x, y) = henon_map(x, y, a, b);
 
     for _ in 1..n {
         if !x.is_finite() || !y.is_finite() || x.abs() > 1e10 || y.abs() > 1e10 {
             return ((f64::NAN, f64::NAN), accumulated_jacobian);
         }
 
-        let jac_current = duffing_jacobian(x, y, a, b);
+        let jac_current = henon_jacobian(x, y, a, b);
         accumulated_jacobian = jac_current.multiply(&accumulated_jacobian);
-        (x, y) = duffing_map(x, y, a, b);
+        (x, y) = henon_map(x, y, a, b);
     }
 
     ((x, y), accumulated_jacobian)
 }
 
-fn find_duffing_periodic_point_davidchack_lai(
+fn find_periodic_point_davidchack_lai(
     x0: f64,
     y0: f64,
     period: usize,
@@ -97,7 +176,7 @@ fn find_duffing_periodic_point_davidchack_lai(
             return None;
         }
 
-        let ((fx, fy), jac_fn) = compose_duffing_n_times(x, y, period, a, b);
+        let ((fx, fy), jac_fn) = compose_henon_n_times(x, y, period, a, b);
 
         if !fx.is_finite() || !fy.is_finite() {
             return None;
@@ -148,10 +227,10 @@ fn find_duffing_periodic_point_davidchack_lai(
     None
 }
 
-fn verify_duffing_minimal_period(point: &Point, claimed_period: usize, a: f64, b: f64) -> bool {
+fn verify_minimal_period(point: &Point, claimed_period: usize, a: f64, b: f64) -> bool {
     for divisor in 1..claimed_period {
         if claimed_period % divisor == 0 {
-            let ((fx, fy), _) = compose_duffing_n_times(point.x, point.y, divisor, a, b);
+            let ((fx, fy), _) = compose_henon_n_times(point.x, point.y, divisor, a, b);
             if (fx - point.x).abs() < 1e-8 && (fy - point.y).abs() < 1e-8 {
                 return false;
             }
@@ -160,40 +239,109 @@ fn verify_duffing_minimal_period(point: &Point, claimed_period: usize, a: f64, b
     true
 }
 
-fn davidchack_lai_duffing(a: f64, b: f64, max_period: usize) -> PeriodicOrbitDatabase {
+#[derive(Debug, Clone)]
+pub struct PeriodicOrbitDatabase {
+    pub orbits: Vec<PeriodicOrbit>,
+}
+
+impl PeriodicOrbitDatabase {
+    pub fn new() -> Self {
+        Self { orbits: Vec::new() }
+    }
+
+    pub fn add_orbit(&mut self, orbit: PeriodicOrbit) {
+        self.orbits.push(orbit);
+    }
+
+    pub fn contains_point(&self, x: f64, y: f64, tolerance: f64) -> bool {
+        self.orbits.iter().any(|orbit| {
+            orbit
+                .points
+                .iter()
+                .any(|p| (p.x - x).abs() < tolerance && (p.y - y).abs() < tolerance)
+        })
+    }
+
+    fn find_matching_orbit(
+        &self,
+        x: f64,
+        y: f64,
+        tolerance: f64,
+    ) -> Option<(usize, StabilityType, f64)> {
+        for orbit in &self.orbits {
+            for point in &orbit.points {
+                let dist = ((point.x - x).powi(2) + (point.y - y).powi(2)).sqrt();
+                if dist < tolerance {
+                    return Some((orbit.period, orbit.stability.clone(), dist));
+                }
+            }
+        }
+        None
+    }
+
+    pub fn classify_point(&self, x: f64, y: f64, tolerance: f64) -> PointClassification {
+        if let Some((period, stability, distance)) = self.find_matching_orbit(x, y, tolerance) {
+            PointClassification::NearPeriodicOrbit {
+                period,
+                stability,
+                distance,
+            }
+        } else {
+            PointClassification::Regular
+        }
+    }
+
+    pub fn total_count(&self) -> usize {
+        self.orbits.len()
+    }
+
+    pub fn get_points_of_period(&self, period: usize) -> Vec<Point> {
+        self.orbits
+            .iter()
+            .filter(|o| o.period == period)
+            .flat_map(|o| o.points.clone())
+            .collect()
+    }
+}
+
+fn davidchack_lai_full(
+    a: f64,
+    b: f64,
+    max_period: usize,
+    initial_seeds: &[(f64, f64)],
+    seed_period: usize,
+) -> PeriodicOrbitDatabase {
     let mut database = PeriodicOrbitDatabase::new();
-    let seed_period = max_period.min(6);
 
     // Stage 1: Find orbits of period 1 to seed_period using grid search
     for period in 1..=seed_period.min(max_period) {
         let grid_size = if period == 1 { 30 } else { 40 };
-        // Adjust search range based on Duffing dynamics
         let x_range = (-2.0, 2.0);
-        let y_range = (-2.0, 2.0);
+        let y_range = (-1.0, 1.0);
 
         for i in 0..grid_size {
             for j in 0..grid_size {
                 let x0 = x_range.0 + (x_range.1 - x_range.0) * (i as f64) / (grid_size as f64);
                 let y0 = y_range.0 + (y_range.1 - y_range.0) * (j as f64) / (grid_size as f64);
 
-                if let Some(fixed_point) = find_duffing_periodic_point_davidchack_lai(
-                    x0, y0, period, a, b, None, 100, 1e-10,
-                ) {
+                if let Some(fixed_point) =
+                    find_periodic_point_davidchack_lai(x0, y0, period, a, b, None, 100, 1e-10)
+                {
                     if !database.contains_point(fixed_point.x, fixed_point.y, 0.01) {
-                        if verify_duffing_minimal_period(&fixed_point, period, a, b) {
+                        if verify_minimal_period(&fixed_point, period, a, b) {
                             let mut orbit_points = vec![fixed_point.clone()];
                             let mut x = fixed_point.x;
                             let mut y = fixed_point.y;
 
                             for _ in 1..period {
-                                let (x_new, y_new) = duffing_map(x, y, a, b);
+                                let (x_new, y_new) = henon_map(x, y, a, b);
                                 orbit_points.push(Point { x: x_new, y: y_new });
                                 x = x_new;
                                 y = y_new;
                             }
 
                             let (_, jac_fn) =
-                                compose_duffing_n_times(fixed_point.x, fixed_point.y, period, a, b);
+                                compose_henon_n_times(fixed_point.x, fixed_point.y, period, a, b);
                             let stability = classify_stability(&jac_fn);
 
                             database.add_orbit(PeriodicOrbit {
@@ -211,42 +359,47 @@ fn davidchack_lai_duffing(a: f64, b: f64, max_period: usize) -> PeriodicOrbitDat
     // Stage 2: Use previously found periodic points as seeds for higher periods
     if max_period > seed_period {
         for period in (seed_period + 1)..=max_period {
+            // Use points from previous periods as seeds
             let mut seeds = Vec::new();
 
+            // Collect seeds from orbits of periods that divide current period
             for divisor in 1..period {
                 if period % divisor == 0 {
                     seeds.extend(database.get_points_of_period(divisor));
                 }
             }
 
+            // Also try points from immediate predecessor period
             if period > 1 {
                 seeds.extend(database.get_points_of_period(period - 1));
             }
 
+            // Search around each seed point
             for seed in &seeds {
+                // Try small perturbations around the seed
                 let perturbation_size = 0.1;
                 for dx in [-perturbation_size, 0.0, perturbation_size].iter() {
                     for dy in [-perturbation_size, 0.0, perturbation_size].iter() {
                         let x0 = seed.x + dx;
                         let y0 = seed.y + dy;
 
-                        if let Some(periodic_point) = find_duffing_periodic_point_davidchack_lai(
+                        if let Some(periodic_point) = find_periodic_point_davidchack_lai(
                             x0, y0, period, a, b, None, 150, 1e-10,
                         ) {
                             if !database.contains_point(periodic_point.x, periodic_point.y, 0.01) {
-                                if verify_duffing_minimal_period(&periodic_point, period, a, b) {
+                                if verify_minimal_period(&periodic_point, period, a, b) {
                                     let mut orbit_points = vec![periodic_point.clone()];
                                     let mut x = periodic_point.x;
                                     let mut y = periodic_point.y;
 
                                     for _ in 1..period {
-                                        let (x_new, y_new) = duffing_map(x, y, a, b);
+                                        let (x_new, y_new) = henon_map(x, y, a, b);
                                         orbit_points.push(Point { x: x_new, y: y_new });
                                         x = x_new;
                                         y = y_new;
                                     }
 
-                                    let (_, jac_fn) = compose_duffing_n_times(
+                                    let (_, jac_fn) = compose_henon_n_times(
                                         periodic_point.x,
                                         periodic_point.y,
                                         period,
@@ -272,19 +425,22 @@ fn davidchack_lai_duffing(a: f64, b: f64, max_period: usize) -> PeriodicOrbitDat
     database
 }
 
-pub struct DuffingSystemAnalysis {
+pub struct HenonSystemAnalysis {
     pub a: f64,
     pub b: f64,
     pub orbit_database: PeriodicOrbitDatabase,
     pub trajectory: Vec<TrajectoryPoint>,
 }
 
-impl DuffingSystemAnalysis {
+impl HenonSystemAnalysis {
     pub fn new(a: f64, b: f64, max_period: usize) -> Self {
-        let orbit_database = davidchack_lai_duffing(a, b, max_period);
+        let seed_period = max_period.min(6);
+        let initial_seeds = Vec::new();
+
+        let orbit_database = davidchack_lai_full(a, b, max_period, &initial_seeds, seed_period);
         console::log_1(
             &format!(
-                "Duffing: Total orbits found using Davidchack & Lai: {}",
+                "Total orbits found using Davidchack & Lai: {}",
                 orbit_database.total_count()
             )
             .into(),
@@ -312,14 +468,14 @@ impl DuffingSystemAnalysis {
         });
 
         for iter in 1..=max_iterations {
-            let (x_new, y_new) = duffing_map(x, y, self.a, self.b);
+            let (x_new, y_new) = henon_map(x, y, self.a, self.b);
 
             if !x_new.is_finite()
                 || !y_new.is_finite()
                 || x_new.abs() > 100.0
                 || y_new.abs() > 100.0
             {
-                console::log_1(&format!("Duffing point diverged at iteration {}", iter).into());
+                console::log_1(&format!("Point diverged at iteration {}", iter).into());
                 break;
             }
 
@@ -337,7 +493,7 @@ impl DuffingSystemAnalysis {
 
         console::log_1(
             &format!(
-                "Duffing trajectory complete. Total points: {}",
+                "Trajectory complete. Total points: {}",
                 self.trajectory.len()
             )
             .into(),
@@ -345,19 +501,70 @@ impl DuffingSystemAnalysis {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct TrajectoryPointJS {
+    pub x: f64,
+    pub y: f64,
+    pub classification: String,
+    pub period: Option<usize>,
+    pub stability: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PeriodicOrbitJS {
+    pub points: Vec<(f64, f64)>,
+    pub period: usize,
+    pub stability: String,
+}
+
+impl From<&StabilityType> for String {
+    fn from(stability: &StabilityType) -> Self {
+        match stability {
+            StabilityType::Stable => "stable".to_string(),
+            StabilityType::Unstable => "unstable".to_string(),
+            StabilityType::Saddle => "saddle".to_string(),
+        }
+    }
+}
+
+impl From<&TrajectoryPoint> for TrajectoryPointJS {
+    fn from(point: &TrajectoryPoint) -> Self {
+        match &point.classification {
+            PointClassification::Regular => TrajectoryPointJS {
+                x: point.x,
+                y: point.y,
+                classification: "regular".to_string(),
+                period: None,
+                stability: None,
+            },
+            PointClassification::NearPeriodicOrbit {
+                period,
+                stability,
+                distance: _,
+            } => TrajectoryPointJS {
+                x: point.x,
+                y: point.y,
+                classification: "periodic".to_string(),
+                period: Some(*period),
+                stability: Some(String::from(stability)),
+            },
+        }
+    }
+}
+
 #[wasm_bindgen]
-pub struct DuffingSystemWasm {
-    system: DuffingSystemAnalysis,
+pub struct HenonSystemWasm {
+    system: HenonSystemAnalysis,
     current_iteration: usize,
 }
 
 #[wasm_bindgen]
-impl DuffingSystemWasm {
+impl HenonSystemWasm {
     #[wasm_bindgen(constructor)]
-    pub fn new(a: f64, b: f64, max_period: usize) -> Result<DuffingSystemWasm, JsValue> {
+    pub fn new(a: f64, b: f64, max_period: usize) -> Result<HenonSystemWasm, JsValue> {
         console_error_panic_hook::set_once();
 
-        let system = DuffingSystemAnalysis::new(a, b, max_period);
+        let system = HenonSystemAnalysis::new(a, b, max_period);
 
         Ok(Self {
             system,
