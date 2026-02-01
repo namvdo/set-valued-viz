@@ -14,6 +14,11 @@ const henonMap = (x, y, a, b) => ({
     y: b * x
 });
 
+const duffingMap = (x, y, a, b) => ({
+    x: y,
+    y: -b * x + a * y - y * y * y
+});
+
 const createCoordinateSystem = (scene) => {
     const { xRange, yRange, gridDivisions, axisColor, gridColor } = GRID_CONFIG;
     const [xMin, xMax] = xRange;
@@ -105,17 +110,17 @@ const createCoordinateSystem = (scene) => {
 };
 
 const ORBIT_COLORS = {
-    period1: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#e74c3c' },
-    period2: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#e74c3c' },
-    period3: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#e74c3c' },
-    period4: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#e74c3c' },
-    period5: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#e74c3c' },
-    period6plus: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#e74c3c' },
+    period1: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#eedf32' },
+    period2: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#eedf32' },
+    period3: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#eedf32' },
+    period4: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#eedf32' },
+    period5: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#eedf32' },
+    period6plus: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#eedf32' },
     trajectory: '#00ffff',
     manifold: '#1e90ff',
     attractor: '#27ae60',
     repeller: '#e74c3c',
-    saddlePoint: '#e74c3c',
+    saddlePoint: '#eedf32',
     periodicBlue: '#3498db'
 };
 
@@ -128,7 +133,8 @@ const SetValuedViz = () => {
     const batchAnimationRef = useRef(null);
     const manifoldDebounceRef = useRef(null);
 
-    const [mode, setMode] = useState('periodic'); // 'periodic' or 'manifold'
+    const [mode, setMode] = useState('manifold'); // 'periodic' or 'manifold'
+    const [dynamicSystem, setDynamicSystem] = useState('henon'); // 'henon' or 'duffing'
     const [wasmModule, setWasmModule] = useState(null);
 
     const [params, setParams] = useState({
@@ -150,6 +156,8 @@ const SetValuedViz = () => {
         isReady: false,
         showOrbits: false,
         showTrail: true,
+        showOrbitLines: false,
+        highlightedOrbitId: null,
         hasStarted: false
     });
 
@@ -157,7 +165,10 @@ const SetValuedViz = () => {
         manifolds: [],
         fixedPoints: [],
         isComputing: false,
-        isReady: false
+        isReady: false,
+        showOrbits: true,
+        showOrbitLines: false,
+        highlightedOrbitId: null
     });
 
     const [filters, setFilters] = useState({
@@ -280,7 +291,6 @@ const SetValuedViz = () => {
         };
     }, []);
 
-    // Load WASM module once
     useEffect(() => {
         const loadWasm = async () => {
             try {
@@ -294,6 +304,14 @@ const SetValuedViz = () => {
         };
         loadWasm();
     }, []);
+
+    useEffect(() => {
+        if (dynamicSystem === 'duffing') {
+            setParams(prev => ({ ...prev, a: 2.75, b: 0.2 }));
+        } else {
+            setParams(prev => ({ ...prev, a: 0.4, b: 0.3 }));
+        }
+    }, [dynamicSystem]);
 
     const computeJacobian = useCallback((x, y) => {
         const a = params.a;
@@ -374,6 +392,19 @@ const SetValuedViz = () => {
             const data = hit.userData;
             const jac = computeJacobian(data.pos.x, data.pos.y);
 
+            // Set highlighted orbit when hovering (only if orbit lines are shown in respective mode)
+            if (data.type === 'orbit' && data.orbitId) {
+                if (mode === 'periodic' && periodicState.showOrbitLines) {
+                    setPeriodicState(prev => prev.highlightedOrbitId !== data.orbitId
+                        ? { ...prev, highlightedOrbitId: data.orbitId }
+                        : prev);
+                } else if (mode === 'manifold' && manifoldState.showOrbitLines) {
+                    setManifoldState(prev => prev.highlightedOrbitId !== data.orbitId
+                        ? { ...prev, highlightedOrbitId: data.orbitId }
+                        : prev);
+                }
+            }
+
             setTooltip({
                 visible: true,
                 x: event.clientX,
@@ -390,8 +421,19 @@ const SetValuedViz = () => {
             });
         } else {
             setTooltip(prev => prev.visible ? { ...prev, visible: false } : prev);
+            // Clear highlighted orbit when not hovering (in both modes)
+            if (mode === 'periodic' && periodicState.highlightedOrbitId !== null) {
+                setPeriodicState(prev => prev.highlightedOrbitId !== null
+                    ? { ...prev, highlightedOrbitId: null }
+                    : prev);
+            }
+            if (mode === 'manifold' && manifoldState.highlightedOrbitId !== null) {
+                setManifoldState(prev => prev.highlightedOrbitId !== null
+                    ? { ...prev, highlightedOrbitId: null }
+                    : prev);
+            }
         }
-    }, [computeJacobian, ulamState.showUlamOverlay, ulamState.gridBoxes, ulamState.invariantMeasure, ulamState.currentBoxIndex]);
+    }, [computeJacobian, ulamState.showUlamOverlay, ulamState.gridBoxes, ulamState.invariantMeasure, ulamState.currentBoxIndex, mode, periodicState.showOrbitLines, periodicState.highlightedOrbitId, manifoldState.showOrbitLines, manifoldState.highlightedOrbitId]);
 
 
 
@@ -462,7 +504,12 @@ const SetValuedViz = () => {
             try {
                 if (cancelled) return;
 
-                const system = new wasmModule.HenonSystemWasm(params.a, params.b, params.maxPeriod);
+                // Use appropriate system based on dynamicSystem selection
+                const SystemClass = dynamicSystem === 'duffing'
+                    ? wasmModule.DuffingSystemWasm
+                    : wasmModule.HenonSystemWasm;
+
+                const system = new SystemClass(params.a, params.b, params.maxPeriod);
                 if (cancelled) { system.free(); return; }
 
                 const orbits = system.getPeriodicOrbits();
@@ -479,7 +526,7 @@ const SetValuedViz = () => {
         };
         initSystem();
         return () => { cancelled = true; };
-    }, [wasmModule, params.a, params.b, params.maxPeriod, params.startX, params.startY]);
+    }, [wasmModule, dynamicSystem, params.a, params.b, params.maxPeriod, params.startX, params.startY]);
 
     useEffect(() => {
         if (mode !== 'manifold') return;
@@ -493,15 +540,13 @@ const SetValuedViz = () => {
         manifoldDebounceRef.current = setTimeout(() => {
             if (!wasmModule) return;
             try {
-                // Use periodic orbits from the periodic state if available
-                // Otherwise fall back to the simple computation
-                if (periodicState.orbits && periodicState.orbits.length > 0) {
-                    console.log('Using periodic orbits for manifold:', periodicState.orbits.length, 'orbits');
-                    const result = wasmModule.compute_manifold_from_orbits(
+                if (dynamicSystem === 'duffing') {
+                    // Use Duffing manifold computation
+                    console.log('Computing Duffing manifold');
+                    const result = wasmModule.compute_duffing_manifold_simple(
                         params.a,
                         params.b,
-                        params.epsilon,
-                        periodicState.orbits
+                        params.epsilon
                     );
 
                     setManifoldState({
@@ -511,15 +556,35 @@ const SetValuedViz = () => {
                         isReady: true
                     });
                 } else {
-                    console.log('No periodic orbits available, using simple computation');
-                    const result = wasmModule.compute_manifold_simple(params.a, params.b, params.epsilon);
+                    // Use Henon manifold computation
+                    // Use periodic orbits from the periodic state if available
+                    // Otherwise fall back to the simple computation
+                    if (periodicState.orbits && periodicState.orbits.length > 0) {
+                        console.log('Using periodic orbits for manifold:', periodicState.orbits.length, 'orbits');
+                        const result = wasmModule.compute_manifold_from_orbits(
+                            params.a,
+                            params.b,
+                            params.epsilon,
+                            periodicState.orbits
+                        );
 
-                    setManifoldState({
-                        manifolds: result.manifolds || [],
-                        fixedPoints: result.fixed_points || [],
-                        isComputing: false,
-                        isReady: true
-                    });
+                        setManifoldState({
+                            manifolds: result.manifolds || [],
+                            fixedPoints: result.fixed_points || [],
+                            isComputing: false,
+                            isReady: true
+                        });
+                    } else {
+                        console.log('No periodic orbits available, using simple computation');
+                        const result = wasmModule.compute_manifold_simple(params.a, params.b, params.epsilon);
+
+                        setManifoldState({
+                            manifolds: result.manifolds || [],
+                            fixedPoints: result.fixed_points || [],
+                            isComputing: false,
+                            isReady: true
+                        });
+                    }
                 }
             } catch (err) {
                 console.error('Manifold computation error:', err);
@@ -532,7 +597,7 @@ const SetValuedViz = () => {
                 clearTimeout(manifoldDebounceRef.current);
             }
         };
-    }, [mode, params.a, params.b, params.epsilon, periodicState.orbits, wasmModule]);
+    }, [mode, dynamicSystem, params.a, params.b, params.epsilon, periodicState.orbits, wasmModule]);
 
     // Sequential animation - advance to next step only when manifold computation completes
     useEffect(() => {
@@ -867,7 +932,7 @@ const SetValuedViz = () => {
 
         const toRemove = [];
         scene.traverse(child => {
-            if (child.userData.type === 'trajectory' || child.userData.type === 'orbit' || child.userData.type === 'manifold' || child.userData.type === 'fixedPoint') {
+            if (child.userData.type === 'trajectory' || child.userData.type === 'orbit' || child.userData.type === 'orbitLine' || child.userData.type === 'manifold' || child.userData.type === 'fixedPoint') {
                 toRemove.push(child);
             }
         });
@@ -881,15 +946,23 @@ const SetValuedViz = () => {
             // Render periodic orbits
             if (periodicState.showOrbits && periodicState.orbits.length > 0) {
                 const visibleOrbits = periodicState.orbits.filter(o => isOrbitVisible(o));
-                visibleOrbits.forEach(orbit => {
+                const HIGHLIGHT_COLOR = '#ff00ff'; // Magenta for highlighted orbits - distinct from yellow/green/red
+
+                visibleOrbits.forEach((orbit, orbitIdx) => {
+                    const orbitId = `orbit-${orbit.period}-${orbitIdx}`;
+                    const isHighlighted = periodicState.highlightedOrbitId === orbitId;
+                    // Use highlight color (gold) when hovered, otherwise use stability-based color
+                    const pointColor = isHighlighted ? HIGHLIGHT_COLOR : getOrbitColor(orbit);
+
                     orbit.points.forEach((pt, ptIdx) => {
-                        const geom = new THREE.SphereGeometry(0.03, 12, 12);
-                        const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(getOrbitColor(orbit)) });
+                        const geom = new THREE.SphereGeometry(isHighlighted ? 0.06 : 0.03, 12, 12);
+                        const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(pointColor) });
                         const sphere = new THREE.Mesh(geom, mat);
-                        sphere.position.set(pt[0], pt[1], 0.1);
-                        // Store full orbit info for tooltip
+                        sphere.position.set(pt[0], pt[1], isHighlighted ? 0.15 : 0.1); // Bring highlighted points forward
+                        // Store full orbit info for tooltip and hover matching
                         sphere.userData = {
                             type: 'orbit',
+                            orbitId: orbitId,
                             period: orbit.period,
                             stability: orbit.stability,
                             pointIndex: ptIdx,
@@ -899,18 +972,28 @@ const SetValuedViz = () => {
                         };
                         scene.add(sphere);
                     });
-                    if (orbit.points.length > 1) {
+
+                    // Only render orbit lines when showOrbitLines is enabled
+                    if (periodicState.showOrbitLines && orbit.points.length > 1) {
                         const lineGeom = new THREE.BufferGeometry();
                         const positions = new Float32Array(orbit.points.length * 3);
                         orbit.points.forEach((pt, i) => {
                             positions[i * 3] = pt[0];
                             positions[i * 3 + 1] = pt[1];
-                            positions[i * 3 + 2] = 0.1;
+                            positions[i * 3 + 2] = isHighlighted ? 0.15 : 0.1;
                         });
                         lineGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-                        const lineMat = new THREE.LineBasicMaterial({ color: new THREE.Color(getOrbitColor(orbit)), opacity: 0.5, transparent: true });
+                        // Use highlight color for lines when hovered
+                        const lineColor = isHighlighted ? HIGHLIGHT_COLOR : getOrbitColor(orbit);
+                        const opacity = isHighlighted ? 1.0 : 0.4;
+                        const lineMat = new THREE.LineBasicMaterial({
+                            color: new THREE.Color(lineColor),
+                            opacity: opacity,
+                            transparent: true,
+                            linewidth: isHighlighted ? 3 : 1
+                        });
                         const line = new THREE.LineLoop(lineGeom, lineMat);
-                        line.userData.type = 'orbitLine';
+                        line.userData = { type: 'orbitLine', orbitId: orbitId };
                         scene.add(line);
                     }
                 });
@@ -966,13 +1049,11 @@ const SetValuedViz = () => {
                 const isSaddle = stabLower === 'saddle';
                 const color = isAttractor ? ORBIT_COLORS.attractor :
                     (isRepeller || isSaddle) ? ORBIT_COLORS.saddlePoint : ORBIT_COLORS.periodicBlue;
-                // Make attractors slightly larger so they stand out
-                const radius = isAttractor ? 0.06 : 0.05;
-                const geom = new THREE.SphereGeometry(radius, 16, 16);
+                const radius = isAttractor ? 0.03 : 0.025;
+                const geom = new THREE.SphereGeometry(radius, 12, 12);
                 const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(color) });
                 const sphere = new THREE.Mesh(geom, mat);
                 sphere.position.set(fp.x, fp.y, 0.2);
-                // Store full metadata for tooltip
                 sphere.userData = {
                     type: 'fixedPoint',
                     period: 1,
@@ -982,6 +1063,60 @@ const SetValuedViz = () => {
                 };
                 scene.add(sphere);
             });
+
+            // Also render periodic orbits in manifold mode if enabled
+            if (manifoldState.showOrbits && periodicState.orbits.length > 0) {
+                const visibleOrbits = periodicState.orbits.filter(o => isOrbitVisible(o));
+                const HIGHLIGHT_COLOR = '#ff00ff';
+
+                visibleOrbits.forEach((orbit, orbitIdx) => {
+                    const orbitId = `orbit-${orbit.period}-${orbitIdx}`;
+                    const isHighlighted = manifoldState.highlightedOrbitId === orbitId;
+                    const pointColor = isHighlighted ? HIGHLIGHT_COLOR : getOrbitColor(orbit);
+
+                    // Render orbit points with smaller size than periodic mode
+                    orbit.points.forEach((pt, ptIdx) => {
+                        const geom = new THREE.SphereGeometry(isHighlighted ? 0.04 : 0.02, 10, 10);
+                        const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(pointColor) });
+                        const sphere = new THREE.Mesh(geom, mat);
+                        sphere.position.set(pt[0], pt[1], isHighlighted ? 0.15 : 0.05);
+                        sphere.userData = {
+                            type: 'orbit',
+                            orbitId: orbitId,
+                            period: orbit.period,
+                            stability: orbit.stability,
+                            pointIndex: ptIdx,
+                            pos: { x: pt[0], y: pt[1] },
+                            orbitPoints: orbit.points,
+                            eigenvalues: orbit.eigenvalues || null
+                        };
+                        scene.add(sphere);
+                    });
+
+                    // Render orbit lines if enabled
+                    if (manifoldState.showOrbitLines && orbit.points.length > 1) {
+                        const lineGeom = new THREE.BufferGeometry();
+                        const positions = new Float32Array(orbit.points.length * 3);
+                        orbit.points.forEach((pt, i) => {
+                            positions[i * 3] = pt[0];
+                            positions[i * 3 + 1] = pt[1];
+                            positions[i * 3 + 2] = isHighlighted ? 0.15 : 0.05;
+                        });
+                        lineGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                        const lineColor = isHighlighted ? HIGHLIGHT_COLOR : getOrbitColor(orbit);
+                        const opacity = isHighlighted ? 1.0 : 0.4;
+                        const lineMat = new THREE.LineBasicMaterial({
+                            color: new THREE.Color(lineColor),
+                            opacity: opacity,
+                            transparent: true,
+                            linewidth: isHighlighted ? 3 : 1
+                        });
+                        const line = new THREE.LineLoop(lineGeom, lineMat);
+                        line.userData = { type: 'orbitLine', orbitId: orbitId };
+                        scene.add(line);
+                    }
+                });
+            }
         }
     }, [mode, periodicState, manifoldState, filters]);
 
@@ -1010,13 +1145,18 @@ const SetValuedViz = () => {
             setPeriodicState(prev => ({ ...prev, currentPoint: { x: params.startX, y: params.startY }, trajectoryPoints: [], iteration: 0, hasStarted: false }));
             return;
         }
-        const nextPoint = henonMap(x, y, params.a, params.b);
+        // Use appropriate map based on dynamicSystem
+        const mapFn = dynamicSystem === 'duffing' ? duffingMap : henonMap;
+        const nextPoint = mapFn(x, y, params.a, params.b);
         setPeriodicState(prev => ({ ...prev, currentPoint: nextPoint, trajectoryPoints: [...prev.trajectoryPoints, { x, y }], iteration: prev.iteration + 1, hasStarted: true }));
-    }, [periodicState.isReady, periodicState.isRunning, periodicState.currentPoint, params]);
+    }, [periodicState.isReady, periodicState.isRunning, periodicState.currentPoint, params, dynamicSystem]);
 
     const runToConvergence = useCallback(() => {
         if (!periodicState.isReady || periodicState.isRunning) return;
         setPeriodicState(prev => ({ ...prev, isRunning: true }));
+
+        // Use appropriate map based on dynamicSystem
+        const mapFn = dynamicSystem === 'duffing' ? duffingMap : henonMap;
 
         let currentX = periodicState.currentPoint.x;
         let currentY = periodicState.currentPoint.y;
@@ -1031,7 +1171,7 @@ const SetValuedViz = () => {
                     return;
                 }
                 newPoints.push({ x: currentX, y: currentY });
-                const next = henonMap(currentX, currentY, params.a, params.b);
+                const next = mapFn(currentX, currentY, params.a, params.b);
                 currentX = next.x;
                 currentY = next.y;
                 iteration++;
@@ -1044,7 +1184,7 @@ const SetValuedViz = () => {
             }
         };
         batchAnimationRef.current = requestAnimationFrame(animateStep);
-    }, [periodicState, params]);
+    }, [periodicState, params, dynamicSystem]);
 
     const reset = useCallback(() => {
         if (batchAnimationRef.current) cancelAnimationFrame(batchAnimationRef.current);
@@ -1305,6 +1445,34 @@ const SetValuedViz = () => {
                     </div>
                 </div>
 
+                {/* Dynamic System Selector */}
+                <div style={styles.section}>
+                    <h3 style={styles.sectionTitle}>Dynamic System</h3>
+                    <select
+                        value={dynamicSystem}
+                        onChange={(e) => setDynamicSystem(e.target.value)}
+                        style={{
+                            width: '100%',
+                            padding: '8px 12px',
+                            backgroundColor: '#2d2d2d',
+                            color: '#fff',
+                            border: '1px solid #444',
+                            borderRadius: '6px',
+                            fontSize: '14px',
+                            cursor: 'pointer'
+                        }}
+                        disabled={periodicState.isRunning || animationState.isAnimating}
+                    >
+                        <option value="henon">Hénon Map</option>
+                        <option value="duffing">Duffing Map</option>
+                    </select>
+                    <div style={{ fontSize: '11px', color: '#666', marginTop: '4px' }}>
+                        {dynamicSystem === 'henon'
+                            ? 'x\' = 1 - ax² + y, y\' = bx'
+                            : 'x\' = y, y\' = -bx + ay - y³'}
+                    </div>
+                </div>
+
                 {/* System Parameters */}
                 <div style={styles.section}>
                     <h3 style={styles.sectionTitle}>System Parameters</h3>
@@ -1315,7 +1483,7 @@ const SetValuedViz = () => {
                                 onChange={(e) => setParams({ ...params, a: parseFloat(e.target.value) || 0.1 })}
                                 style={styles.numberInput} disabled={periodicState.isRunning} />
                         </div>
-                        <input type="range" min="0.1" max="2.0" step="0.01" value={params.a}
+                        <input type="range" min="0.1" max={dynamicSystem === 'duffing' ? 3.0 : 2.0} step="0.01" value={params.a}
                             onChange={(e) => setParams({ ...params, a: parseFloat(e.target.value) })}
                             style={styles.slider} disabled={periodicState.isRunning} />
                     </label>
@@ -1330,343 +1498,6 @@ const SetValuedViz = () => {
                             onChange={(e) => setParams({ ...params, b: parseFloat(e.target.value) })}
                             style={styles.slider} disabled={periodicState.isRunning} />
                     </label>
-                    {mode === 'manifold' && (
-                        <label style={styles.label}>
-                            <div style={styles.paramRow}>
-                                <span>epsilon =</span>
-                                <input type="number" step="0.001" value={params.epsilon}
-                                    onChange={(e) => setParams({ ...params, epsilon: parseFloat(e.target.value) || 0.01 })}
-                                    style={styles.numberInput} />
-                            </div>
-                            <input type="range" min="0.001" max="0.2" step="0.001" value={params.epsilon}
-                                onChange={(e) => setParams({ ...params, epsilon: parseFloat(e.target.value) })}
-                                style={styles.slider} />
-                        </label>
-                    )}
-
-                    {/* Save PNG Button - available in both modes */}
-                    <button
-                        onClick={savePNG}
-                        style={{
-                            ...styles.button,
-                            width: '100%',
-                            marginTop: '12px',
-                            backgroundColor: '#2d4a2d',
-                            borderColor: '#3a6a3a',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '8px'
-                        }}
-                    >
-                        Save as PNG
-                    </button>
-
-                    {/* Parameter Animation Section (manifold mode only) */}
-                    {mode === 'manifold' && (
-                        <div style={{ marginTop: '16px', borderTop: '1px solid #333', paddingTop: '16px' }}>
-                            <h4 style={{ fontSize: '12px', fontWeight: '600', marginBottom: '12px', color: '#888' }}>Parameter Animation</h4>
-
-                            <label style={styles.label}>
-                                <div style={styles.paramRow}>
-                                    <span>Animate:</span>
-                                    <select
-                                        value={animationState.parameter}
-                                        onChange={(e) => setAnimationState(prev => ({ ...prev, parameter: e.target.value }))}
-                                        style={{ ...styles.numberInput, width: '100px' }}
-                                        disabled={animationState.isAnimating}
-                                    >
-                                        <option value="a">a</option>
-                                        <option value="b">b</option>
-                                        <option value="epsilon">epsilon</option>
-                                    </select>
-                                </div>
-                            </label>
-
-                            <label style={styles.label}>
-                                <div style={styles.paramRow}>
-                                    <span>Direction:</span>
-                                    <div style={{ display: 'flex', gap: '4px' }}>
-                                        <button
-                                            onClick={() => setAnimationState(prev => ({ ...prev, direction: -1 }))}
-                                            style={{
-                                                ...styles.button,
-                                                width: '40px',
-                                                padding: '4px',
-                                                marginBottom: 0,
-                                                backgroundColor: animationState.direction === -1 ? '#3d5afe' : '#2d2d2d'
-                                            }}
-                                            disabled={animationState.isAnimating}
-                                        >−</button>
-                                        <button
-                                            onClick={() => setAnimationState(prev => ({ ...prev, direction: 1 }))}
-                                            style={{
-                                                ...styles.button,
-                                                width: '40px',
-                                                padding: '4px',
-                                                marginBottom: 0,
-                                                backgroundColor: animationState.direction === 1 ? '#3d5afe' : '#2d2d2d'
-                                            }}
-                                            disabled={animationState.isAnimating}
-                                        >+</button>
-                                    </div>
-                                </div>
-                            </label>
-
-                            <label style={styles.label}>
-                                <div style={styles.paramRow}>
-                                    <span>Range:</span>
-                                    <input
-                                        type="number"
-                                        step="0.05"
-                                        min="0.01"
-                                        max="1.0"
-                                        value={animationState.rangeValue}
-                                        onChange={(e) => setAnimationState(prev => ({ ...prev, rangeValue: parseFloat(e.target.value) || 0.1 }))}
-                                        style={styles.numberInput}
-                                        disabled={animationState.isAnimating}
-                                    />
-                                </div>
-                                <input
-                                    type="range"
-                                    min="0.01"
-                                    max="0.5"
-                                    step="0.01"
-                                    value={animationState.rangeValue}
-                                    onChange={(e) => setAnimationState(prev => ({ ...prev, rangeValue: parseFloat(e.target.value) }))}
-                                    style={styles.slider}
-                                    disabled={animationState.isAnimating}
-                                />
-                            </label>
-
-                            <label style={styles.label}>
-                                <div style={styles.paramRow}>
-                                    <span>Steps:</span>
-                                    <input
-                                        type="number"
-                                        step="1"
-                                        min="5"
-                                        max="30"
-                                        value={animationState.steps}
-                                        onChange={(e) => setAnimationState(prev => ({ ...prev, steps: parseInt(e.target.value) || 10 }))}
-                                        style={styles.numberInput}
-                                        disabled={animationState.isAnimating}
-                                    />
-                                </div>
-                                <input
-                                    type="range"
-                                    min="5"
-                                    max="30"
-                                    step="1"
-                                    value={animationState.steps}
-                                    onChange={(e) => setAnimationState(prev => ({ ...prev, steps: parseInt(e.target.value) }))}
-                                    style={styles.slider}
-                                    disabled={animationState.isAnimating}
-                                />
-                            </label>
-
-                            {/* Play and Record buttons */}
-                            <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                                <button
-                                    onClick={animationState.isAnimating ? stopAnimation : startAnimation}
-                                    disabled={(manifoldState.isComputing && !animationState.isAnimating) || recordingState.isEncoding}
-                                    style={{
-                                        ...styles.button,
-                                        flex: 1,
-                                        marginBottom: 0,
-                                        backgroundColor: animationState.isAnimating ? '#8b0000' : '#1a4a1a',
-                                        borderColor: animationState.isAnimating ? '#b22222' : '#2a6a2a'
-                                    }}
-                                >
-                                    {animationState.isAnimating ? '⏹ Stop' : '▶ Play'}
-                                    {recordingState.recordingEnabled && !animationState.isAnimating && ' & Rec'}
-                                </button>
-                                <button
-                                    onClick={toggleRecording}
-                                    disabled={animationState.isAnimating || recordingState.isEncoding}
-                                    style={{
-                                        ...styles.button,
-                                        width: '50px',
-                                        marginBottom: 0,
-                                        backgroundColor: recordingState.recordingEnabled ? '#b22222' : '#2d2d2d',
-                                        borderColor: recordingState.recordingEnabled ? '#ff4444' : '#444'
-                                    }}
-                                    title={recordingState.recordingEnabled ? 'Recording enabled - will record next animation' : 'Enable recording'}
-                                >
-                                    {recordingState.recordingEnabled ? '🔴' : '⏺'}
-                                </button>
-                            </div>
-
-                            {/* Recording status */}
-                            {recordingState.recordingEnabled && !animationState.isAnimating && !recordingState.isEncoding && (
-                                <div style={{ marginTop: '8px', padding: '6px', background: '#1a0a0a', borderRadius: '4px', border: '1px solid #b22222' }}>
-                                    <div style={{ fontSize: '11px', color: '#ff6666' }}>
-                                        🔴 Recording armed - Press Play to start
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Encoding status */}
-                            {recordingState.isEncoding && (
-                                <div style={{ marginTop: '8px', padding: '8px', background: '#0a0a1a', borderRadius: '4px', border: '1px solid #3d5afe' }}>
-                                    <div style={{ fontSize: '11px', color: '#7986cb', marginBottom: '4px' }}>
-                                        🔄 Encoding video... ({recordingState.frameCount} frames)
-                                    </div>
-                                    <div style={{
-                                        height: '4px',
-                                        backgroundColor: '#1a1a2e',
-                                        borderRadius: '2px',
-                                        overflow: 'hidden'
-                                    }}>
-                                        <div style={{
-                                            width: '100%',
-                                            height: '100%',
-                                            backgroundColor: '#3d5afe',
-                                            animation: 'pulse 1s infinite'
-                                        }} />
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Error message */}
-                            {recordingState.error && (
-                                <div style={{ marginTop: '8px', padding: '6px', background: '#1a0a0a', borderRadius: '4px', fontSize: '10px', color: '#ff6666' }}>
-                                    Error: {recordingState.error}
-                                </div>
-                            )}
-
-                            {animationState.isAnimating && (
-                                <div style={{ marginTop: '8px', padding: '8px', background: '#0f0f0f', borderRadius: '4px' }}>
-                                    <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px' }}>
-                                        {animationState.parameter}: {animationState.baseValue?.toFixed(3)} → {animationState.targetValue?.toFixed(3)}
-                                    </div>
-                                    <div style={{ fontSize: '11px', color: '#888' }}>
-                                        Current: <span style={{ color: '#4CAF50', fontWeight: 'bold' }}>
-                                            {params[animationState.parameter].toFixed(4)}
-                                        </span>
-                                        {recordingState.recordingEnabled && (
-                                            <span style={{ color: '#ff6666', marginLeft: '8px' }}>
-                                                📹 {recordingState.frameCount} frames
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div style={{ fontSize: '10px', color: '#555', marginTop: '4px' }}>
-                                        Step {animationState.currentStep} / {animationState.steps}
-                                        {manifoldState.isComputing && <span style={{ color: '#ff9800', marginLeft: '8px' }}>Computing...</span>}
-                                    </div>
-                                    {/* Progress bar */}
-                                    <div style={{
-                                        marginTop: '6px',
-                                        height: '4px',
-                                        backgroundColor: '#333',
-                                        borderRadius: '2px',
-                                        overflow: 'hidden'
-                                    }}>
-                                        <div style={{
-                                            width: `${(animationState.currentStep / animationState.steps) * 100}%`,
-                                            height: '100%',
-                                            backgroundColor: recordingState.recordingEnabled ? '#ff6666' : '#4CAF50',
-                                            transition: 'width 0.3s ease'
-                                        }} />
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {/* Ulam Settings Section */}
-                    <div style={{ marginTop: '16px', borderTop: '1px solid #333', paddingTop: '16px' }}>
-                        <label style={styles.checkboxLabel}>
-                            <input type="checkbox" checked={ulamState.showUlamOverlay}
-                                onChange={(e) => setUlamState({ ...ulamState, showUlamOverlay: e.target.checked })} />
-                            Show Ulam Grid
-                        </label>
-
-                        {ulamState.showUlamOverlay && (
-                            <>
-                                <label style={styles.checkboxLabel}>
-                                    <input type="checkbox" checked={ulamState.showTransitions}
-                                        onChange={(e) => setUlamState({ ...ulamState, showTransitions: e.target.checked })} />
-                                    Show Transitions
-                                </label>
-                                {mode === 'periodic' && (
-                                    <label style={styles.checkboxLabel}>
-                                        <input type="checkbox" checked={ulamState.showCurrentBox}
-                                            onChange={(e) => setUlamState({ ...ulamState, showCurrentBox: e.target.checked })} />
-                                        Track Current Position
-                                    </label>
-                                )}
-
-                                <label style={styles.label}>
-                                    <div style={styles.paramRow}>
-                                        <span>Epsilon (ε) =</span>
-                                        <input type="number" step="0.01" min="0.001" max="0.5" value={ulamState.epsilon}
-                                            onChange={(e) => setUlamState({ ...ulamState, epsilon: parseFloat(e.target.value) || 0.05 })}
-                                            style={styles.numberInput} disabled={ulamState.isComputing} />
-                                    </div>
-                                    <input type="range" min="0.01" max="0.3" step="0.01" value={ulamState.epsilon}
-                                        onChange={(e) => setUlamState({ ...ulamState, epsilon: parseFloat(e.target.value) })}
-                                        style={styles.slider} disabled={ulamState.isComputing} />
-                                    <span style={{ fontSize: '10px', color: '#666' }}>Ball radius for boundary detection</span>
-                                </label>
-
-                                <label style={styles.label}>
-                                    <div style={styles.paramRow}>
-                                        <span>Grid =</span>
-                                        <input type="number" step="1" min="10" max="80" value={ulamState.subdivisions}
-                                            onChange={(e) => setUlamState({ ...ulamState, subdivisions: parseInt(e.target.value) || 10 })}
-                                            style={styles.numberInput} disabled={ulamState.isComputing} />
-                                    </div>
-                                    <input type="range" min="10" max="60" step="5" value={ulamState.subdivisions}
-                                        onChange={(e) => setUlamState({ ...ulamState, subdivisions: parseInt(e.target.value) })}
-                                        style={styles.slider} disabled={ulamState.isComputing} />
-                                </label>
-                                <label style={styles.label}>
-                                    <div style={styles.paramRow}>
-                                        <span>Samples =</span>
-                                        <input type="number" step="16" min="16" max="256" value={ulamState.pointsPerBox}
-                                            onChange={(e) => setUlamState({ ...ulamState, pointsPerBox: parseInt(e.target.value) || 64 })}
-                                            style={styles.numberInput} disabled={ulamState.isComputing} />
-                                    </div>
-                                    <input type="range" min="16" max="256" step="16" value={ulamState.pointsPerBox}
-                                        onChange={(e) => setUlamState({ ...ulamState, pointsPerBox: parseInt(e.target.value) })}
-                                        style={styles.slider} disabled={ulamState.isComputing} />
-                                    <span style={{ fontSize: '10px', color: '#666' }}>Points per box (√n × √n grid)</span>
-                                </label>
-                                <button onClick={computeUlam} disabled={ulamState.isComputing} style={styles.button}>
-                                    {ulamState.isComputing ? 'Computing...' : 'Recompute Ulam Grid'}
-                                </button>
-
-                                {ulamState.gridBoxes.length > 0 && (
-                                    <div style={{ marginTop: '12px', padding: '8px', background: '#0f0f0f', borderRadius: '4px' }}>
-                                        <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '6px' }}>
-                                            Invariant Measure
-                                        </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                            <span style={{ fontSize: '10px', color: '#666' }}>Low</span>
-                                            <div style={{
-                                                flex: 1,
-                                                height: '12px',
-                                                borderRadius: '2px',
-                                                background: 'linear-gradient(to right, hsl(238, 100%, 50%), hsl(180, 100%, 50%), hsl(100, 100%, 50%), hsl(60, 100%, 50%))'
-                                            }} />
-                                            <span style={{ fontSize: '10px', color: '#666' }}>High</span>
-                                        </div>
-                                        <div style={{ fontSize: '9px', color: '#555', marginTop: '4px' }}>
-                                            Probability of trajectory visiting each region
-                                        </div>
-                                    </div>
-                                )}
-
-                                {ulamState.currentBoxIndex >= 0 && (
-                                    <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
-                                        Current box: {ulamState.currentBoxIndex}
-                                    </div>
-                                )}
-                            </>
-                        )}
-                    </div>
-
                     {mode === 'periodic' && (
                         <>
                             <label style={styles.label}>
@@ -1693,11 +1524,361 @@ const SetValuedViz = () => {
                             </label>
                         </>
                     )}
+                    {mode === 'manifold' && (
+                        <label style={styles.label}>
+                            <div style={styles.paramRow}>
+                                <span>epsilon =</span>
+                                <input type="number" step="0.001" value={params.epsilon}
+                                    onChange={(e) => setParams({ ...params, epsilon: parseFloat(e.target.value) || 0.01 })}
+                                    style={styles.numberInput} />
+                            </div>
+                            <input type="range" min="0.001" max="0.2" step="0.001" value={params.epsilon}
+                                onChange={(e) => setParams({ ...params, epsilon: parseFloat(e.target.value) })}
+                                style={styles.slider} />
+                        </label>
+                    )}
+                </div>
+
+                {/* Save PNG Button - available in both modes */}
+                <button
+                    onClick={savePNG}
+                    style={{
+                        ...styles.button,
+                        width: '100%',
+                        marginTop: '12px',
+                        backgroundColor: '#2d4a2d',
+                        borderColor: '#3a6a3a',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px'
+                    }}
+                >
+                    Save as PNG
+                </button>
+
+                {/* Parameter Animation Section (manifold mode only) */}
+                {mode === 'manifold' && (
+                    <div style={{ marginTop: '16px', borderTop: '1px solid #333', paddingTop: '16px' }}>
+                        <h4 style={{ fontSize: '12px', fontWeight: '600', marginBottom: '12px', color: '#888' }}>Parameter Animation</h4>
+
+                        <label style={styles.label}>
+                            <div style={styles.paramRow}>
+                                <span>Animate:</span>
+                                <select
+                                    value={animationState.parameter}
+                                    onChange={(e) => setAnimationState(prev => ({ ...prev, parameter: e.target.value }))}
+                                    style={{ ...styles.numberInput, width: '100px' }}
+                                    disabled={animationState.isAnimating}
+                                >
+                                    <option value="a">a</option>
+                                    <option value="b">b</option>
+                                    <option value="epsilon">epsilon</option>
+                                </select>
+                            </div>
+                        </label>
+
+                        <label style={styles.label}>
+                            <div style={styles.paramRow}>
+                                <span>Direction:</span>
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                    <button
+                                        onClick={() => setAnimationState(prev => ({ ...prev, direction: -1 }))}
+                                        style={{
+                                            ...styles.button,
+                                            width: '40px',
+                                            padding: '4px',
+                                            marginBottom: 0,
+                                            backgroundColor: animationState.direction === -1 ? '#3d5afe' : '#2d2d2d'
+                                        }}
+                                        disabled={animationState.isAnimating}
+                                    >−</button>
+                                    <button
+                                        onClick={() => setAnimationState(prev => ({ ...prev, direction: 1 }))}
+                                        style={{
+                                            ...styles.button,
+                                            width: '40px',
+                                            padding: '4px',
+                                            marginBottom: 0,
+                                            backgroundColor: animationState.direction === 1 ? '#3d5afe' : '#2d2d2d'
+                                        }}
+                                        disabled={animationState.isAnimating}
+                                    >+</button>
+                                </div>
+                            </div>
+                        </label>
+
+                        <label style={styles.label}>
+                            <div style={styles.paramRow}>
+                                <span>Range:</span>
+                                <input
+                                    type="number"
+                                    step="0.05"
+                                    min="0.01"
+                                    max="1.0"
+                                    value={animationState.rangeValue}
+                                    onChange={(e) => setAnimationState(prev => ({ ...prev, rangeValue: parseFloat(e.target.value) || 0.1 }))}
+                                    style={styles.numberInput}
+                                    disabled={animationState.isAnimating}
+                                />
+                            </div>
+                            <input
+                                type="range"
+                                min="0.01"
+                                max="0.5"
+                                step="0.01"
+                                value={animationState.rangeValue}
+                                onChange={(e) => setAnimationState(prev => ({ ...prev, rangeValue: parseFloat(e.target.value) }))}
+                                style={styles.slider}
+                                disabled={animationState.isAnimating}
+                            />
+                        </label>
+
+                        <label style={styles.label}>
+                            <div style={styles.paramRow}>
+                                <span>Steps:</span>
+                                <input
+                                    type="number"
+                                    step="1"
+                                    min="5"
+                                    max="30"
+                                    value={animationState.steps}
+                                    onChange={(e) => setAnimationState(prev => ({ ...prev, steps: parseInt(e.target.value) || 10 }))}
+                                    style={styles.numberInput}
+                                    disabled={animationState.isAnimating}
+                                />
+                            </div>
+                            <input
+                                type="range"
+                                min="5"
+                                max="30"
+                                step="1"
+                                value={animationState.steps}
+                                onChange={(e) => setAnimationState(prev => ({ ...prev, steps: parseInt(e.target.value) }))}
+                                style={styles.slider}
+                                disabled={animationState.isAnimating}
+                            />
+                        </label>
+
+                        {/* Play and Record buttons */}
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                            <button
+                                onClick={animationState.isAnimating ? stopAnimation : startAnimation}
+                                disabled={(manifoldState.isComputing && !animationState.isAnimating) || recordingState.isEncoding}
+                                style={{
+                                    ...styles.button,
+                                    flex: 1,
+                                    marginBottom: 0,
+                                    backgroundColor: animationState.isAnimating ? '#8b0000' : '#1a4a1a',
+                                    borderColor: animationState.isAnimating ? '#b22222' : '#2a6a2a'
+                                }}
+                            >
+                                {animationState.isAnimating ? '⏹ Stop' : '▶ Play'}
+                                {recordingState.recordingEnabled && !animationState.isAnimating && ' & Rec'}
+                            </button>
+                            <button
+                                onClick={toggleRecording}
+                                disabled={animationState.isAnimating || recordingState.isEncoding}
+                                style={{
+                                    ...styles.button,
+                                    width: '50px',
+                                    marginBottom: 0,
+                                    backgroundColor: recordingState.recordingEnabled ? '#b22222' : '#2d2d2d',
+                                    borderColor: recordingState.recordingEnabled ? '#ff4444' : '#444'
+                                }}
+                                title={recordingState.recordingEnabled ? 'Recording enabled - will record next animation' : 'Enable recording'}
+                            >
+                                {recordingState.recordingEnabled ? '🔴' : '⏺'}
+                            </button>
+                        </div>
+
+                        {/* Recording status */}
+                        {recordingState.recordingEnabled && !animationState.isAnimating && !recordingState.isEncoding && (
+                            <div style={{ marginTop: '8px', padding: '6px', background: '#1a0a0a', borderRadius: '4px', border: '1px solid #b22222' }}>
+                                <div style={{ fontSize: '11px', color: '#ff6666' }}>
+                                    🔴 Recording armed - Press Play to start
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Encoding status */}
+                        {recordingState.isEncoding && (
+                            <div style={{ marginTop: '8px', padding: '8px', background: '#0a0a1a', borderRadius: '4px', border: '1px solid #3d5afe' }}>
+                                <div style={{ fontSize: '11px', color: '#7986cb', marginBottom: '4px' }}>
+                                    🔄 Encoding video... ({recordingState.frameCount} frames)
+                                </div>
+                                <div style={{
+                                    height: '4px',
+                                    backgroundColor: '#1a1a2e',
+                                    borderRadius: '2px',
+                                    overflow: 'hidden'
+                                }}>
+                                    <div style={{
+                                        width: '100%',
+                                        height: '100%',
+                                        backgroundColor: '#3d5afe',
+                                        animation: 'pulse 1s infinite'
+                                    }} />
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Error message */}
+                        {recordingState.error && (
+                            <div style={{ marginTop: '8px', padding: '6px', background: '#1a0a0a', borderRadius: '4px', fontSize: '10px', color: '#ff6666' }}>
+                                Error: {recordingState.error}
+                            </div>
+                        )}
+
+                        {animationState.isAnimating && (
+                            <div style={{ marginTop: '8px', padding: '8px', background: '#0f0f0f', borderRadius: '4px' }}>
+                                <div style={{ fontSize: '11px', color: '#888', marginBottom: '4px' }}>
+                                    {animationState.parameter}: {animationState.baseValue?.toFixed(3)} → {animationState.targetValue?.toFixed(3)}
+                                </div>
+                                <div style={{ fontSize: '11px', color: '#888' }}>
+                                    Current: <span style={{ color: '#4CAF50', fontWeight: 'bold' }}>
+                                        {params[animationState.parameter].toFixed(4)}
+                                    </span>
+                                    {recordingState.recordingEnabled && (
+                                        <span style={{ color: '#ff6666', marginLeft: '8px' }}>
+                                            📹 {recordingState.frameCount} frames
+                                        </span>
+                                    )}
+                                </div>
+                                <div style={{ fontSize: '10px', color: '#555', marginTop: '4px' }}>
+                                    Step {animationState.currentStep} / {animationState.steps}
+                                    {manifoldState.isComputing && <span style={{ color: '#ff9800', marginLeft: '8px' }}>Computing...</span>}
+                                </div>
+                                {/* Progress bar */}
+                                <div style={{
+                                    marginTop: '6px',
+                                    height: '4px',
+                                    backgroundColor: '#333',
+                                    borderRadius: '2px',
+                                    overflow: 'hidden'
+                                }}>
+                                    <div style={{
+                                        width: `${(animationState.currentStep / animationState.steps) * 100}%`,
+                                        height: '100%',
+                                        backgroundColor: recordingState.recordingEnabled ? '#ff6666' : '#4CAF50',
+                                        transition: 'width 0.3s ease'
+                                    }} />
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Ulam Settings Section */}
+                <div style={{ marginTop: '16px', borderTop: '1px solid #333', paddingTop: '16px' }}>
+                    <label style={styles.checkboxLabel}>
+                        <input type="checkbox" checked={ulamState.showUlamOverlay}
+                            onChange={(e) => setUlamState({ ...ulamState, showUlamOverlay: e.target.checked })} />
+                        Show Ulam Grid
+                    </label>
+
+                    {ulamState.showUlamOverlay && (
+                        <>
+                            <label style={styles.checkboxLabel}>
+                                <input type="checkbox" checked={ulamState.showTransitions}
+                                    onChange={(e) => setUlamState({ ...ulamState, showTransitions: e.target.checked })} />
+                                Show Transitions
+                            </label>
+                            {mode === 'periodic' && (
+                                <label style={styles.checkboxLabel}>
+                                    <input type="checkbox" checked={ulamState.showCurrentBox}
+                                        onChange={(e) => setUlamState({ ...ulamState, showCurrentBox: e.target.checked })} />
+                                    Track Current Position
+                                </label>
+                            )}
+
+                            <label style={styles.label}>
+                                <div style={styles.paramRow}>
+                                    <span>Epsilon (ε) =</span>
+                                    <input type="number" step="0.01" min="0.001" max="0.5" value={ulamState.epsilon}
+                                        onChange={(e) => setUlamState({ ...ulamState, epsilon: parseFloat(e.target.value) || 0.05 })}
+                                        style={styles.numberInput} disabled={ulamState.isComputing} />
+                                </div>
+                                <input type="range" min="0.01" max="0.3" step="0.01" value={ulamState.epsilon}
+                                    onChange={(e) => setUlamState({ ...ulamState, epsilon: parseFloat(e.target.value) })}
+                                    style={styles.slider} disabled={ulamState.isComputing} />
+                                <span style={{ fontSize: '10px', color: '#666' }}>Ball radius for boundary detection</span>
+                            </label>
+
+                            <label style={styles.label}>
+                                <div style={styles.paramRow}>
+                                    <span>Grid =</span>
+                                    <input type="number" step="1" min="10" max="80" value={ulamState.subdivisions}
+                                        onChange={(e) => setUlamState({ ...ulamState, subdivisions: parseInt(e.target.value) || 10 })}
+                                        style={styles.numberInput} disabled={ulamState.isComputing} />
+                                </div>
+                                <input type="range" min="10" max="60" step="5" value={ulamState.subdivisions}
+                                    onChange={(e) => setUlamState({ ...ulamState, subdivisions: parseInt(e.target.value) })}
+                                    style={styles.slider} disabled={ulamState.isComputing} />
+                            </label>
+                            <label style={styles.label}>
+                                <div style={styles.paramRow}>
+                                    <span>Samples =</span>
+                                    <input type="number" step="16" min="16" max="256" value={ulamState.pointsPerBox}
+                                        onChange={(e) => setUlamState({ ...ulamState, pointsPerBox: parseInt(e.target.value) || 64 })}
+                                        style={styles.numberInput} disabled={ulamState.isComputing} />
+                                </div>
+                                <input type="range" min="16" max="256" step="16" value={ulamState.pointsPerBox}
+                                    onChange={(e) => setUlamState({ ...ulamState, pointsPerBox: parseInt(e.target.value) })}
+                                    style={styles.slider} disabled={ulamState.isComputing} />
+                                <span style={{ fontSize: '10px', color: '#666' }}>Points per box (√n × √n grid)</span>
+                            </label>
+                            <button onClick={computeUlam} disabled={ulamState.isComputing} style={styles.button}>
+                                {ulamState.isComputing ? 'Computing...' : 'Recompute Ulam Grid'}
+                            </button>
+
+                            {ulamState.gridBoxes.length > 0 && (
+                                <div style={{ marginTop: '12px', padding: '8px', background: '#0f0f0f', borderRadius: '4px' }}>
+                                    <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '6px' }}>
+                                        Invariant Measure
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span style={{ fontSize: '10px', color: '#666' }}>Low</span>
+                                        <div style={{
+                                            flex: 1,
+                                            height: '12px',
+                                            borderRadius: '2px',
+                                            background: 'linear-gradient(to right, hsl(238, 100%, 50%), hsl(180, 100%, 50%), hsl(100, 100%, 50%), hsl(60, 100%, 50%))'
+                                        }} />
+                                        <span style={{ fontSize: '10px', color: '#666' }}>High</span>
+                                    </div>
+                                    <div style={{ fontSize: '9px', color: '#555', marginTop: '4px' }}>
+                                        Probability of trajectory visiting each region
+                                    </div>
+                                </div>
+                            )}
+
+                            {ulamState.currentBoxIndex >= 0 && (
+                                <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                                    Current box: {ulamState.currentBoxIndex}
+                                </div>
+                            )}
+                        </>
+                    )}
                 </div>
 
                 {/* Mode-specific controls */}
                 {mode === 'periodic' && (
                     <>
+                        <div style={styles.section}>
+                            <h3 style={styles.sectionTitle}>Controls</h3>
+                            <button onClick={stepForward} disabled={!periodicState.isReady || periodicState.isRunning} style={styles.button}>
+                                Step Forward
+                            </button>
+                            <button onClick={runToConvergence} disabled={!periodicState.isReady || periodicState.isRunning}
+                                style={{ ...styles.button, ...styles.runButton }}>
+                                {periodicState.isRunning ? 'Running...' : 'Run to Max Iterations'}
+                            </button>
+                            <button onClick={reset} disabled={periodicState.isRunning} style={{ ...styles.button, ...styles.resetButton }}>
+                                Reset
+                            </button>
+                        </div>
+
                         <div style={styles.section}>
                             <h3 style={styles.sectionTitle}>Periodic Orbits</h3>
                             {[1, 2, 3, 4, 5].map(p => (
@@ -1718,41 +1899,53 @@ const SetValuedViz = () => {
                                     onChange={(e) => setPeriodicState({ ...periodicState, showTrail: e.target.checked })} />
                                 Show trajectory trail
                             </label>
-                        </div>
-
-                        <div style={styles.section}>
-                            <h3 style={styles.sectionTitle}>Controls</h3>
-                            <button onClick={stepForward} disabled={!periodicState.isReady || periodicState.isRunning} style={styles.button}>
-                                Step Forward
-                            </button>
-                            <button onClick={runToConvergence} disabled={!periodicState.isReady || periodicState.isRunning}
-                                style={{ ...styles.button, ...styles.runButton }}>
-                                {periodicState.isRunning ? 'Running...' : 'Run to Max Iterations'}
-                            </button>
-                            <button onClick={reset} disabled={periodicState.isRunning} style={{ ...styles.button, ...styles.resetButton }}>
-                                Reset
-                            </button>
+                            <label style={styles.checkboxLabel}>
+                                <input type="checkbox" checked={periodicState.showOrbitLines}
+                                    onChange={(e) => setPeriodicState({ ...periodicState, showOrbitLines: e.target.checked })} />
+                                Show orbit lines
+                            </label>
                         </div>
                     </>
                 )}
 
-                {mode === 'manifold' && manifoldState.fixedPoints.length > 0 && (
-                    <div style={styles.section}>
-                        <h3 style={styles.sectionTitle}>Fixed Points ({manifoldState.fixedPoints.length})</h3>
-                        {manifoldState.fixedPoints.map((fp, i) => (
-                            <div key={i} style={styles.fixedPointItem}>
-                                <span style={{ fontWeight: 'bold', color: fp.stability === 'Attractor' ? '#00ff00' : fp.stability === 'Repeller' ? '#ff4444' : '#ffaa00' }}>
-                                    {fp.stability}
-                                </span>
-                                <span> ({fp.x.toFixed(3)}, {fp.y.toFixed(3)})</span>
+                {mode === 'manifold' && (
+                    <>
+                        <div style={styles.section}>
+                            <h3 style={styles.sectionTitle}>Periodic Orbits</h3>
+                            <label style={styles.checkboxLabel}>
+                                <input type="checkbox" checked={manifoldState.showOrbits}
+                                    onChange={(e) => setManifoldState({ ...manifoldState, showOrbits: e.target.checked })} />
+                                Show orbit markers
+                            </label>
+                            <label style={styles.checkboxLabel}>
+                                <input type="checkbox" checked={manifoldState.showOrbitLines}
+                                    onChange={(e) => setManifoldState({ ...manifoldState, showOrbitLines: e.target.checked })} />
+                                Show orbit lines
+                            </label>
+                        </div>
+                        {manifoldState.fixedPoints.length > 0 && (
+                            <div style={styles.section}>
+                                <h3 style={styles.sectionTitle}>Fixed Points ({manifoldState.fixedPoints.length})</h3>
+                                {manifoldState.fixedPoints.map((fp, i) => (
+                                    <div key={i} style={styles.fixedPointItem}>
+                                        <span style={{ fontWeight: 'bold', color: fp.stability === 'Attractor' ? '#00ff00' : fp.stability === 'Repeller' ? '#ff4444' : '#ffaa00' }}>
+                                            {fp.stability}
+                                        </span>
+                                        <span> ({fp.x.toFixed(3)}, {fp.y.toFixed(3)})</span>
+                                    </div>
+                                ))}
                             </div>
-                        ))}
-                    </div>
+                        )}
+                    </>
                 )}
 
                 {/* Info panel */}
                 <div style={styles.info}>
-                    <div style={styles.infoHeader}>Henon Map: x' = 1 - ax² + y, y' = bx</div>
+                    <div style={styles.infoHeader}>
+                        {dynamicSystem === 'henon'
+                            ? "Hénon Map: x' = 1 - ax² + y, y' = bx"
+                            : "Duffing Map: x' = y, y' = -bx + ay - y³"}
+                    </div>
                     {mode === 'periodic' ? (
                         <>
                             <div>Status: {periodicState.isReady ? (periodicState.isRunning ? 'Running...' : 'Ready') : 'Loading...'}</div>
@@ -1871,7 +2064,7 @@ const SetValuedViz = () => {
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 }
 
