@@ -12,3 +12,6 @@ pub use unstable_manifold::*;
 
 mod ulam;
 pub use ulam::*;
+
+mod video_recorder;
+pub use video_recorder::*;
