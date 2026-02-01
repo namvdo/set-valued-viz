@@ -1,5 +1,5 @@
-mod periodic;
-pub use periodic::*;
+mod henon_periodic;
+pub use henon_periodic::*;
 
 mod lorenz;
 pub use lorenz::*;
@@ -15,3 +15,12 @@ pub use ulam::*;
 
 mod video_recorder;
 pub use video_recorder::*;
+
+mod duffing;
+pub use duffing::*;
+
+mod duffing_manifold;
+pub use duffing_manifold::*;
+
+mod duffing_periodic;
+pub use duffing_periodic::*;
