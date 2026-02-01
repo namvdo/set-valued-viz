@@ -244,7 +244,12 @@ const SetValuedViz = () => {
         camera.position.z = 5;
         cameraRef.current = camera;
 
-        const renderer = new THREE.WebGLRenderer({ canvas: canvasRef.current, antialias: true, alpha: true });
+        const renderer = new THREE.WebGLRenderer({
+            canvas: canvasRef.current,
+            antialias: true,
+            alpha: true,
+            preserveDrawingBuffer: true  // Required for screenshots
+        });
         renderer.setSize(window.innerWidth * 0.75, window.innerHeight);
         renderer.setPixelRatio(window.devicePixelRatio);
         rendererRef.current = renderer;
@@ -698,6 +703,62 @@ const SetValuedViz = () => {
 
         return `henon_${paramName}_a${aStr}_b${bStr}_eps${epsStr}_${startStr}_to_${endStr}.mp4`;
     }, [params.a, params.b, params.epsilon, animationState.parameter, animationState.baseValue, animationState.targetValue]);
+
+    const savePNG = useCallback(async () => {
+        if (!canvasRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current) return;
+
+        // Force a render to ensure canvas has the current frame
+        rendererRef.current.render(sceneRef.current, cameraRef.current);
+
+        const canvas = canvasRef.current;
+        const width = 1920;
+        const height = 1080;
+
+        const offscreen = new OffscreenCanvas(width, height);
+        const ctx = offscreen.getContext('2d');
+
+        ctx.drawImage(canvas, 0, 0, width, height);
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+        ctx.fillRect(10, height - 80, 500, 70);
+
+        ctx.font = 'bold 18px monospace';
+        ctx.fillStyle = '#4CAF50';
+
+        if (mode === 'periodic') {
+            ctx.fillText(`Periodic Orbits | Iteration: ${periodicState.iteration}`, 20, height - 55);
+            ctx.font = '14px monospace';
+            ctx.fillStyle = '#aaa';
+            ctx.fillText(`Current: (${periodicState.currentPoint.x.toFixed(6)}, ${periodicState.currentPoint.y.toFixed(6)})`, 20, height - 32);
+        } else if (mode === 'manifold') {
+            ctx.fillText(`Unstable Manifold`, 20, height - 55);
+            ctx.font = '14px monospace';
+            ctx.fillStyle = '#aaa';
+            const pts = manifoldState.manifolds.reduce((sum, m) => sum + (m.points_positive?.length || 0) + (m.points_negative?.length || 0), 0);
+            ctx.fillText(`${manifoldState.fixedPoints.length} fixed points, ${pts} manifold points`, 20, height - 32);
+        }
+
+        ctx.font = 'bold 14px monospace';
+        ctx.fillStyle = '#4CAF50';
+        ctx.fillText(`a = ${params.a.toFixed(4)}   b = ${params.b.toFixed(4)}   ε = ${params.epsilon.toFixed(4)}`, 20, height - 12);
+
+        const blob = await offscreen.convertToBlob({ type: 'image/png', quality: 1.0 });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+
+        const aStr = params.a.toFixed(3).replace('.', 'p');
+        const bStr = params.b.toFixed(3).replace('.', 'p');
+        const epsStr = params.epsilon.toFixed(4).replace('.', 'p');
+        const modeStr = mode === 'periodic' ? 'periodic' : 'manifold';
+        const iterStr = mode === 'periodic' ? `_iter${periodicState.iteration}` : '';
+
+        a.href = url;
+        a.download = `henon_${modeStr}_a${aStr}_b${bStr}_eps${epsStr}${iterStr}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, [mode, params, periodicState.iteration, periodicState.currentPoint, manifoldState.manifolds, manifoldState.fixedPoints]);
 
     const startEncoding = useCallback(async () => {
         if (recordedFramesRef.current.length === 0) {
@@ -1282,6 +1343,24 @@ const SetValuedViz = () => {
                                 style={styles.slider} />
                         </label>
                     )}
+
+                    {/* Save PNG Button - available in both modes */}
+                    <button
+                        onClick={savePNG}
+                        style={{
+                            ...styles.button,
+                            width: '100%',
+                            marginTop: '12px',
+                            backgroundColor: '#2d4a2d',
+                            borderColor: '#3a6a3a',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '8px'
+                        }}
+                    >
+                        Save as PNG
+                    </button>
 
                     {/* Parameter Animation Section (manifold mode only) */}
                     {mode === 'manifold' && (
