@@ -335,7 +335,6 @@ const SetValuedViz = () => {
 
         raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
 
-        // First check for Ulam box hover if overlay is visible
         if (ulamState.showUlamOverlay && ulamState.gridBoxes.length > 0) {
             const ulamMesh = sceneRef.current.getObjectByName('ulam-grid');
             if (ulamMesh) {
@@ -346,15 +345,19 @@ const SetValuedViz = () => {
                     const measure = ulamState.invariantMeasure ? ulamState.invariantMeasure[boxIndex] : 0;
                     const maxMeasure = ulamState.invariantMeasure ? Math.max(...ulamState.invariantMeasure) : 1;
 
-                    // Get transition info if we have the computer reference
                     let numTransitions = 0;
                     let topTransitions = [];
                     if (ulamComputerRef.current) {
-                        const trans = ulamComputerRef.current.get_transitions(boxIndex);
-                        if (trans && trans.length > 0) {
-                            numTransitions = trans.length;
-                            // Get top 3 transitions by probability
-                            topTransitions = trans.sort((a, b) => b.probability - a.probability).slice(0, 3);
+                        try {
+                            const trans = ulamComputerRef.current.get_transitions(boxIndex);
+                            if (trans && trans.length > 0) {
+                                numTransitions = trans.length;
+                                topTransitions = trans
+                                    .sort((a, b) => (b.probability || 0) - (a.probability || 0))
+                                    .slice(0, 3);
+                            }
+                        } catch (e) {
+                            console.error("Error getting transitions:", e);
                         }
                     }
 

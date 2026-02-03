@@ -392,16 +392,19 @@ impl UlamComputer {
         serde_wasm_bindgen::to_value(&self.grid.boxes).unwrap()
     }
 
-    /// Get the transitions from a specific box index
     pub fn get_transitions(&self, from_box_idx: usize) -> JsValue {
+        #[derive(Serialize)]
+        struct Transition {
+            index: usize,
+            probability: f64,
+        }
+
         if let Some(probs) = self.transitions.get(&from_box_idx) {
-            let result: Vec<serde_json::Value> = probs
+            let result: Vec<Transition> = probs
                 .iter()
-                .map(|(idx, p)| {
-                    serde_json::json!({
-                        "index": idx,
-                        "probability": p
-                    })
+                .map(|(idx, p)| Transition {
+                    index: *idx,
+                    probability: *p,
                 })
                 .collect();
             serde_wasm_bindgen::to_value(&result).unwrap()
