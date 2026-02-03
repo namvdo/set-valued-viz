@@ -222,6 +222,7 @@ const SetValuedViz = () => {
     const encoderWorkerRef = useRef(null);
 
     const ulamComputerRef = useRef(null);
+    const ulamDebounceRef = useRef(null);
 
     const [tooltip, setTooltip] = useState({
         visible: false,
@@ -1250,14 +1251,40 @@ const SetValuedViz = () => {
         }
     }, [wasmModule, params.a, params.b, ulamState.subdivisions, ulamState.pointsPerBox, ulamState.epsilon, periodicState.hasStarted, periodicState.currentPoint]);
 
-    // Auto-compute Ulam when overlay is enabled and we have no grid yet
     useEffect(() => {
-        if (ulamState.showUlamOverlay && wasmModule && ulamState.gridBoxes.length === 0 && !ulamState.isComputing) {
-            computeUlam();
+        if (mode === 'manifold') {
+            setUlamState(prev => ({ ...prev, epsilon: params.epsilon }));
         }
-    }, [ulamState.showUlamOverlay, wasmModule, ulamState.gridBoxes.length, ulamState.isComputing, computeUlam]);
+    }, [mode, params.epsilon]);
 
-    // Update current box index when trajectory point changes
+    useEffect(() => {
+        if (!ulamState.showUlamOverlay || !wasmModule) return;
+
+        if (ulamDebounceRef.current) {
+            clearTimeout(ulamDebounceRef.current);
+        }
+
+
+        ulamDebounceRef.current = setTimeout(() => {
+            computeUlam();
+        }, 200);
+
+        return () => {
+            if (ulamDebounceRef.current) {
+                clearTimeout(ulamDebounceRef.current);
+            }
+        };
+    }, [
+        ulamState.showUlamOverlay,
+        wasmModule,
+        params.a,
+        params.b,
+        ulamState.epsilon,
+        ulamState.subdivisions,
+        ulamState.pointsPerBox,
+        computeUlam
+    ]);
+
     useEffect(() => {
         if (!ulamComputerRef.current || !ulamState.showUlamOverlay) return;
 
@@ -1268,12 +1295,10 @@ const SetValuedViz = () => {
             );
 
             if (boxIdx !== ulamState.currentBoxIndex) {
-                // Also get transitions from current box
                 const transitions = boxIdx >= 0 ? ulamComputerRef.current.get_transitions(boxIdx) : null;
                 setUlamState(prev => ({
                     ...prev,
                     currentBoxIndex: boxIdx,
-                    // If showing current box, update transitions to show from current position
                     transitions: prev.showCurrentBox ? transitions : prev.transitions,
                     selectedBoxIndex: prev.showCurrentBox ? boxIdx : prev.selectedBoxIndex
                 }));
@@ -1828,9 +1853,19 @@ const SetValuedViz = () => {
                                     style={styles.slider} disabled={ulamState.isComputing} />
                                 <span style={{ fontSize: '10px', color: '#666' }}>Points per box (√n × √n grid)</span>
                             </label>
-                            <button onClick={computeUlam} disabled={ulamState.isComputing} style={styles.button}>
-                                {ulamState.isComputing ? 'Computing...' : 'Recompute Ulam Grid'}
-                            </button>
+                            <div style={{ marginTop: '8px', marginBottom: '8px', fontSize: '12px', color: ulamState.isComputing ? '#ff9800' : '#4CAF50', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                {ulamState.isComputing ? (
+                                    <>
+                                        <span className="spinner" style={{ width: '10px', height: '10px', border: '2px solid #ff9800', borderTop: '2px solid transparent', borderRadius: '50%', display: 'inline-block', animation: 'spin 1s linear infinite' }}></span>
+                                        Computing Ulam Grid...
+                                    </>
+                                ) : (
+                                    <span>✓ Grid up to date</span>
+                                )}
+                            </div>
+                            <style>{`
+                                @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                            `}</style>
 
                             {ulamState.gridBoxes.length > 0 && (
                                 <div style={{ marginTop: '12px', padding: '8px', background: '#0f0f0f', borderRadius: '4px' }}>
