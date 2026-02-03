@@ -35,12 +35,23 @@ fn get_time_secs() -> f64 {
     START.get_or_init(Instant::now).elapsed().as_secs_f64()
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console)]
     fn log(s: &str);
     #[wasm_bindgen(js_namespace = console)]
     fn error(s: &str);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn log(_s: &str) {
+    // println!("{}", s); // Silence info logs for benchmark
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn error(s: &str) {
+    eprintln!("{}", s);
 }
 
 macro_rules! console_log {

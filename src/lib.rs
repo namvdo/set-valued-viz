@@ -1,9 +1,6 @@
 mod henon_periodic;
 pub use henon_periodic::*;
 
-mod lorenz;
-pub use lorenz::*;
-
 mod func_equation;
 pub use func_equation::*;
 

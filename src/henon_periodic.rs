@@ -1,7 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::f64;
 use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
 use web_sys::console;
+
+fn log_message(s: &str) {
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&s.into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("{}", s);
+}
 
 #[derive(Debug, Clone, Copy)]
 #[wasm_bindgen]
@@ -88,7 +96,7 @@ pub struct TrajectoryPoint {
     pub classification: PointClassification,
 }
 
-fn henon_map(x: f64, y: f64, a: f64, b: f64) -> (f64, f64) {
+pub fn henon_map(x: f64, y: f64, a: f64, b: f64) -> (f64, f64) {
     (1.0 - a * x * x + y, b * x)
 }
 
@@ -438,13 +446,10 @@ impl HenonSystemAnalysis {
         let initial_seeds = Vec::new();
 
         let orbit_database = davidchack_lai_full(a, b, max_period, &initial_seeds, seed_period);
-        console::log_1(
-            &format!(
-                "Total orbits found using Davidchack & Lai: {}",
-                orbit_database.total_count()
-            )
-            .into(),
-        );
+        log_message(&format!(
+            "Total orbits found using Davidchack & Lai: {}",
+            orbit_database.total_count()
+        ));
 
         Self {
             a,
@@ -475,7 +480,7 @@ impl HenonSystemAnalysis {
                 || x_new.abs() > 100.0
                 || y_new.abs() > 100.0
             {
-                console::log_1(&format!("Point diverged at iteration {}", iter).into());
+                log_message(&format!("Point diverged at iteration {}", iter));
                 break;
             }
 
@@ -491,13 +496,10 @@ impl HenonSystemAnalysis {
             y = y_new;
         }
 
-        console::log_1(
-            &format!(
-                "Trajectory complete. Total points: {}",
-                self.trajectory.len()
-            )
-            .into(),
-        );
+        log_message(&format!(
+            "Trajectory complete. Total points: {}",
+            self.trajectory.len()
+        ));
     }
 }
 
