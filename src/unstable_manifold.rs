@@ -1,3 +1,6 @@
+use crate::henon_periodic::{
+    davidchack_lai_full, PeriodicOrbitDatabase, StabilityType as PeriodicStabilityType,
+};
 use nalgebra::{Matrix2, Matrix4, Vector2, Vector4};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -96,13 +99,13 @@ impl Default for ManifoldConfig {
     fn default() -> Self {
         Self {
             perturb_tol: 1e-5,
-            spacing_tol: 0.02, // Increased from 1e-3 - less dense points, allows reaching stable
+            spacing_tol: 0.02,
             spacing_upper: 10.0,
             conv_tol: 1e-19,
             stable_tol: 1e-14,
-            max_iter: 2000,      // Increased from 500 - more iterations to converge
-            max_points: 100_000, // Reduced - fewer points needed with coarser spacing
-            time_limit: 5.0,     // Increased from 2.0 - more time to converge
+            max_iter: 2000,
+            max_points: 100_000,
+            time_limit: 5.0,
             inner_max: 500,
         }
     }
@@ -493,9 +496,7 @@ impl UnstableManifoldComputer {
                 });
             }
 
-            // Use a practical tolerance for approaching target
-            // The notebook uses 1e-14 with 8000 iterations, but we use a looser one
-            let practical_stable_tol = 0.01; // 1% of typical scale
+            let practical_stable_tol = 0.01;
             if dist_stable <= practical_stable_tol {
                 console_log!(
                     "Approached target point at ({:.4}, {:.4}), dist_stable={:.6}",
@@ -805,7 +806,6 @@ impl NewtonSolver {
 
 #[wasm_bindgen]
 pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, JsValue> {
-    // Check cache first
     let key = cache_key(a, b);
     if let Ok(cache) = get_cache().lock() {
         if let Some(cached) = cache.get(&key) {
@@ -840,177 +840,124 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
         }
     };
 
-    let mut unique_states: Vec<ExtendedState> = Vec::new();
+    console_log!("Finding periodic orbits using Davidchack-Lai algorithm...");
 
-    let one_minus_b = 1.0 - b;
-    let discriminant = one_minus_b * one_minus_b + 4.0 * a;
+    let max_period = 10; // Search up to period-10 orbits
+    let seed_period = 6;
+    let initial_seeds = Vec::new();
+
+    let orbit_database = davidchack_lai_full(a, b, max_period, &initial_seeds, seed_period);
 
     console_log!(
-        "Analytical solver: a={}, b={}, discriminant={}",
-        a,
-        b,
-        discriminant
+        "Found {} periodic orbits (periods 1-{})",
+        orbit_database.total_count(),
+        max_period
     );
 
-    if discriminant >= 0.0 && a.abs() > 1e-10 {
-        let sqrt_disc = discriminant.sqrt();
-        let x1 = (-one_minus_b + sqrt_disc) / (2.0 * a);
-        let x2 = (-one_minus_b - sqrt_disc) / (2.0 * a);
-
-        for x in [x1, x2] {
-            let y = b * x;
-            let pos = Vector2::new(x, y);
-
-            if !x.is_finite() || !y.is_finite() || pos.norm() > 50.0 {
-                continue;
-            }
-
-            // Compute Jacobian eigenvalues and eigenvectors
-            // Jacobian: J = [-2ax, 1; b, 0]
-            let jac = params.jacobian(pos);
-            let trace = jac.trace(); // trace = -2ax
-            let det = jac.determinant(); // det = -b
-            let eig_disc = trace * trace - 4.0 * det;
-
-            console_log!(
-                "Fixed point ({:.4}, {:.4}): trace={:.4}, det={:.4}, eig_disc={:.4}",
-                x,
-                y,
-                trace,
-                det,
-                eig_disc
-            );
-
-            // Compute eigenvector for unstable direction (if saddle)
-            let (l1, l2, is_complex) = if eig_disc >= 0.0 {
-                let sqrt_eig = eig_disc.sqrt();
-                ((trace + sqrt_eig) / 2.0, (trace - sqrt_eig) / 2.0, false)
-            } else {
-                // Complex eigenvalues: λ = trace/2 ± i*sqrt(-eig_disc)/2
-                let real = trace / 2.0;
-                let imag = (-eig_disc).sqrt() / 2.0;
-                let mag = (real * real + imag * imag).sqrt();
-                (mag, mag, true) // Both eigenvalues have same magnitude
-            };
-
-            // For saddles, find the unstable eigenvector
-            let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
-
-            // Eigenvector from (J - λI)v = 0
-            // Row 1: (-2ax - λ)v1 + v2 = 0  =>  v2 = (2ax + λ)v1
-            let v1 = 1.0;
-            let v2 = 2.0 * a * x + unstable_lambda;
-            let norm = (v1 * v1 + v2 * v2).sqrt();
-            let normal = if norm > 1e-10 && !is_complex {
-                Vector2::new(v1 / norm, v2 / norm)
-            } else {
-                // For complex eigenvalues or numerical issues, use a default direction
-                Vector2::new(1.0, 0.0)
-            };
-
-            unique_states.push(ExtendedState { pos, normal });
-            console_log!(
-                "Analytical fixed point: ({:.4}, {:.4}) eigenvalues: {:.4}, {:.4}",
-                x,
-                y,
-                l1,
-                l2
-            );
-        }
-    } else {
-        console_log!(
-            "No real fixed points (discriminant={} < 0 or a={} ≈ 0)",
-            discriminant,
-            a
-        );
-    }
-
     let mut fixed_points_result = Vec::new();
-    let mut all_fixed_points_pos = Vec::new(); // ALL fixed points for manifold termination
-    let mut unstable_points_indices = Vec::new();
+    let mut all_fixed_points_pos = Vec::new();
+    let mut unstable_points_info = Vec::new();
 
-    // Classify points and filter to [-2, 2] range
-    for (idx, state) in unique_states.iter().enumerate() {
-        // Skip points outside [-2, 2] range for display
-        if state.pos.x.abs() > 2.0 || state.pos.y.abs() > 2.0 {
+    for orbit in &orbit_database.orbits {
+        let in_range = orbit
+            .points
+            .iter()
+            .all(|p| p.x.abs() <= 2.0 && p.y.abs() <= 2.0);
+        if !in_range {
             console_log!(
-                "Skipping fixed point ({:.4}, {:.4}) - outside display range",
-                state.pos.x,
-                state.pos.y
+                "Skipping period-{} orbit outside display range",
+                orbit.period
             );
             continue;
         }
 
-        let jac = params.jacobian(state.pos);
-        let trace = jac.trace();
-        let det = jac.determinant();
-        let discriminant = trace * trace - 4.0 * det;
-
-        let (l1, l2) = if discriminant >= 0.0 {
-            let sqrt_disc = discriminant.sqrt();
-            ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0)
-        } else {
-            // Complex eigenvalues, treat magnitude
-            let real = trace / 2.0;
-            let imag = (-discriminant).sqrt() / 2.0;
-            let mag = (real * real + imag * imag).sqrt();
-            (mag, mag)
+        let stability_str = match orbit.stability {
+            PeriodicStabilityType::Stable => "Attractor",
+            PeriodicStabilityType::Unstable => "Repeller",
+            PeriodicStabilityType::Saddle => "Saddle",
         };
 
-        // Simple classification based on magnitude
-        let abs_l1 = l1.abs();
-        let abs_l2 = l2.abs();
-
-        let stability = if abs_l1 < 1.0 && abs_l2 < 1.0 {
-            "Attractor"
-        } else if abs_l1 > 1.0 && abs_l2 > 1.0 {
-            "Repeller"
-        } else {
-            "Saddle"
-        };
+        // Compute eigenvalues for the first point in orbit
+        let first_point = &orbit.points[0];
+        let (_, jac_fn) = compose_henon_n_times(first_point.x, first_point.y, orbit.period, a, b);
+        let (l1, l2, _is_complex) = jac_fn.eigenvalues();
 
         console_log!(
-            "Classified ({:.4}, {:.4}) as {} with eigenvalues ({:.4}, {:.4})",
-            state.pos.x,
-            state.pos.y,
-            stability,
+            "Period-{} orbit at ({:.4}, {:.4}): {} with eigenvalues ({:.4}, {:.4})",
+            orbit.period,
+            first_point.x,
+            first_point.y,
+            stability_str,
             l1,
             l2
         );
 
-        fixed_points_result.push(FixedPointResult {
-            x: state.pos.x,
-            y: state.pos.y,
-            eigenvalues: (l1, l2),
-            stability: stability.to_string(),
-        });
+        // Add all points in the orbit to fixed_points_result and termination targets
+        for point in &orbit.points {
+            fixed_points_result.push(FixedPointResult {
+                x: point.x,
+                y: point.y,
+                eigenvalues: (l1, l2),
+                stability: stability_str.to_string(),
+            });
 
-        // ALL fixed points are potential termination targets (for closed curves)
-        all_fixed_points_pos.push(state.pos);
+            all_fixed_points_pos.push(Vector2::new(point.x, point.y));
+        }
 
-        if stability == "Saddle" || stability == "Repeller" {
-            unstable_points_indices.push(fixed_points_result.len() - 1); // Use result index, not unique_states index
+        // If this is a saddle or repeller, we'll compute its unstable manifold
+        if stability_str == "Saddle" || stability_str == "Repeller" {
+            // Store info for manifold computation
+            // Use the first point in the orbit as the representative
+            let pos = Vector2::new(first_point.x, first_point.y);
+
+            // Compute unstable eigenvector
+            let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
+
+            // For period-n orbits, we need the Jacobian at the point
+            let jac_matrix = if orbit.period == 1 {
+                params.jacobian(pos)
+            } else {
+                // For period > 1, use accumulated Jacobian
+                let mut current_pos = pos;
+                let mut jac_accum = params.jacobian(current_pos);
+
+                for _ in 1..orbit.period {
+                    current_pos = params.henon_map(&current_pos).unwrap();
+                    let next_jac = params.jacobian(current_pos);
+                    jac_accum = next_jac * jac_accum;
+                }
+                jac_accum
+            };
+
+            // Compute eigenvector: (J - λI)v = 0
+            // From first row: (j11 - λ)v1 + j12*v2 = 0
+            let j11 = jac_matrix[(0, 0)];
+            let j12 = jac_matrix[(0, 1)];
+
+            let v1 = 1.0;
+            let v2 = -(j11 - unstable_lambda) / j12.max(1e-10);
+            let norm = (v1 * v1 + v2 * v2).sqrt();
+
+            let eigenvector = if norm > 1e-10 {
+                Vector2::new(v1 / norm, v2 / norm)
+            } else {
+                Vector2::new(1.0, 0.0)
+            };
+
+            unstable_points_info.push((
+                orbit.period,
+                pos,
+                eigenvector,
+                unstable_lambda,
+                stability_str == "Repeller",
+            ));
         }
     }
 
-    let attractor_count = fixed_points_result
-        .iter()
-        .filter(|fp| fp.stability == "Attractor")
-        .count();
-    let saddle_count = fixed_points_result
-        .iter()
-        .filter(|fp| fp.stability == "Saddle")
-        .count();
-    let repeller_count = fixed_points_result
-        .iter()
-        .filter(|fp| fp.stability == "Repeller")
-        .count();
-
     console_log!(
-        "Fixed point summary: {} attractors, {} saddles, {} repellers",
-        attractor_count,
-        saddle_count,
-        repeller_count
+        "Fixed point summary: {} total points for {} orbits",
+        all_fixed_points_pos.len(),
+        orbit_database.total_count()
     );
 
     console_log!(
@@ -1018,52 +965,37 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
         all_fixed_points_pos.len()
     );
 
-    for (i, pos) in all_fixed_points_pos.iter().enumerate() {
-        console_log!("  Target {}: ({:.4}, {:.4})", i, pos.x, pos.y);
-    }
-
     console_log!(
-        "Will compute manifolds for {} unstable/saddle points: {:?}",
-        unstable_points_indices.len(),
-        unstable_points_indices
+        "Will compute manifolds for {} unstable/saddle orbits",
+        unstable_points_info.len()
     );
 
     let mut manifolds_result = Vec::new();
     let config = ManifoldConfig::default();
     let computer = UnstableManifoldComputer::new(params, config);
 
-    // Compute manifolds for unstable points
-    for idx in unstable_points_indices {
-        let fp_info = &fixed_points_result[idx];
-        let pos = Vector2::new(fp_info.x, fp_info.y);
-
-        let saddle_type = if fp_info.stability == "Repeller" {
+    for (period, pos, eigenvector, eigenvalue, is_repeller) in unstable_points_info {
+        let saddle_type = if is_repeller {
             SaddleType::DualRepeller
         } else {
             SaddleType::Regular
         };
 
-        let l1 = fp_info.eigenvalues.0;
-        let l2 = fp_info.eigenvalues.1;
-
-        // Compute unstable eigenvector from scratch
-        let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
-        let v1 = 1.0;
-        let v2 = 2.0 * a * fp_info.x + unstable_lambda;
-        let norm = (v1 * v1 + v2 * v2).sqrt();
-        let eigenvector = if norm > 1e-10 {
-            Vector2::new(v1 / norm, v2 / norm)
-        } else {
-            Vector2::new(1.0, 0.0)
-        };
-
         let saddle_pt = SaddlePoint {
             position: pos,
-            period: 1,
+            period,
             eigenvector,
-            eigenvalue: unstable_lambda,
+            eigenvalue,
             saddle_type,
         };
+
+        console_log!(
+            "Computing manifold for period-{} {} at ({:.4}, {:.4})",
+            period,
+            if is_repeller { "repeller" } else { "saddle" },
+            pos.x,
+            pos.y
+        );
 
         if let Ok((traj_plus, traj_minus)) =
             computer.compute_manifold(&saddle_pt, &all_fixed_points_pos)
@@ -1102,7 +1034,7 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
                     stop_reason: format!("{:?}", traj_minus.stop_reason),
                 },
                 saddle_point: (pos.x, pos.y),
-                eigenvalue: saddle_pt.eigenvalue,
+                eigenvalue,
             });
         }
     }
@@ -1112,7 +1044,6 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
         fixed_points: fixed_points_result,
     };
 
-    // Store in cache
     if let Ok(mut cache) = get_cache().lock() {
         cache.insert(
             key,
@@ -1132,6 +1063,34 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
             Err(JsValue::from_str("Failed to serialize result"))
         }
     }
+}
+
+fn compose_henon_n_times(
+    x0: f64,
+    y0: f64,
+    n: usize,
+    a: f64,
+    b: f64,
+) -> (Vector2<f64>, crate::henon_periodic::Jacobian) {
+    use crate::henon_periodic::{henon_jacobian, henon_map as hm};
+
+    if n == 0 {
+        return (Vector2::new(x0, y0), henon_jacobian(x0, y0, a, b));
+    }
+
+    let mut x = x0;
+    let mut y = y0;
+    let mut jac_acc = henon_jacobian(x, y, a, b);
+
+    (x, y) = hm(x, y, a, b);
+
+    for _ in 1..n {
+        let jac_current = henon_jacobian(x, y, a, b);
+        jac_acc = jac_current.multiply(&jac_acc);
+        (x, y) = hm(x, y, a, b);
+    }
+
+    return (Vector2::new(x, y), jac_acc);
 }
 
 #[wasm_bindgen]
