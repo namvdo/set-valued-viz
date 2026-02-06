@@ -5,6 +5,8 @@ use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use web_sys::console;
 
+use crate::StabilityType;
+
 fn log_message(s: &str) {
     #[cfg(target_arch = "wasm32")]
     console::log_1(&s.into());
@@ -328,3 +330,29 @@ impl Jacobian4x4 {
     }
 }
 
+pub struct PeriodicOrbit {
+    pub points: Vec<Point>,
+    pub extended_points: Vec<ExtendedPoint>,
+    pub period: usize,
+    pub stability: StabilityType,
+    pub eigenvalues: Vec<f64>
+}
+
+pub struct TrajectoryPoint {
+    pub x: f64,
+    pub y: f64, 
+    pub classification: PointClassification
+}
+
+pub fn henon_map(x: f64, y: f64, a: f64, b: f64) -> (f64, f64) {
+    (1.0 - a * x * x + y, b * x)
+}
+
+fn henon_jacobian(x: f64, _y: f64, a: f64, b: f64) -> Jacobian {
+    Jacobian {
+        j11: -2.0 * a * x,
+        j12: 1.0,
+        j21: b,
+        j22: 0.0,
+    }
+}
