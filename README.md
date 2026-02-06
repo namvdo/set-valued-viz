@@ -1,5 +1,5 @@
 # Visualization of Set-valued Dynamical System
-Iteractive web-based visualization tool for exploring set-valued dynamical systems with bounded noise, developed as part of the Advanced Computing Project (ACP2) research course at the University of Oulu.
+Iteractive web-based visualization tool for exploring set-valued dynamical systems with additive bounded noise, developed as part of the Advanced Computing Project (ACP2) research course at the University of Oulu.
 ## Mathematical Bacground
 In classical analysis, a **single-valued function** (or simply a function) $f: X \to Y$ assigns each point $x \in X$ to exactly one point $y \in Y$, written $y = f(x)$. Traditional dynamical systems using single-valued maps to describe deterministic evolution: given initial state $x_0$, the trajectory is uniquuely determined as $x_1 = f(x_0), x_2 = f(x_1), x_3= f(x_2)$ and so forth.
 
