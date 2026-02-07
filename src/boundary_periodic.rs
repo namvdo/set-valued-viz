@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use core::f64;
-use std::f64;
 use std::f64::consts::PI;
 use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
@@ -29,42 +28,134 @@ pub struct Point {
 pub struct ExtendedPoint {
     pub x: f64,
     pub y: f64,
-    pub n_x: f64,
-    pub n_y: f64,
+    pub nx: f64,
+    pub ny: f64,
 }
 
 impl ExtendedPoint {
     pub fn new(x: f64, y: f64, n_x: f64, n_y: f64) -> Self {
-        Self { x, y, n_x, n_y }
+        Self { x, y, nx: n_x, ny: n_y }
     }
 
     pub fn from_angle(x: f64, y: f64, theta: f64) -> Self {
         Self {
             x: x, 
             y: y, 
-            n_x: theta.cos(), 
-            n_y: theta.sin() 
+            nx: theta.cos(), 
+            ny: theta.sin() 
         }
     }
 
 
     pub fn normalize(&mut self) {
-        let norm = (self.n_x * self.n_x + self.n_y * self.n_y);
+        let norm = (self.nx * self.nx + self.ny * self.ny);
         if norm > 1e-12 {
-            self.n_x /= norm;
-            self.n_y /= norm;
+            self.nx /= norm;
+            self.ny /= norm;
         }
     }
 
 
     pub fn is_finite(&self) -> bool {
-        self.x.is_finite() && self.y.is_finite() && self.n_x.is_finite() && self.n_y.is_finite()
+        self.x.is_finite() && self.y.is_finite() && self.nx.is_finite() && self.ny.is_finite()
     }
 
     pub fn is_bounded(&self, max_val: f64) -> bool {
         self.x.abs() < max_val && self.y.abs() < max_val
     }
 }
+
+
+#[derive(Debug, Clone)]
+pub struct PeriodicOrbit {
+    pub points: Vec<Point>,
+    pub extended_points: Vec<ExtendedPoint>,
+    pub period: usize,
+    pub stability: StabilityType,
+    pub eigenvalues: Vec<f64>
+}
+
+#[derive(Clone, Debug)]
+pub struct PeriodicOrbitDatabase {
+    pub orbits: Vec<PeriodicOrbit>,
+}
+
+impl PeriodicOrbitDatabase {
+    pub fn new() -> Self {
+        Self { orbits: Vec::new() }
+    }
+
+    pub fn add_orbit(&mut self, orbit: PeriodicOrbit) {
+        self.orbits.push(orbit);
+    }
+
+    pub fn contains_point(&self, x: f64, y: f64, tol: f64) -> bool {
+        self.orbits.iter().any(|orbit| {
+            orbit 
+                .points
+                .iter() 
+                .any(|p| (p.x - x).abs() < tol && (p.y - y).abs() < tol)
+        })
+    }
+
+    pub fn contains_extended_point(&self, p: &ExtendedPoint, tol: f64) -> bool {
+        self.orbits.iter().any(|orbit| {
+            orbit.extended_points.iter().any(|ep| {
+                let dist = ((ep.x - p.x).powi(2) 
+                    + (ep.y - p.y).powi(2) 
+                    + (ep.nx - p.nx).powi(2) 
+                    + (ep.ny - p.ny).powi(2)).sqrt();
+                dist < tol
+            })
+        })
+    }
+
+    fn find_matching_orbit(&self, x: f64, y: f64, tol: f64) -> Option<(usize, StabilityType, f64)> {
+        for orbit in &self.orbits {
+            for point in &orbit.points {
+                let dist = ((point.x - x).powi(2) + (point.y - y).powi(2)).sqrt();
+                if dist < tol {
+                    return Some((orbit.period, orbit.stability.clone(), dist));
+                }
+            }
+        }
+        None
+    }
+
+    pub fn classify_point(&self, x: f64, y: f64, tol: f64) -> PointClassification {
+        if let Some((period, stability, distance)) = self.find_matching_orbit(x, y, tol) {
+            PointClassification::NearPeriodicOrbit { 
+                period: period,
+                stability: stability, 
+                distance: distance 
+            }
+
+        } else {
+            PointClassification::Regular
+        }
+    }
+
+    pub fn total_count(&self) -> usize {
+        self.orbits.len()
+    }
+
+    pub fn get_points_of_period(&self, period: usize) -> Vec<Point> {
+        self.orbits.iter() 
+            .filter(|orbit| orbit.period == period)
+            .flat_map(|o| o.points.clone())
+            .collect()
+    }
+
+    pub fn get_extended_points_of_period(&self, period: usize) -> Vec<ExtendedPoint> {
+        self.orbits.iter()
+            .filter(|orbit| orbit.period == period)
+            .flat_map(|o| o.extended_points.clone())
+            .collect()
+    }
+
+}
+
+
 
 #[derive(Debug, Clone, Copy)]
 #[wasm_bindgen]
@@ -78,7 +169,7 @@ pub enum PointClassification {
     Regular,
     NearPeriodicOrbit {
         period: usize,
-        stability: PeriodicType,
+        stability: StabilityType,
         distance: f64,
     }
 }
@@ -331,13 +422,7 @@ impl Jacobian4x4 {
     }
 }
 
-pub struct PeriodicOrbit {
-    pub points: Vec<Point>,
-    pub extended_points: Vec<ExtendedPoint>,
-    pub period: usize,
-    pub stability: StabilityType,
-    pub eigenvalues: Vec<f64>
-}
+
 
 pub struct TrajectoryPoint {
     pub x: f64,
@@ -377,8 +462,8 @@ pub fn boundary_map(x: f64, y: f64, nx: f64, ny: f64, a: f64, b: f64, ep: f64) -
         return ExtendedPoint {
             x: f64::NAN,
             y: f64::NAN,
-            n_x: f64::NAN,
-            n_y: f64::NAN,
+            nx: f64::NAN,
+            ny: f64::NAN,
         };
     }
 
@@ -391,7 +476,592 @@ pub fn boundary_map(x: f64, y: f64, nx: f64, ny: f64, a: f64, b: f64, ep: f64) -
     ExtendedPoint {
         x: f_x + ep * nx_prime,
         y: f_y + ep * ny_prime,
-        n_x: nx_prime,
-        n_y: ny_prime,
+        nx: nx_prime,
+        ny: ny_prime,
     }
 }
+
+
+// Jacobian of the boundary map E(x, y, n_x, n_y) = (f_x + ep * n_x', f_y + ep * n_y', n_x', n_y')
+pub fn boundary_map_jacobian(x: f64, y: f64, nx: f64, ny: f64, a: f64, b: f64, epsilon: f64) -> Jacobian4x4 {
+    // compute intermediate quantities
+    let n_tilda_x = ny;
+    let n_tilda_y = nx / b + 2.0 * a * x * ny / b;
+    let norm_sq = n_tilda_x * n_tilda_x + n_tilda_y * n_tilda_y;
+    let norm = norm_sq.sqrt();
+
+    if norm < 1e-12 {
+        return Jacobian4x4::identity();
+    } 
+
+    let nx_prime = n_tilda_x / norm;
+    let ny_prime = n_tilda_y / norm;
+
+    //  Derivatives of ñx = ny/b
+    let dn_tilda_x_dx = 0.0;
+    let dn_tilda_x_dy = 0.0;
+    let dn_tilda_x_dn_x = 0.0;
+    let dn_tilda_x_dn_y = 1.0;
+
+    // Derivatives of ñy = nx/b + 2ax*ny/b
+    let dn_tilda_y_dx = 2.0 * a * ny / b;
+    let dn_tilda_y_dy = 0.0;
+    let dn_tilda_y_dn_x = 1.0 / b;
+    let dn_tilda_y_dn_y = 2.0 * a * x / b;
+     
+    // derivatives of norm = sqrt((ñx)² + (ñy)²)
+    let dnorm_dx = (n_tilda_x * dn_tilda_x_dx + n_tilda_y * dn_tilda_y_dx) / norm;
+    let dnorm_dy = (n_tilda_x * dn_tilda_x_dy + n_tilda_y * dn_tilda_y_dy) / norm;
+    let dnorm_dn_x = (n_tilda_x * dn_tilda_x_dn_x + n_tilda_y * dn_tilda_y_dn_x) / norm;
+    let dnorm_dn_y = (n_tilda_x * dn_tilda_x_dn_y + n_tilda_y * dn_tilda_y_dn_y) / norm;
+
+    // derivative of nx' = ñx/norm using quotient rule
+    let dn_x_prime_dx = (dn_tilda_x_dx * norm - n_tilda_x * dnorm_dx) / norm_sq; 
+    let dn_x_prime_dy = (dn_tilda_x_dy * norm - n_tilda_x * dnorm_dy) / norm_sq;
+    let dn_x_prime_dn_x = (dn_tilda_x_dn_x * norm - n_tilda_x * dnorm_dn_x) / norm_sq;
+    let dn_x_prime_dn_y = (dn_tilda_x_dn_y * norm - n_tilda_x * dnorm_dn_y) / norm_sq;
+
+    // derivative of ny' = ñy/norm using quotient rule
+    let dn_y_prime_dx = (dn_tilda_y_dx * norm - n_tilda_y * dnorm_dx) / norm_sq;
+    let dn_y_prime_dy = (dn_tilda_y_dy * norm - n_tilda_y * dnorm_dy) / norm_sq;
+    let dn_y_prime_dn_x = (dn_tilda_y_dn_x * norm - n_tilda_y * dnorm_dn_x) / norm_sq;
+    let dn_y_prime_dn_y = (dn_tilda_y_dn_y * norm - n_tilda_y * dnorm_dn_y) / norm_sq;
+
+
+    // Jacobian of E 
+    // E = [fx + ep*nx', fy + ep*ny', nx', ny']
+    // where fx = 1 - ax^2 + y, fy = bx
+    
+
+    // dE/dx 
+    let de1_dx = -2.0 * a * x + epsilon * dn_x_prime_dx;
+    let de2_dx = b + epsilon * dn_y_prime_dx;
+    let de3_dx = dn_x_prime_dx;
+    let de4_dx = dn_y_prime_dx;
+    
+    // dE/dy 
+    let de1_dy = 1.0 + epsilon * dn_x_prime_dy;
+    let de2_dy = epsilon * dn_y_prime_dy;
+    let de3_dy = dn_x_prime_dy;
+    let de4_dy = dn_y_prime_dy;
+
+    // dE/dnx 
+    let de1_dnx = epsilon * dn_x_prime_dn_x;
+    let de2_dnx = epsilon * dn_y_prime_dn_x; 
+    let de3_dnx = dn_x_prime_dn_x;
+    let de4_dnx = dn_y_prime_dn_x;
+    // dE/dny 
+
+    let de1_dny = epsilon * dn_x_prime_dn_y;
+    let de2_dny = epsilon * dn_y_prime_dn_y;
+    let de3_dny = dn_x_prime_dn_y;
+    let de4_dny = dn_y_prime_dn_y;
+
+    Jacobian4x4 { data: [
+        [de1_dx, de1_dy, de1_dnx, de1_dny],
+        [de2_dx, de2_dy, de2_dnx, de2_dny],
+        [de3_dx, de3_dy, de3_dnx, de3_dny],
+        [de4_dx, de4_dy, de4_dnx, de4_dny],
+    ]}
+}
+
+// Compose boundary map n times and return the result with accumulated Jacobian 
+pub fn compose_boundary_map_n_times(
+    p: ExtendedPoint, 
+    n: usize,
+    a: f64, 
+    b: f64, 
+    epsilon: f64 
+) -> (ExtendedPoint, Jacobian4x4) {
+    let mut current = p; 
+
+    if n == 0 {
+        return (p, Jacobian4x4::identity());
+    }
+
+    let mut accumulated_jacobian = boundary_map_jacobian(p.x, p.y, p.nx, p.ny, a, b, epsilon);
+
+    current = boundary_map(p.x, p.y, p.nx, p.ny, a, b, epsilon);
+
+    for _ in 1..n {
+        if !current.is_finite() || !current.is_bounded(1e10) {
+            return (
+                ExtendedPoint::new(f64::NAN, f64::NAN, f64::NAN, f64::NAN),
+                Jacobian4x4::identity()
+            );
+        }
+
+        let jac_current = boundary_map_jacobian(current.x, current.y, current.nx, current.ny, a, b, epsilon);
+        accumulated_jacobian = jac_current.multiply(&accumulated_jacobian);
+        current = boundary_map(current.x, current.y, current.nx, current.ny, a, b, epsilon);
+    }
+
+    (current, accumulated_jacobian)
+
+}
+
+// Find periodic point of the boundary map using Davidchack-Lai method
+// adjust for 4d boundary map 
+pub fn find_boundary_periodic_point_davidchack_lai(
+    x0: f64,
+    y0: f64, 
+    nx_0: f64,
+    ny_0: f64,
+    period: usize,
+    a: f64,
+    b: f64,
+    epsilon: f64,
+    beta: Option<f64>,
+    max_iter: usize,
+    tol: f64,
+) -> Option<ExtendedPoint> {
+    let mut x = x0;
+    let mut y = y0;
+    let mut nx = nx_0;
+    let mut ny = ny_0;
+
+    let beta_val = beta.unwrap_or_else(|| 15.0 * 1.3_f64.powi(period as i32));
+
+    for _ in 0..max_iter {
+        if !x.is_finite() || !y.is_finite() || !nx.is_finite() || !ny.is_finite() || x.abs() > 100.0 || y.abs() > 100.0 {
+            return None;
+        }
+
+        let current = ExtendedPoint::new(x, y, nx,ny);
+        let (mapped, jac_fn) = compose_boundary_map_n_times(current, period, a, b, epsilon);
+
+        if !mapped.is_finite() {
+            return None;
+        }
+
+        // compute g = E^n(p) - p
+        let gx = mapped.x - x;
+        let gy = mapped.y - y;
+        let gnx = mapped.nx - nx;
+        let gny = mapped.ny - ny;
+
+        let g_norm = (gx * gx + gy * gy + gnx * gnx + gny * gny).sqrt();
+
+        if g_norm < 1e-10 {
+            return Some(current);
+        }
+
+        // compute Jacobian of g = E^n - I
+        let jac_g = jac_fn.subtract_identity();
+
+        // Davidchank-Lai stabilization: (β||g||I - (Dg)) * Δ = g
+        let scaled_beta = beta_val * g_norm;
+
+        // modified Jacobian:  β||g||I - Jac_g
+
+        let mut modified_jac = [[0.0;4];4];
+        for i in 0..4 {
+            for j in 0..4 {
+                modified_jac[i][j] = -jac_g.data[i][j];
+            }
+            modified_jac[i][i] += scaled_beta;
+        }
+        let modified_jac = Jacobian4x4 { data: modified_jac };
+
+        // Solve for Δ = (β||g||I - (Dg))^-1 * g
+        let jac_inv = match modified_jac.inverse() {
+            Some(inv) => inv,
+            None => return None,
+        };
+
+        // delta = J^-1 * g 
+        let dx = jac_inv.data[0][0] * gx
+            + jac_inv.data[0][1] * gy
+            + jac_inv.data[0][2] * gnx
+            + jac_inv.data[0][3] * gny;
+        let dy = jac_inv.data[1][0] * gx
+            + jac_inv.data[1][1] * gy
+            + jac_inv.data[1][2] * gnx
+            + jac_inv.data[1][3] * gny;
+        let dnx = jac_inv.data[2][0] * gx
+            + jac_inv.data[2][1] * gy
+            + jac_inv.data[2][2] * gnx
+            + jac_inv.data[2][3] * gny;
+        let dny = jac_inv.data[3][0] * gx
+            + jac_inv.data[3][1] * gy
+            + jac_inv.data[3][2] * gnx
+            + jac_inv.data[3][3] * gny;
+
+        if !dx.is_finite() || !dy.is_finite() || !dnx.is_finite() || !dny.is_finite() {
+            return None;
+        }
+
+        x += dx;
+        y += dy;
+        nx += dnx;
+        ny += dny;
+
+        // renormalize the normal vector after each step
+        let norm = (nx * nx + ny * ny).sqrt();
+        nx /= norm;
+        ny /= norm;
+
+        let delta_norm = (dx * dx + dy * dy + dnx * dnx + dny * dny).sqrt();
+        if delta_norm < tol {
+            break;
+        }
+    }
+
+    // final check if we converged 
+    let final_point = ExtendedPoint::new(x, y, nx, ny);
+    let (mapped, _) = compose_boundary_map_n_times(final_point, period, a, b, epsilon);
+
+    let dist = (mapped.x - x).powi(2) 
+        + (mapped.y - y).powi(2) 
+        + (mapped.nx - nx).powi(2) 
+        + (mapped.ny - ny).powi(2);
+    
+    if dist < 1e-6 {
+        return Some(final_point);
+    } else {
+        None
+    }
+
+}
+
+// main function for finding periodic orbits of boundary map using Davidchack-Lai
+pub fn davidchack_lai_boundary_map(a: f64, b: f64, epsilon: f64, max_period: usize, grid_size: usize, theta_grid_size: usize) -> PeriodicOrbitDatabase {
+    let mut database = PeriodicOrbitDatabase::new();
+
+    // grid search in [-2.0, 2.0] x [-2.0, 2.0] x [0, 2pi]
+    let x_range = (-2.0, 2.0);
+    let y_range = (-2.0, 2.0);
+    let theta_range = (0.0, 2.0 * PI);
+
+    // stage 1: find orbits of all periods using 3D grid search
+    for period in 1..=max_period {
+        log_message(&format!("Searching for period {} orbits...", period));
+
+        let mut found_count = 0;
+        let total_points = grid_size * grid_size * theta_grid_size;
+        let mut checked = 0;
+
+        for i in 0..grid_size {
+            for j in 0..grid_size {
+                for k in 0..theta_grid_size {
+                    checked += 1;
+                    if checked % 1000 == 0 {
+                        log_message(&format!(
+                            "searching periodic points .. {}/{}", checked, total_points
+                        ));
+                    }
+
+                    let x0 = x_range.0 + (x_range.1 - x_range.0) * (i as f64 + 0.5) / (grid_size as f64);
+                    let y0 = y_range.0 + (y_range.1 - y_range.0) * (j as f64 + 0.5) / (grid_size as f64);
+
+                    let theta = theta_range.0 + (theta_range.1 - theta_range.0) * (k as f64 + 0.5) / (theta_grid_size as f64);
+                    let nx0 = theta.cos();
+                    let ny0 = theta.sin();
+
+                    if let Some(fixed_point) = find_boundary_periodic_point_davidchack_lai(
+                        x0, y0, nx0, ny0, period, a, b, epsilon, None, 100, 1e-10,
+                    )  {
+                        if !fixed_point.is_bounded(100.0) {
+                            continue;
+                        }
+
+                        if database.contains_extended_point(&fixed_point, 0.01) {
+                            continue;
+                        }
+
+                        // compute orbit points 
+                        let mut orbit_points = vec![Point {
+                            x: fixed_point.x,
+                            y: fixed_point.y,
+                        }];
+
+                        let mut extended_orbit_points = vec![fixed_point];
+                        let mut current = fixed_point;
+
+                        for _ in 1..period {
+                            current = boundary_map(
+                                current.x, current.y, current.nx, current.ny, a, b, epsilon,
+                            );
+                            orbit_points.push(Point{
+                                x: current.x,
+                                y: current.y,
+                            });
+                            extended_orbit_points.push(current);
+                        }
+                        
+                        let (_, jac_fn) = compose_boundary_map_n_times(fixed_point, period, a, b, epsilon);
+                        let (stability, eigenvalues) = classify_stability_4d(&jac_fn);
+
+                        database.add_orbit(PeriodicOrbit {
+                            points: orbit_points,
+                            extended_points: extended_orbit_points,
+                            period,
+                            stability,
+                            eigenvalues
+                        });
+                        found_count += 1;
+                    }
+                }
+            }
+        }
+        log_message(&format!(
+            "Found {} orbits of period: {}", found_count, period
+        ))
+    }
+    database
+}
+
+/// Classify stability based on 4D Jacobian eigenvalues 
+/// For boundary map, one eigenvalue is always 0 (constraint ||n|| = 1)
+/// We ignore this eigenvalue and classify based on the remaining 3
+pub fn classify_stability_4d(jac: &Jacobian4x4) -> (StabilityType, Vec<f64>) {
+    let eigenvalues = jac.eigenvalue_magnitudes();
+
+    // filter out non-zero eigenvalues 
+    let nonzero_eigenvalues: Vec<f64> = eigenvalues.into_iter().filter(|&e| e > 1e-5).collect();
+    if nonzero_eigenvalues.is_empty() {
+        return (StabilityType::Stable, vec![]);
+    }
+
+    let all_stable = nonzero_eigenvalues.iter().all(|&e| e < 0.999);
+    let all_unstable = nonzero_eigenvalues.iter().all(|&e| e > 1.001);
+
+    let stability = if all_stable {
+        StabilityType::Stable
+    } else if all_unstable {
+        StabilityType::Unstable
+    } else {
+        StabilityType::Saddle
+    };
+
+    (stability, nonzero_eigenvalues)
+}
+
+fn verify_minimal_period_boundary(
+    point: &ExtendedPoint,
+    claimed_period: usize,
+    a: f64,
+    b: f64, 
+    epsilon: f64
+) -> bool {
+    for divisor in 1..claimed_period {
+        if claimed_period % divisor == 0 {
+            let (mapped, _) = compose_boundary_map_n_times(*point, divisor, a, b, epsilon);
+            let dist = (mapped.x - point.x).powi(2) 
+                + (mapped.y - point.y).powi(2) 
+                + (mapped.nx - point.nx).powi(2)
+                + (mapped.ny - point.ny).powi(2);
+            if dist < 1e-6 {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+pub struct HenonSystemAnalysis {
+    pub a: f64,
+    pub b: f64, 
+    pub epsilon: f64, 
+    pub orbit_database: PeriodicOrbitDatabase,
+    pub trajectory: Vec<TrajectoryPoint>
+}
+
+impl HenonSystemAnalysis {
+    pub fn new(a: f64, b: f64, epsilon: f64, max_period: usize) -> Self {
+        let grid_size = 20;
+        let theta_grid_size = 20;
+        
+        let orbit_database = davidchack_lai_boundary_map(a, b, epsilon, max_period, grid_size, theta_grid_size);
+        log_message(&format!("Total orbits found using Davidchack-Lai (boundary map): {}", orbit_database.total_count()));
+        
+        Self {
+            a, b, epsilon, orbit_database, trajectory: Vec::new() 
+        }
+    }
+    
+    pub fn track_trajectory(&mut self, initial_x: f64, initial_y: f64, max_iterations: usize) {
+        self.trajectory.clear();
+        
+        let mut x = initial_x;
+        let mut y = initial_y;
+        
+        let classification = self.orbit_database.classify_point(x, y, 0.005);
+        self.trajectory.push(TrajectoryPoint {
+            x, y, classification
+        });
+        
+        for iter in 1..=max_iterations {
+            let (x_new, y_new) = henon_map(x, y, self.a, self.b);
+            
+            if !x_new.is_finite() || !y_new.is_finite() || x_new.abs() > 100.0 || y_new.abs() > 100.0 {
+                log_message(&format!("Point diverged at iteration {}", iter));
+                break;
+            }
+            let classification = self.orbit_database.classify_point(x_new, y_new, 1e-4);
+            self.trajectory.push(TrajectoryPoint {
+                x, y, classification
+            });
+            
+            x = x_new;
+            y = y_new;
+        }
+        
+        log_message(&format!("Trajectory complete. Total points: {}", self.trajectory.len()));
+    }
+}
+
+
+#[derive(Serialize, Deserialize)]
+pub struct TrajectoryPointJS {
+    pub x: f64,
+    pub y: f64,
+    pub classification: String,
+    pub period: Option<usize>,
+    pub stability: Option<String>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PeriodicOrbitJS {
+    pub points: Vec<(f64, f64)>,
+    pub extended_points: Vec<(f64, f64, f64, f64)>,
+    pub period: usize,
+    pub stability: String,
+    pub eigenvalues: Vec<f64>
+}
+
+impl From<&StabilityType> for String {
+    fn from(stability: &StabilityType) -> Self {
+        match stability {
+            StabilityType::Stable => "stable".to_string(),
+            StabilityType::Unstable => "unstable".to_string(),
+            StabilityType::Saddle => "saddle".to_string(),
+        }
+    }
+}
+impl From<&TrajectoryPoint> for TrajectoryPointJS {
+    fn from(point: &TrajectoryPoint) -> Self {
+        match &point.classification {
+            PointClassification::Regular => TrajectoryPointJS {
+                x: point.x,
+                y: point.y, 
+                classification: "regular".to_string(),
+                period: None,
+                stability: None
+            } ,
+            PointClassification::NearPeriodicOrbit {
+                period,
+                stability,
+                distance: _,
+            } => TrajectoryPointJS {
+                x: point.x,
+                y: point.y,
+                classification: "periodic".to_string(),
+                period: Some(*period),
+                stability: Some(String::from(stability),)
+            }
+            
+        } 
+    }
+}
+
+
+#[wasm_bindgen]
+pub struct HenonSystemWasm {
+    system: HenonSystemAnalysis,
+    current_iteration: usize,
+}
+
+#[wasm_bindgen]
+impl HenonSystemWasm {
+    #[wasm_bindgen(constructor)]
+    pub fn new(a: f64, b: f64, epsilon: f64, max_period: usize) -> Result<HenonSystemWasm, JsValue> {
+        console_error_panic_hook::set_once();
+        
+        let system = HenonSystemAnalysis::new(a, b, epsilon, max_period);
+        Ok (Self {
+            system,
+            current_iteration: 0
+        })
+    }
+    
+    #[wasm_bindgen(js_name = getPeriodicOrbits)]
+    pub fn get_periodic_orbits(&self, x: f64, y: f64, max_iterations: usize) -> Result<JsValue, JsValue> {
+        let orbits: Vec<PeriodicOrbitJS> = self
+            .system
+            .orbit_database
+            .orbits
+            .iter()
+            .map(|orbit| PeriodicOrbitJS {
+                points: orbit.points.iter().map(|p| (p.x, p.y)).collect(),
+                extended_points: orbit
+                    .extended_points
+                    .iter()
+                    .map(|p|(p.x, p.y, p.nx, p.ny))
+                    .collect(),
+                period: orbit.period,
+                stability: String::from(&orbit.stability),
+                eigenvalues: orbit.eigenvalues.clone(),
+            }).collect();
+        serde_wasm_bindgen::to_value(&orbits).map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+    }
+    #[wasm_bindgen(js_name = "trackTrajectory")]
+    pub fn track_trajectory(&mut self, initial_x: f64, initial_y: f64, max_iterations: usize) {
+        self.system.track_trajectory(initial_x, initial_y, max_iterations);
+        self.current_iteration = 0;
+    }
+    
+    #[wasm_bindgen(js_name = "getCurrentPoint")]
+    pub fn get_current_point(&self) -> Result<JsValue, JsValue>{
+        if self.current_iteration < self.system.trajectory.len() {
+            let point = &self.system.trajectory[self.current_iteration];
+            let point_js = TrajectoryPointJS::from(point);
+            
+            serde_wasm_bindgen::to_value(&point_js)
+                .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+        } else {
+            Ok(JsValue::NULL)
+        }
+    }
+    
+    #[wasm_bindgen(js_name = "getTrajectory")] 
+    pub fn get_trajectory(&self, start: usize, end: usize) -> Result<JsValue, JsValue> {
+        let end = end.min(self.system.trajectory.len());
+        let points: Vec<TrajectoryPointJS> = self.system.trajectory[start..end]
+            .iter()
+            .map(TrajectoryPointJS::from)
+            .collect();
+        
+        serde_wasm_bindgen::to_value(&points).map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+    }
+    
+    #[wasm_bindgen()]
+    pub fn step(&mut self) -> bool {
+        if self.current_iteration + 1 < self.system.trajectory.len() {
+            self.current_iteration += 1;
+            true
+        } else {
+            false
+        }
+    }
+    
+    #[wasm_bindgen]
+    pub fn reset(&mut self) {self.current_iteration = 0; }
+    
+    #[wasm_bindgen(js_name = "getTotalIterations")]
+    pub fn get_total_iterations(&self) -> usize { self.system.trajectory.len() }
+    
+    #[wasm_bindgen(js_name = "getCurrentIteration")]
+    pub fn get_current_iteration(&self) -> usize { self.current_iteration }
+    
+    #[wasm_bindgen(js_name = "getOrbitCount")]
+    pub fn get_orbit_count(&self) -> usize { self.system.orbit_database.total_count() }
+    
+    #[wasm_bindgen(js_name = "getEpsilon")]
+    pub fn get_epsilon(&self) -> f64 { self.system.epsilon }
+}
+
+
+
+
+
