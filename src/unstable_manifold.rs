@@ -90,20 +90,24 @@ pub struct ManifoldConfig {
     pub max_points: usize,
     pub time_limit: f64,
     pub inner_max: usize,
+    pub self_cross_tol: f64,      
+    pub self_compare_skip: usize, 
 }
 
 impl Default for ManifoldConfig {
     fn default() -> Self {
         Self {
             perturb_tol: 1e-5,
-            spacing_tol: 0.02, // Increased from 1e-3 - less dense points, allows reaching stable
+            spacing_tol: 0.02,
             spacing_upper: 10.0,
             conv_tol: 1e-19,
             stable_tol: 1e-14,
-            max_iter: 2000,      // Increased from 500 - more iterations to converge
-            max_points: 100_000, // Reduced - fewer points needed with coarser spacing
-            time_limit: 5.0,     // Increased from 2.0 - more time to converge
+            max_iter: 2000,     
+            max_points: 100_000, 
+            time_limit: 5.0,     
             inner_max: 500,
+            self_cross_tol: 0.01,  
+            self_compare_skip: 50, 
         }
     }
 }
@@ -136,6 +140,7 @@ pub enum StopReason {
     MaxPoints,
     TimeExceeded,
     ApproachedTargetPoint,
+    SelfIntersection, 
 }
 
 impl HenonParams {
@@ -493,9 +498,7 @@ impl UnstableManifoldComputer {
                 });
             }
 
-            // Use a practical tolerance for approaching target
-            // The notebook uses 1e-14 with 8000 iterations, but we use a looser one
-            let practical_stable_tol = 0.01; // 1% of typical scale
+            let practical_stable_tol = 1e-14;
             if dist_stable <= practical_stable_tol {
                 console_log!(
                     "Approached target point at ({:.4}, {:.4}), dist_stable={:.6}",
@@ -507,6 +510,32 @@ impl UnstableManifoldComputer {
                     points: traj_add,
                     stop_reason: StopReason::ApproachedTargetPoint,
                 });
+            }
+
+            // self-intersection detection: check if current point is close to any previous
+            // trajectory point (excluding the local neighborhood to avoid false positives)
+            if traj_add.len() > self.config.self_compare_skip {
+                let check_range = traj_add.len() - self.config.self_compare_skip;
+                let self_cross_dist = traj_add[..check_range]
+                    .iter()
+                    .map(|p| (vec_iter.pos - p.pos).norm())
+                    .filter(|d| d.is_finite())
+                    .fold(f64::INFINITY, |a, d| a.min(d));
+
+                if self_cross_dist <= self.config.self_cross_tol {
+                    console_log!(
+                        "Self-intersection detected at ({:.4}, {:.4}), dist={:.6}",
+                        vec_iter.pos.x,
+                        vec_iter.pos.y,
+                        self_cross_dist
+                    );
+                    // Add the final point to close the curve
+                    traj_add.push(vec_iter);
+                    return Ok(Trajectory {
+                        points: traj_add,
+                        stop_reason: StopReason::SelfIntersection,
+                    });
+                }
             }
 
             if dist_diff > spacing_tol || dist_diff.is_nan() {
