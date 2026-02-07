@@ -1034,12 +1034,7 @@ impl BoundaryHenonSystemWasm {
     }
 
     #[wasm_bindgen(js_name = getPeriodicOrbits)]
-    pub fn get_periodic_orbits(
-        &self,
-        x: f64,
-        y: f64,
-        max_iterations: usize,
-    ) -> Result<JsValue, JsValue> {
+    pub fn get_periodic_orbits(&self) -> Result<JsValue, JsValue> {
         let orbits: Vec<PeriodicOrbitJS> = self
             .system
             .orbit_database

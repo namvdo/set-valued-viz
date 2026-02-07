@@ -509,11 +509,16 @@ const SetValuedViz = () => {
                 if (cancelled) return;
 
                 // Use appropriate system based on dynamicSystem selection
-                const SystemClass = dynamicSystem === 'duffing'
-                    ? wasmModule.DuffingSystemWasm
-                    : wasmModule.HenonSystemWasm;
+                let SystemClass;
+                let system;
 
-                const system = new SystemClass(params.a, params.b, params.maxPeriod);
+                if (dynamicSystem === 'duffing') {
+                    SystemClass = wasmModule.DuffingSystemWasm;
+                    system = new SystemClass(params.a, params.b, params.maxPeriod);
+                } else {
+                    SystemClass = wasmModule.BoundaryHenonSystemWasm;
+                    system = new SystemClass(params.a, params.b, params.epsilon, params.maxPeriod);
+                }
                 if (cancelled) { system.free(); return; }
 
                 const orbits = system.getPeriodicOrbits();

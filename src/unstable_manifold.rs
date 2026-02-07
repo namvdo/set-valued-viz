@@ -90,8 +90,8 @@ pub struct ManifoldConfig {
     pub max_points: usize,
     pub time_limit: f64,
     pub inner_max: usize,
-    pub self_cross_tol: f64,      
-    pub self_compare_skip: usize, 
+    pub self_cross_tol: f64,
+    pub self_compare_skip: usize,
 }
 
 impl Default for ManifoldConfig {
@@ -102,12 +102,12 @@ impl Default for ManifoldConfig {
             spacing_upper: 10.0,
             conv_tol: 1e-19,
             stable_tol: 1e-14,
-            max_iter: 2000,     
-            max_points: 100_000, 
-            time_limit: 5.0,     
+            max_iter: 2000,
+            max_points: 100_000,
+            time_limit: 5.0,
             inner_max: 500,
-            self_cross_tol: 0.01,  
-            self_compare_skip: 50, 
+            self_cross_tol: 0.01,
+            self_compare_skip: 50,
         }
     }
 }
@@ -140,7 +140,7 @@ pub enum StopReason {
     MaxPoints,
     TimeExceeded,
     ApproachedTargetPoint,
-    SelfIntersection, 
+    SelfIntersection,
 }
 
 impl HenonParams {
@@ -1311,6 +1311,7 @@ pub fn compute_manifold_from_orbits(
     #[derive(Deserialize)]
     struct OrbitInput {
         points: Vec<(f64, f64)>,
+        extended_points: Option<Vec<(f64, f64, f64, f64)>>,
         period: usize,
         stability: String,
     }
@@ -1397,48 +1398,65 @@ pub fn compute_manifold_from_orbits(
         let (px, py) = orbit.points[0];
         let pos = Vector2::new(px, py);
 
-        // Compute eigenvector for period-n map
-        // For period 1: use Jacobian at the point
-        // For period n: need to use accumulated Jacobian
-        let jac = params.jacobian(pos);
-
-        // Accumulate Jacobian for higher periods
-        let mut jac_accum = jac;
-        let mut current_pos = pos;
-        for _ in 1..orbit.period {
-            current_pos = Vector2::new(
-                1.0 - a * current_pos.x * current_pos.x + current_pos.y,
-                b * current_pos.x,
-            );
-            let next_jac = params.jacobian(current_pos);
-            jac_accum = next_jac * jac_accum;
-        }
-
-        let trace = jac_accum.trace();
-        let det = jac_accum.determinant();
-        let disc = trace * trace - 4.0 * det;
-
-        let (l1, l2) = if disc >= 0.0 {
-            let sqrt_disc = disc.sqrt();
-            ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0)
+        // Determine eigenvector and eigenvalue
+        // If we have extended points (from boundary map), use the normal to find tangent
+        // Otherwise, fallback to Henon Jacobian
+        let (eigenvector, unstable_lambda) = if let Some(ref ext) = orbit.extended_points {
+            if !ext.is_empty() {
+                let (_, _, nx, ny) = ext[0];
+                // The tangent is orthogonal to the normal (nx, ny)
+                // Tangent = (ny, -nx) or (-ny, nx)
+                let tangent = Vector2::new(ny, -nx);
+                // Use a placeholder eigenvalue or compute trace if needed, but it's not critical for direction
+                (tangent, 2.0)
+            } else {
+                (Vector2::new(1.0, 0.0), 2.0)
+            }
         } else {
-            (trace / 2.0, trace / 2.0)
-        };
+            // Compute eigenvector for period-n map
+            // For period 1: use Jacobian at the point
+            // For period n: need to use accumulated Jacobian
+            let jac = params.jacobian(pos);
 
-        // Find unstable eigenvector
-        let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
+            // Accumulate Jacobian for higher periods
+            let mut jac_accum = jac;
+            let mut current_pos = pos;
+            for _ in 1..orbit.period {
+                current_pos = Vector2::new(
+                    1.0 - a * current_pos.x * current_pos.x + current_pos.y,
+                    b * current_pos.x,
+                );
+                let next_jac = params.jacobian(current_pos);
+                jac_accum = next_jac * jac_accum;
+            }
 
-        // For accumulated Jacobian, eigenvector is more complex
-        // Use (J - λI)v = 0, from first row: (j11 - λ)v1 + j12*v2 = 0
-        let j11 = jac_accum[(0, 0)];
-        let j12 = jac_accum[(0, 1)];
-        let v1 = 1.0;
-        let v2 = -(j11 - unstable_lambda) / j12.max(1e-10);
-        let norm = (v1 * v1 + v2 * v2).sqrt();
-        let eigenvector = if norm > 1e-10 {
-            Vector2::new(v1 / norm, v2 / norm)
-        } else {
-            Vector2::new(1.0, 0.0)
+            let trace = jac_accum.trace();
+            let det = jac_accum.determinant();
+            let disc = trace * trace - 4.0 * det;
+
+            let (l1, l2) = if disc >= 0.0 {
+                let sqrt_disc = disc.sqrt();
+                ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0)
+            } else {
+                (trace / 2.0, trace / 2.0)
+            };
+
+            // Find unstable eigenvector
+            let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
+
+            // For accumulated Jacobian, eigenvector is more complex
+            // Use (J - λI)v = 0, from first row: (j11 - λ)v1 + j12*v2 = 0
+            let j11 = jac_accum[(0, 0)];
+            let j12 = jac_accum[(0, 1)];
+            let v1 = 1.0;
+            let v2 = -(j11 - unstable_lambda) / j12.max(1e-10);
+            let norm = (v1 * v1 + v2 * v2).sqrt();
+            let eigenvector = if norm > 1e-10 {
+                Vector2::new(v1 / norm, v2 / norm)
+            } else {
+                Vector2::new(1.0, 0.0)
+            };
+            (eigenvector, unstable_lambda)
         };
 
         let saddle_type = if orbit.stability == "unstable" {
