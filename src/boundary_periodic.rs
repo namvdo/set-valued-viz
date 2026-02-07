@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use core::f64;
 use std::f64;
 use std::f64::consts::PI;
 use wasm_bindgen::prelude::*;
@@ -354,5 +355,43 @@ fn henon_jacobian(x: f64, _y: f64, a: f64, b: f64) -> Jacobian {
         j12: 1.0,
         j21: b,
         j22: 0.0,
+    }
+}
+
+/// Boundary map for Henon map 
+/// E(x, y, n_x, n_y) = (f_x + ep * n_x', f_y + ep * n_y', n_x', n_y')
+/// where (n_x, n_y) is the outward normal vector to the boundary 
+/// and (n_x', n_y') is the outward normal vector to the boundary after one iteration 
+/// ep is a small parameter that controls the thickness of the boundary 
+/// 
+/// Normal evolution: (ñ1, ñ2) = (J^-1)^T * (n1, n2)
+/// For Henon map J^-1 = [[0, 1/b], [1, 2ax/b]]
+/// (J^-1)^T = [[0, 1], [1/b, 2ax/b]]
+/// => ñ_x = n_y, ñy = n_x/b + 2ax*n_y/b
+pub fn boundary_map(x: f64, y: f64, nx: f64, ny: f64, a: f64, b: f64, ep: f64) -> ExtendedPoint {
+    let n_tilda_x = ny; 
+    let n_tilda_y = nx / b + 2.0 * a * x * ny / b;
+    
+    let norm = (n_tilda_x * n_tilda_x + n_tilda_y * n_tilda_y).sqrt();
+    if norm < 1e-12 {
+        return ExtendedPoint {
+            x: f64::NAN,
+            y: f64::NAN,
+            n_x: f64::NAN,
+            n_y: f64::NAN,
+        };
+    }
+
+    let nx_prime = n_tilda_x / norm;
+    let ny_prime = n_tilda_y / norm;
+
+    let f_x = 1.0 - a * x * x + y;
+    let f_y = b * x;
+
+    ExtendedPoint {
+        x: f_x + ep * nx_prime,
+        y: f_y + ep * ny_prime,
+        n_x: nx_prime,
+        n_y: ny_prime,
     }
 }
