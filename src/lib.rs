@@ -1,5 +1,6 @@
-mod henon_periodic;
-pub use henon_periodic::*;
+// Primary boundary_periodic module for 4D boundary map periodic orbits
+mod boundary_periodic;
+pub use boundary_periodic::*;
 
 mod func_equation;
 pub use func_equation::*;

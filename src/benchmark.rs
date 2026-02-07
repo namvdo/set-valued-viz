@@ -1,9 +1,14 @@
 use henon_periodic_orbits::{
-    henon_map, HenonParams, HenonSystemAnalysis, ManifoldConfig, SaddlePoint, SaddleType,
+    BoundaryHenonSystemAnalysis, HenonParams, ManifoldConfig, SaddlePoint, SaddleType,
     UlamComputer, UnstableManifoldComputer,
 };
 use nalgebra::Vector2;
 use std::time::Instant;
+
+// Local henon_map for trajectory benchmarking (standard 2D Hénon map)
+fn henon_map(x: f64, y: f64, a: f64, b: f64) -> (f64, f64) {
+    (1.0 - a * x * x + y, b * x)
+}
 
 fn main() {
     println!("# Performance Benchmark Results\n");
@@ -26,7 +31,7 @@ fn benchmark_periodic_orbits() {
 
     for max_period in 1..=8 {
         let start = Instant::now();
-        let system = HenonSystemAnalysis::new(a, b, max_period);
+        let system = BoundaryHenonSystemAnalysis::new(a, b, 0.0625, max_period);
         let duration = start.elapsed();
         let orbits_count = system.orbit_database.total_count();
 

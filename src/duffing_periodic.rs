@@ -3,10 +3,194 @@ use std::f64;
 use wasm_bindgen::prelude::*;
 use web_sys::console;
 
-use crate::henon_periodic::{
-    Jacobian, PeriodicOrbit, PeriodicOrbitDatabase, PeriodicOrbitJS, Point, PointClassification,
-    StabilityType, TrajectoryPoint, TrajectoryPointJS,
-};
+#[wasm_bindgen]
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum DuffingStabilityType {
+    Stable,
+    Unstable,
+    Saddle,
+}
+
+pub type StabilityType = DuffingStabilityType;
+
+impl From<&StabilityType> for String {
+    fn from(stability: &StabilityType) -> Self {
+        match stability {
+            StabilityType::Stable => "stable".to_string(),
+            StabilityType::Unstable => "unstable".to_string(),
+            StabilityType::Saddle => "saddle".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Jacobian {
+    pub j11: f64,
+    pub j12: f64,
+    pub j21: f64,
+    pub j22: f64,
+}
+
+impl Jacobian {
+    pub fn multiply(&self, other: &Jacobian) -> Jacobian {
+        Jacobian {
+            j11: self.j11 * other.j11 + self.j12 * other.j21,
+            j12: self.j11 * other.j12 + self.j12 * other.j22,
+            j21: self.j21 * other.j11 + self.j22 * other.j21,
+            j22: self.j21 * other.j12 + self.j22 * other.j22,
+        }
+    }
+
+    pub fn eigenvalues(&self) -> (f64, f64, bool) {
+        let trace = self.j11 + self.j22;
+        let det = self.j11 * self.j22 - self.j12 * self.j21;
+        let discriminant = trace * trace - 4.0 * det;
+
+        if discriminant >= 0.0 {
+            let sqrt_disc = discriminant.sqrt();
+            ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0, false)
+        } else {
+            let modulus = det.sqrt();
+            (modulus, modulus, true)
+        }
+    }
+
+    pub fn inverse(&self) -> Option<Jacobian> {
+        let det = self.j11 * self.j22 - self.j12 * self.j21;
+        if det.abs() < 1e-15 {
+            return None;
+        }
+        Some(Jacobian {
+            j11: self.j22 / det,
+            j12: -self.j12 / det,
+            j21: -self.j21 / det,
+            j22: self.j11 / det,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PeriodicOrbit {
+    pub points: Vec<Point>,
+    pub period: usize,
+    pub stability: StabilityType,
+}
+
+#[derive(Debug, Clone)]
+pub enum PointClassification {
+    Regular,
+    NearPeriodicOrbit {
+        period: usize,
+        stability: StabilityType,
+        distance: f64,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct PeriodicOrbitDatabase {
+    pub orbits: Vec<PeriodicOrbit>,
+}
+
+impl PeriodicOrbitDatabase {
+    pub fn new() -> Self {
+        Self { orbits: Vec::new() }
+    }
+
+    pub fn add_orbit(&mut self, orbit: PeriodicOrbit) {
+        self.orbits.push(orbit);
+    }
+
+    pub fn contains_point(&self, x: f64, y: f64, tol: f64) -> bool {
+        self.orbits.iter().any(|orbit| {
+            orbit
+                .points
+                .iter()
+                .any(|p| (p.x - x).abs() < tol && (p.y - y).abs() < tol)
+        })
+    }
+
+    pub fn get_points_of_period(&self, period: usize) -> Vec<Point> {
+        self.orbits
+            .iter()
+            .filter(|orbit| orbit.period == period)
+            .flat_map(|orbit| orbit.points.clone())
+            .collect()
+    }
+
+    pub fn total_count(&self) -> usize {
+        self.orbits.len()
+    }
+
+    pub fn classify_point(&self, x: f64, y: f64, threshold: f64) -> PointClassification {
+        for orbit in &self.orbits {
+            for point in &orbit.points {
+                let distance = ((x - point.x).powi(2) + (y - point.y).powi(2)).sqrt();
+                if distance < threshold {
+                    return PointClassification::NearPeriodicOrbit {
+                        period: orbit.period,
+                        stability: orbit.stability.clone(),
+                        distance,
+                    };
+                }
+            }
+        }
+        PointClassification::Regular
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TrajectoryPoint {
+    pub x: f64,
+    pub y: f64,
+    pub classification: PointClassification,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct TrajectoryPointJS {
+    pub x: f64,
+    pub y: f64,
+    pub classification: String,
+    pub period: Option<usize>,
+    pub stability: Option<String>,
+}
+
+impl From<&TrajectoryPoint> for TrajectoryPointJS {
+    fn from(point: &TrajectoryPoint) -> Self {
+        match &point.classification {
+            PointClassification::Regular => TrajectoryPointJS {
+                x: point.x,
+                y: point.y,
+                classification: "regular".to_string(),
+                period: None,
+                stability: None,
+            },
+            PointClassification::NearPeriodicOrbit {
+                period,
+                stability,
+                distance: _,
+            } => TrajectoryPointJS {
+                x: point.x,
+                y: point.y,
+                classification: "periodic".to_string(),
+                period: Some(*period),
+                stability: Some(String::from(stability)),
+            },
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PeriodicOrbitJS {
+    pub points: Vec<(f64, f64)>,
+    pub period: usize,
+    pub stability: String,
+}
 
 /// Duffing map: x_{n+1} = y_n, y_{n+1} = -b * x_n + a*y_n - y_n^3
 fn duffing_map(x: f64, y: f64, a: f64, b: f64) -> (f64, f64) {
