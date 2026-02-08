@@ -453,6 +453,7 @@ fn henon_jacobian(x: f64, _y: f64, a: f64, b: f64) -> Jacobian {
 /// For Henon map J^-1 = [[0, 1/b], [1, 2ax/b]]
 /// (J^-1)^T = [[0, 1], [1/b, 2ax/b]]
 /// => ñ_x = n_y, ñy = n_x/b + 2ax*n_y/b
+#[wasm_bindgen]
 pub fn boundary_map(x: f64, y: f64, nx: f64, ny: f64, a: f64, b: f64, ep: f64) -> ExtendedPoint {
     let n_tilda_x = ny;
     let n_tilda_y = nx / b + 2.0 * a * x * ny / b;

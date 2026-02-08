@@ -116,7 +116,7 @@ const ORBIT_COLORS = {
     period4: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#eedf32' },
     period5: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#eedf32' },
     period6plus: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#eedf32' },
-    trajectory: '#00ffff',
+    trajectory: '#ff00ff',  // Bright magenta for high visibility
     manifold: '#1e90ff',
     attractor: '#27ae60',
     repeller: '#e74c3c',
@@ -168,7 +168,15 @@ const SetValuedViz = () => {
         isReady: false,
         showOrbits: true,
         showOrbitLines: false,
-        highlightedOrbitId: null
+        highlightedOrbitId: null,
+        // Trajectory tracking state
+        currentPoint: { x: 0.1, y: 0.1, nx: 1.0, ny: 0.0 }, // 4D point for boundary map
+        trajectoryPoints: [],
+        iteration: 0,
+        isRunning: false,
+        hasStarted: false,
+        showTrail: true,
+        startPoint: { x: 0.1, y: 0.1, nx: 1.0, ny: 0.0 }
     });
 
     const [filters, setFilters] = useState({
@@ -558,12 +566,13 @@ const SetValuedViz = () => {
                         params.epsilon
                     );
 
-                    setManifoldState({
+                    setManifoldState(prev => ({
+                        ...prev,
                         manifolds: result.manifolds || [],
                         fixedPoints: result.fixed_points || [],
                         isComputing: false,
                         isReady: true
-                    });
+                    }));
                 } else {
                     // Use Henon manifold computation
                     // Use periodic orbits from the periodic state if available
@@ -577,22 +586,24 @@ const SetValuedViz = () => {
                             periodicState.orbits
                         );
 
-                        setManifoldState({
+                        setManifoldState(prev => ({
+                            ...prev,
                             manifolds: result.manifolds || [],
                             fixedPoints: result.fixed_points || [],
                             isComputing: false,
                             isReady: true
-                        });
+                        }));
                     } else {
                         console.log('No periodic orbits available, using simple computation');
                         const result = wasmModule.compute_manifold_simple(params.a, params.b, params.epsilon);
 
-                        setManifoldState({
+                        setManifoldState(prev => ({
+                            ...prev,
                             manifolds: result.manifolds || [],
                             fixedPoints: result.fixed_points || [],
                             isComputing: false,
                             isReady: true
-                        });
+                        }));
                     }
                 }
             } catch (err) {
@@ -1073,6 +1084,33 @@ const SetValuedViz = () => {
                 scene.add(sphere);
             });
 
+            // render the trajectory trail
+
+            if (manifoldState.showTrail && manifoldState.trajectoryPoints.length > 0) {
+                manifoldState.trajectoryPoints.forEach((point, idx) => {
+                    const normalizedIdx = idx / manifoldState.trajectoryPoints.length;
+                    const size = 0.012 * (0.3 + 0.7 * normalizedIdx);
+                    const geom = new THREE.SphereGeometry(size, 6, 6);
+                    const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(ORBIT_COLORS.trajectory), opacity: 0.2 + 0.6 * normalizedIdx, transparent: true });
+                    const sphere = new THREE.Mesh(geom, mat);
+                    sphere.position.set(point.x, point.y, 0.05);
+                    sphere.userData.type = 'trajectory';
+                    scene.add(sphere);
+                });
+            }
+
+
+
+
+            if (manifoldState.hasStarted && manifoldState.currentPoint) {
+                const geom = new THREE.SphereGeometry(0.04, 16, 16);
+                const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffffff') });
+                const sphere = new THREE.Mesh(geom, mat);
+                sphere.position.set(manifoldState.currentPoint.x, manifoldState.currentPoint.y, 0.2);
+                sphere.userData.type = 'trajectory';
+                scene.add(sphere);
+            }
+
             // Also render periodic orbits in manifold mode if enabled
             if (manifoldState.showOrbits && periodicState.orbits.length > 0) {
                 const visibleOrbits = periodicState.orbits.filter(o => isOrbitVisible(o));
@@ -1199,6 +1237,116 @@ const SetValuedViz = () => {
         if (batchAnimationRef.current) cancelAnimationFrame(batchAnimationRef.current);
         setPeriodicState(prev => ({ ...prev, currentPoint: { x: params.startX, y: params.startY }, trajectoryPoints: [], iteration: 0, isRunning: false, hasStarted: false, showOrbits: false }));
     }, [params.startX, params.startY]);
+
+    // Manifold mode trajectory controls
+    const stepForwardManifold = useCallback(() => {
+        if (!manifoldState.isReady || manifoldState.isRunning || !wasmModule) return;
+        const { x, y, nx, ny } = manifoldState.currentPoint;
+
+        // Check bounds
+        if (!isFinite(x) || !isFinite(y) || Math.abs(x) > 10 || Math.abs(y) > 10) {
+            setManifoldState(prev => ({
+                ...prev,
+                currentPoint: { ...prev.startPoint },
+                trajectoryPoints: [],
+                iteration: 0,
+                hasStarted: false
+            }));
+            return;
+        }
+
+        // Use boundary_map from WASM
+        const { boundary_map } = wasmModule;
+        if (!boundary_map) {
+            console.error('boundary_map not found in WASM module');
+            return;
+        }
+
+        const nextPoint = boundary_map(x, y, nx, ny, params.a, params.b, params.epsilon);
+
+        setManifoldState(prev => ({
+            ...prev,
+            currentPoint: { x: nextPoint.x, y: nextPoint.y, nx: nextPoint.nx, ny: nextPoint.ny },
+            trajectoryPoints: [...prev.trajectoryPoints, { x, y, nx, ny }],
+            iteration: prev.iteration + 1,
+            hasStarted: true
+        }));
+    }, [manifoldState.isReady, manifoldState.isRunning, manifoldState.currentPoint, wasmModule, params]);
+
+    const runToConvergenceManifold = useCallback(() => {
+        if (!manifoldState.isReady || manifoldState.isRunning || !wasmModule) return;
+        setManifoldState(prev => ({ ...prev, isRunning: true }));
+
+        const { boundary_map } = wasmModule;
+        if (!boundary_map) {
+            console.error('boundary_map not found in WASM module');
+            setManifoldState(prev => ({ ...prev, isRunning: false }));
+            return;
+        }
+
+        let currentX = manifoldState.currentPoint.x;
+        let currentY = manifoldState.currentPoint.y;
+        let currentNx = manifoldState.currentPoint.nx;
+        let currentNy = manifoldState.currentPoint.ny;
+        let iteration = manifoldState.iteration;
+        const newPoints = [...manifoldState.trajectoryPoints];
+        const batchSize = 5;
+
+        const animateStep = () => {
+            for (let i = 0; i < batchSize && iteration < params.maxIterations; i++) {
+                if (!isFinite(currentX) || !isFinite(currentY) || Math.abs(currentX) > 10 || Math.abs(currentY) > 10) {
+                    setManifoldState(prev => ({
+                        ...prev,
+                        isRunning: false,
+                        hasStarted: true,
+                        trajectoryPoints: newPoints,
+                        currentPoint: { x: currentX, y: currentY, nx: currentNx, ny: currentNy },
+                        iteration
+                    }));
+                    return;
+                }
+                newPoints.push({ x: currentX, y: currentY, nx: currentNx, ny: currentNy });
+                const next = boundary_map(currentX, currentY, currentNx, currentNy, params.a, params.b, params.epsilon);
+                currentX = next.x;
+                currentY = next.y;
+                currentNx = next.nx;
+                currentNy = next.ny;
+                iteration++;
+            }
+            setManifoldState(prev => ({
+                ...prev,
+                currentPoint: { x: currentX, y: currentY, nx: currentNx, ny: currentNy },
+                trajectoryPoints: [...newPoints],
+                iteration,
+                hasStarted: true
+            }));
+            if (iteration < params.maxIterations) {
+                batchAnimationRef.current = requestAnimationFrame(animateStep);
+            } else {
+                setManifoldState(prev => ({ ...prev, isRunning: false }));
+            }
+        };
+        batchAnimationRef.current = requestAnimationFrame(animateStep);
+    }, [manifoldState, params, wasmModule]);
+
+    const resetManifold = useCallback(() => {
+        if (batchAnimationRef.current) cancelAnimationFrame(batchAnimationRef.current);
+        setManifoldState(prev => ({
+            ...prev,
+            currentPoint: { ...prev.startPoint },
+            trajectoryPoints: [],
+            iteration: 0,
+            isRunning: false,
+            hasStarted: false
+        }));
+    }, []);
+
+    useEffect(() => {
+        if (mode === 'manifold') {
+            resetManifold();
+        }
+    }, [params.a, params.b, params.epsilon, mode, resetManifold]);
+
 
 
     const totalManifoldPoints = useMemo(() => {
@@ -1954,6 +2102,20 @@ const SetValuedViz = () => {
                 {mode === 'manifold' && (
                     <>
                         <div style={styles.section}>
+                            <h3 style={styles.sectionTitle}>Controls</h3>
+                            <button onClick={stepForwardManifold} disabled={!manifoldState.isReady || manifoldState.isRunning} style={styles.button}>
+                                Step Forward
+                            </button>
+                            <button onClick={runToConvergenceManifold} disabled={!manifoldState.isReady || manifoldState.isRunning}
+                                style={{ ...styles.button, ...styles.runButton }}>
+                                {manifoldState.isRunning ? 'Running...' : 'Run to Max Iterations'}
+                            </button>
+                            <button onClick={resetManifold} disabled={manifoldState.isRunning} style={{ ...styles.button, ...styles.resetButton }}>
+                                Reset
+                            </button>
+                        </div>
+
+                        <div style={styles.section}>
                             <h3 style={styles.sectionTitle}>Periodic Orbits</h3>
                             <label style={styles.checkboxLabel}>
                                 <input type="checkbox" checked={manifoldState.showOrbits}
@@ -1964,6 +2126,11 @@ const SetValuedViz = () => {
                                 <input type="checkbox" checked={manifoldState.showOrbitLines}
                                     onChange={(e) => setManifoldState({ ...manifoldState, showOrbitLines: e.target.checked })} />
                                 Show orbit lines
+                            </label>
+                            <label style={styles.checkboxLabel}>
+                                <input type="checkbox" checked={manifoldState.showTrail}
+                                    onChange={(e) => setManifoldState({ ...manifoldState, showTrail: e.target.checked })} />
+                                Show trajectory trail
                             </label>
                         </div>
                         {manifoldState.fixedPoints.length > 0 && (
@@ -1998,7 +2165,13 @@ const SetValuedViz = () => {
                         </>
                     ) : (
                         <>
-                            <div>Status: {manifoldState.isComputing ? 'Computing...' : 'Ready'}</div>
+                            <div>Status: {manifoldState.isComputing ? 'Computing...' : (manifoldState.isRunning ? 'Running...' : 'Ready')}</div>
+                            {manifoldState.hasStarted && (
+                                <>
+                                    <div>Iteration: {manifoldState.iteration} / {params.maxIterations}</div>
+                                    <div>Position: ({manifoldState.currentPoint.x.toFixed(4)}, {manifoldState.currentPoint.y.toFixed(4)})</div>
+                                </>
+                            )}
                             <div>Manifolds: {manifoldState.manifolds.length}</div>
                             <div>Total Points: {totalManifoldPoints.toLocaleString()}</div>
                         </>
