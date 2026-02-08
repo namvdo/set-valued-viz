@@ -97,17 +97,17 @@ pub struct ManifoldConfig {
 impl Default for ManifoldConfig {
     fn default() -> Self {
         Self {
-            perturb_tol: 1e-4,      
-            spacing_tol: 0.01,      
-            spacing_upper: 5.0,     
-            conv_tol: 1e-10,        
-            stable_tol: 1e-14,      
-            max_iter: 5000,         
-            max_points: 50_000,     
+            perturb_tol: 1e-5,      
+            spacing_tol: 5e-3,      
+            spacing_upper: 10.0,    
+            conv_tol: 1e-14,        
+            stable_tol: 1e-19,      
+            max_iter: 8000,         
+            max_points: 700_000,    
             time_limit: 10.0,       
-            inner_max: 100,         
-            self_cross_tol: 0.005,  
-            self_compare_skip: 100, 
+            inner_max: 2000,        
+            self_cross_tol: 0.002,  
+            self_compare_skip: 100,
         }
     }
 }
@@ -304,10 +304,21 @@ impl HenonParams {
             return Err("Invalid normal in transform_normal_inverse".to_string());
         }
 
-        let jac = self.jacobian(pos);
-        let jac_t = jac.transpose();
+        // For the inverse extended map, we need J_{f^-1}^{-T}(pos) * normal
+        // where f^{-1}(x, y) = (y/b, x + a*(y/b)^2 - 1)
+        //
+        // J_{f^-1}(x, y) = [[0, 1/b], [1, 2ay/b^2]]
+        // J_{f^-1}^{-1}(x, y) = [[-2ay/b, 1], [b, 0]]  (this equals J_f at the inverse image)
+        // J_{f^-1}^{-T}(x, y) = [[-2ay/b, b], [1, 0]]
+        //
+        // At position (x, y), this becomes:
+        let coeff = -2.0 * self.a * pos.y / self.b;
+        let jac_inv_inv_t = Matrix2::new(
+            coeff, self.b,
+            1.0, 0.0
+        );
 
-        let transformed = jac_t * normal;
+        let transformed = jac_inv_inv_t * normal;
         let norm = transformed.norm();
 
         if !norm.is_finite() || norm < 1e-10 {
@@ -408,15 +419,29 @@ impl UnstableManifoldComputer {
             saddle.position.y
         );
 
-        let n_period = saddle.period;
+        let mut n_period = saddle.period;
         if n_period == 0 {
             return Err("Period cannot be zero".to_string());
         }
 
-        // Initial perturbation in tangent direction
-        let perturb_distance = self.config.perturb_tol;
-        let perturbed_pos = saddle.position + direction_sign * perturb_distance * saddle.tangent_2d;
+        // handle negative eigenvalues by doubling period 
+        // this ensures eigenvalue becomes positive after period doubling
+        if saddle.eigenvalue < 0.0 {
+            console_log!("Negative eigenvalue {:.4}, doubling period from {} to {}",
+                saddle.eigenvalue, n_period, n_period * 2);
+            n_period *= 2;
+        }
 
+        // initial perturbation along the eigenvector direction 
+        let perturb_distance = self.config.perturb_tol;
+        let eigenvector = saddle.tangent_2d; // The unstable eigenvector
+        let perturbed_pos = saddle.position + direction_sign * perturb_distance * eigenvector;
+
+        console_log!(
+            "Perturbed along eigenvector ({:.6}, {:.6})",
+            eigenvector.x,
+            eigenvector.y
+        );
         console_log!(
             "Perturbed position: ({:.6}, {:.6}), distance: {:.6}",
             perturbed_pos.x,
@@ -424,7 +449,7 @@ impl UnstableManifoldComputer {
             perturb_distance
         );
 
-        // use precomputed normal from saddle
+        // use normal from saddle 
         let initial_normal = saddle.normal;
 
         console_log!(
@@ -433,13 +458,13 @@ impl UnstableManifoldComputer {
             initial_normal.y
         );
 
-        // create initial state
+        // create initial 4D state: (perturbed_x, perturbed_y, nx, ny)
         let state_0 = ExtendedState {
             pos: perturbed_pos,
             normal: initial_normal,
         };
 
-        // choose map direction
+        // choose map direction based on saddle type
         let map_fn: Box<dyn Fn(ExtendedState, usize) -> Result<ExtendedState, String>> =
             if saddle.saddle_type == SaddleType::DualRepeller {
                 console_log!("Using inverse map (dual repeller)");
@@ -449,7 +474,7 @@ impl UnstableManifoldComputer {
                 Box::new(|state, n| self.params.extended_map(state, n))
             };
 
-        // apply boundary map once
+        // apply boundary map n_period times to get state_1
         let state_1 = match map_fn(state_0, n_period) {
             Ok(s) => s,
             Err(e) => {
@@ -464,25 +489,42 @@ impl UnstableManifoldComputer {
             state_1.pos.y
         );
 
-        // store initial perturbation for refinement
-        let initial_perturbation = direction_sign * perturb_distance * saddle.tangent_2d;
+        // dist_vec_0 is the displacement after one boundary map iteration
+        // used for parametric refinement: new_initial = state_0 + param * dist_vec_0
+        let dist_vec_0_pos = state_1.pos - state_0.pos;
+        let dist_vec_0_normal = state_1.normal - state_0.normal;
+
+        console_log!(
+            "dist_vec_0 (pos): ({:.6}, {:.6}), norm: {:.6}",
+            dist_vec_0_pos.x,
+            dist_vec_0_pos.y,
+            dist_vec_0_pos.norm()
+        );
 
         // main iteration loop
+        // trajectory stores all points on the manifold
         let mut trajectory = vec![state_0];
         let mut current_state = state_1;
         let mut iteration = 1;
 
+        // param_inner tracks the parameter for each point (0 = saddle, 1 = perturbed initial)
+        // We'll track (state, param) pairs for proper refinement
+        let mut param_current = 1.0_f64; // The current endpoint has param = 1
+
         let start_time = get_time_secs();
         let spacing_tol = if saddle.saddle_type == SaddleType::DualRepeller {
-            1e-3
+            2e-4 
         } else {
             self.config.spacing_tol
         };
 
+        // track when we've moved far enough from saddle for self-crossing check
+        let mut self_cross_trigger = false;
+
         loop {
             // Check stopping conditions
             if iteration > self.config.max_iter {
-                console_log!("Max iterations reached");
+                console_log!("Max iterations reached at {}", iteration);
                 return Ok(Trajectory {
                     points: trajectory,
                     stop_reason: StopReason::MaxIterations,
@@ -490,7 +532,7 @@ impl UnstableManifoldComputer {
             }
 
             if trajectory.len() > self.config.max_points {
-                console_log!("Max points reached");
+                console_log!("Max points reached: {}", trajectory.len());
                 return Ok(Trajectory {
                     points: trajectory,
                     stop_reason: StopReason::MaxPoints,
@@ -506,7 +548,7 @@ impl UnstableManifoldComputer {
                 });
             }
 
-            // Compute next iteration
+            // Compute next iteration: F^n(current_state)
             let next_state = match map_fn(current_state, n_period) {
                 Ok(s) => s,
                 Err(_) => {
@@ -518,8 +560,13 @@ impl UnstableManifoldComputer {
                 }
             };
 
-            // check convergence - distance between iterations
+            // check convergence - distance between consecutive iterations
             let step_distance = (next_state.pos - current_state.pos).norm();
+
+            // enable self-crossing check once we're far enough from saddle
+            if step_distance > 1e-2 {
+                self_cross_trigger = true;
+            }
 
             if step_distance < self.config.conv_tol && iteration > 30 {
                 console_log!("Converged at iteration {}", iteration);
@@ -530,7 +577,7 @@ impl UnstableManifoldComputer {
                 });
             }
 
-            // Check if approaching target points (closure)
+            // check if approaching target points (closure to stable points)
             if !target_points.is_empty() {
                 let min_dist_to_target = target_points
                     .iter()
@@ -552,8 +599,8 @@ impl UnstableManifoldComputer {
                 }
             }
 
-            // Check self-intersection
-            if trajectory.len() > self.config.self_compare_skip {
+            // check self-intersection (only when far enough from saddle)
+            if self_cross_trigger && trajectory.len() > self.config.self_compare_skip {
                 let check_range = trajectory.len() - self.config.self_compare_skip;
                 let min_self_dist = trajectory[..check_range]
                     .iter()
@@ -575,18 +622,12 @@ impl UnstableManifoldComputer {
                 }
             }
 
-            // adaptive refinement if gap too large
+            // Adaptive refinement if gap too large but not too huge
             if step_distance > spacing_tol && step_distance < self.config.spacing_upper {
-                console_log!(
-                    "Refining segment at iteration {} (gap={:.4})",
-                    iteration,
-                    step_distance
-                );
-
-                match self.refine_segment_parametric(
-                    saddle.position,
-                    initial_perturbation,
-                    initial_normal,
+                match self.refine_segment(
+                    state_0,
+                    dist_vec_0_pos,
+                    dist_vec_0_normal,
                     current_state,
                     next_state,
                     iteration,
@@ -594,10 +635,13 @@ impl UnstableManifoldComputer {
                     &map_fn,
                     spacing_tol,
                     start_time,
+                    &trajectory,
                 ) {
                     Ok(refined_points) => {
-                        console_log!("Added {} refined points", refined_points.len());
-                        trajectory.extend(refined_points);
+                        if !refined_points.is_empty() {
+                            console_log!("Added {} refined points", refined_points.len());
+                            trajectory.extend(refined_points);
+                        }
                     }
                     Err(reason) => {
                         console_log!("Refinement stopped: {:?}", reason);
@@ -615,91 +659,134 @@ impl UnstableManifoldComputer {
         }
     }
 
-    /// parametric refinement: creates new initial conditions and remaps
-    fn refine_segment_parametric(
+    /// Parametric refinement 
+    ///
+    /// The key idea: we track a parameter m in [0, 1] for each point where:
+    /// - m = 0 corresponds to state_old (endpoint at iteration j-1)
+    /// - m = 1 corresponds to state_new (endpoint at iteration j)
+    ///
+    /// When two consecutive points P_j and P_{j+1} are too far apart,
+    /// we create a new initial condition at parameter (m_j + m_{j+1})/2:
+    ///   new_initial = state_0 + midpoint_param * dist_vec_0
+    /// Then apply the boundary map 'iteration' times.
+    fn refine_segment(
         &self,
-        saddle_pos: Vector2<f64>,
-        initial_perturbation: Vector2<f64>, // δ * direction * tangent
-        initial_normal: Vector2<f64>,
-        state_old: ExtendedState,
-        state_new: ExtendedState,
-        iteration: usize,
+        state_0: ExtendedState,           // initial perturbed state (at saddle + delta*eigenvec)
+        dist_vec_0_pos: Vector2<f64>,     // F(state_0).pos - state_0.pos
+        dist_vec_0_normal: Vector2<f64>,  // F(state_0).normal - state_0.normal
+        state_old: ExtendedState,         // P_{start} at this iteration
+        state_new: ExtendedState,         // P_{end} at this iteration
+        iteration: usize,                 // current iteration number j
         n_period: usize,
         map_fn: &dyn Fn(ExtendedState, usize) -> Result<ExtendedState, String>,
         spacing_tol: f64,
         start_time: f64,
+        _existing_trajectory: &[ExtendedState],
     ) -> Result<Vec<ExtendedState>, StopReason> {
-        let mut refined_states = Vec::new();
-        let gap_size = (state_new.pos - state_old.pos).norm();
+        // Initialize add_pt array with endpoints
+        // Each entry: (state, parameter)
+        // param = 0 corresponds to state_old, param = 1 corresponds to state_new
+        let mut add_pt: Vec<(ExtendedState, f64)> = vec![
+            (state_old, 0.0),
+            (state_new, 1.0),
+        ];
 
-        // Estimate how many points we need
-        let num_intermediate = (gap_size / spacing_tol).ceil() as usize;
-        let num_intermediate = num_intermediate.min(20).max(2);
+        let mut inner_iter = 0;
 
-        console_log!(
-            "Refining with {} intermediate points for gap {:.4}",
-            num_intermediate,
-            gap_size
-        );
+        // Keep adding points while any consecutive pair is too far apart
+        loop {
+            // Find indices where consecutive points are too far apart
+            let mut indices_to_refine: Vec<usize> = Vec::new();
 
-        for k in 1..num_intermediate {
-            // Parameter t \in (0, 1)
-            let t = k as f64 / num_intermediate as f64;
-
-            // Create new initial perturbation at parameter t
-            let new_perturbation = t * initial_perturbation;
-            let new_initial_pos = saddle_pos + new_perturbation;
-
-            // Interpolate the normal smoothly
-            let new_normal_unnorm = initial_normal + t * (state_new.normal - initial_normal);
-            let norm = new_normal_unnorm.norm();
-
-            if norm < 1e-10 {
-                console_log!("Normal interpolation failed at t={}", t);
-                continue;
-            }
-
-            let new_normal = new_normal_unnorm / norm;
-
-            // Create initial state
-            let new_initial_state = ExtendedState {
-                pos: new_initial_pos,
-                normal: new_normal,
-            };
-
-            // Apply boundary map 'iteration' times
-            let mut intermediate_state = new_initial_state;
-
-            for iter in 0..iteration {
-                match map_fn(intermediate_state, n_period) {
-                    Ok(s) => intermediate_state = s,
-                    Err(_) => {
-                        console_log!("Refinement diverged at t={}, iter={}", t, iter);
-                        break;
-                    }
+            for j in 0..(add_pt.len() - 1) {
+                let dist = (add_pt[j + 1].0.pos - add_pt[j].0.pos).norm();
+                if dist > spacing_tol && dist < self.config.spacing_upper {
+                    indices_to_refine.push(j);
                 }
             }
 
-            // Validate the intermediate point
-            if !intermediate_state.pos.x.is_finite()
-                || !intermediate_state.pos.y.is_finite()
-                || intermediate_state.pos.x.abs() > 1000.0
-                || intermediate_state.pos.y.abs() > 1000.0
-            {
-                console_log!("Invalid intermediate state at t={}", t);
-                continue;
+            if indices_to_refine.is_empty() {
+                break;
             }
 
-            refined_states.push(intermediate_state);
+            inner_iter += 1;
+            if inner_iter > self.config.inner_max {
+                console_log!("Inner refinement loop exceeded {} iterations", self.config.inner_max);
+                break;
+            }
 
             // Check time limit
             if get_time_secs() - start_time > self.config.time_limit {
-                console_log!("Time limit in refinement");
+                console_log!("Time limit exceeded during refinement");
                 return Err(StopReason::TimeExceeded);
+            }
+
+            // insert new points at midpoint parameters (process in reverse to keep indices valid)
+            for &j in indices_to_refine.iter().rev() {
+                let param_j = add_pt[j].1;
+                let param_j1 = add_pt[j + 1].1;
+                let midpoint_param = (param_j + param_j1) / 2.0;
+
+                // create new initial condition at this parameter
+                // formula: F^j(state_0 + midpoint_param * dist_vec_0)
+                // but dist_vec_0 is defined as F(state_0) - state_0
+                // so the initial condition is: state_0 + midpoint_param * dist_vec_0
+                let new_initial_pos = state_0.pos + midpoint_param * dist_vec_0_pos;
+                let new_initial_normal_unnorm = state_0.normal + midpoint_param * dist_vec_0_normal;
+                let normal_norm = new_initial_normal_unnorm.norm();
+
+                if normal_norm < 1e-10 {
+                    continue;
+                }
+
+                let new_initial_normal = new_initial_normal_unnorm / normal_norm;
+                let new_initial_state = ExtendedState {
+                    pos: new_initial_pos,
+                    normal: new_initial_normal,
+                };
+
+                // apply boundary map 'iteration' times: F^{iteration*n_period}(new_initial)
+                let mut intermediate_state = new_initial_state;
+                let mut valid = true;
+
+                for _ in 0..iteration {
+                    match map_fn(intermediate_state, n_period) {
+                        Ok(s) => {
+                            if !s.pos.x.is_finite() || !s.pos.y.is_finite()
+                                || s.pos.x.abs() > 200.0 || s.pos.y.abs() > 200.0 {
+                                valid = false;
+                                break;
+                            }
+                            intermediate_state = s;
+                        }
+                        Err(_) => {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+
+                if valid {
+                    add_pt.insert(j + 1, (intermediate_state, midpoint_param));
+                }
+            }
+
+            // check if we've added too many points
+            if add_pt.len() > 10000 {
+                console_log!("Too many points in refinement: {}", add_pt.len());
+                break;
             }
         }
 
-        console_log!("Successfully refined {} points", refined_states.len());
+        // return all intermediate points (exclude the endpoints already in trajectory)
+        let mut refined_states: Vec<ExtendedState> = Vec::new();
+        for i in 1..(add_pt.len() - 1) {
+            refined_states.push(add_pt[i].0);
+        }
+
+        if !refined_states.is_empty() {
+            console_log!("Successfully refined {} points", refined_states.len());
+        }
         Ok(refined_states)
     }
 
@@ -774,8 +861,8 @@ impl NewtonSolver {
             let mut jac_acc = Matrix4::<f64>::identity();
 
             // Compute F^k(x) and Jacobian roughly using chain rule or finite difference
-            // Since we don't have analytical Jacobian for extended map in Rust easily available without automatic differentiation or implementing it manually...
-            // Let's use finite difference for the full 4D Jacobian of the extended map.
+            // Since we don't have analytical Jacobian for extended map in Rust easily available
+            // Let's use finite difference for the full 4D Jacobian of the extended map
 
             // Re-evaluate F^k(x)
             match self.params.extended_map(x, period) {
@@ -1414,27 +1501,60 @@ pub fn compute_manifold_from_orbits(
         let pos = Vector2::new(px, py);
 
         // Determine eigenvector, eigenvalue, and normal
-        // If we have extended points (from boundary map), extract both tangent AND normal
-        // Otherwise, fallback to Henon Jacobian
+        // If we have extended points (from boundary map), extract normal and compute tangent
+        // The eigenvector for perturbation should be the TANGENT (perpendicular to normal)
+        // Otherwise, fallback to Henon Jacobian eigenvector
         let (eigenvector, unstable_lambda, normal_opt) =
             if let Some(ref ext) = orbit.extended_points {
                 if !ext.is_empty() {
-                    let (_, _, nx, ny) = ext[0];
+                    let (ex, ey, nx, ny) = ext[0];
+                    // the extended_points contain (x, y, nx, ny)
+                    // where (nx, ny) is the outward normal at the boundary
                     let normal = Vector2::new(nx, ny);
+                    let normal_norm = normal.norm();
+                    let normal_unit = if normal_norm > 1e-10 {
+                        normal / normal_norm
+                    } else {
+                        Vector2::new(1.0, 0.0)
+                    };
 
-                    // The tangent is orthogonal to the normal (nx, ny)
-                    // Tangent = (ny, -nx) or (-ny, nx)
-                    let tangent = Vector2::new(ny, -nx);
+                    // The tangent direction (eigenvector direction for unstable manifold)
+                    // is perpendicular to the outward normal
+                    // For a curve in 2D, tangent = rotate normal by 90 degrees
+                    let tangent = Vector2::new(-normal_unit.y, normal_unit.x);
+
+                    // Compute eigenvalue from the 4D Jacobian if we have extended data
+                    // For now, estimate based on how fast points separate
+                    // Use accumulated 2D Jacobian eigenvalue as approximation
+                    let jac = params.jacobian(pos);
+                    let mut jac_accum = jac;
+                    let mut current_pos = pos;
+                    for _ in 1..orbit.period {
+                        current_pos = Vector2::new(
+                            1.0 - a * current_pos.x * current_pos.x + current_pos.y,
+                            b * current_pos.x,
+                        );
+                        let next_jac = params.jacobian(current_pos);
+                        jac_accum = next_jac * jac_accum;
+                    }
+                    let trace = jac_accum.trace();
+                    let det = jac_accum.determinant();
+                    let disc = trace * trace - 4.0 * det;
+                    let lambda = if disc >= 0.0 {
+                        let sqrt_disc = disc.sqrt();
+                        let l1 = (trace + sqrt_disc) / 2.0;
+                        let l2 = (trace - sqrt_disc) / 2.0;
+                        if l1.abs() > l2.abs() { l1 } else { l2 }
+                    } else {
+                        trace / 2.0
+                    };
 
                     console_log!(
-                        "Using extended point: normal=({:.6}, {:.6}), tangent=({:.6}, {:.6})",
-                        nx,
-                        ny,
-                        tangent.x,
-                        tangent.y
+                        "Using extended point: pos=({:.6}, {:.6}), normal=({:.6}, {:.6}), tangent=({:.6}, {:.6}), lambda={:.6}",
+                        ex, ey, nx, ny, tangent.x, tangent.y, lambda
                     );
 
-                    (tangent, 2.0, Some(normal))
+                    (tangent, lambda, Some(normal_unit))
                 } else {
                     console_log!("Extended points exists but is empty");
                     (Vector2::new(1.0, 0.0), 2.0, None)

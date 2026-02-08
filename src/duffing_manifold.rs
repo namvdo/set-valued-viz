@@ -105,18 +105,15 @@ impl DuffingManifoldComputer {
             self.config.spacing_tol
         };
 
-        let vec_0 = saddle.position + direction_sign * self.config.perturb_tol * saddle.eigenvector;
+        // Perturb along the eigenvector direction (tangent_2d)
+        let vec_0 = saddle.position + direction_sign * self.config.perturb_tol * saddle.tangent_2d;
 
         if !vec_0.x.is_finite() || !vec_0.y.is_finite() {
             return Err("Initial perturbation produced invalid position".to_string());
         }
 
-        let initial_normal = Vector2::new(-saddle.eigenvector.y, saddle.eigenvector.x);
-        let norm = initial_normal.norm();
-        if norm < 1e-10 {
-            return Err("Invalid eigenvector: too small".to_string());
-        }
-        let initial_normal = initial_normal / norm;
+        // Use the normal from the saddle point (computed in from_2d_eigenvector)
+        let initial_normal = saddle.normal;
 
         let state_0 = ExtendedState {
             pos: vec_0,
@@ -400,13 +397,15 @@ pub fn compute_duffing_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<J
             Vector2::new(1.0, 0.0)
         };
 
-        let saddle_pt = SaddlePoint {
-            position: pos,
-            period: 1,
+        // Use from_2d_eigenvector to properly set both tangent and normal
+        let saddle_pt = SaddlePoint::from_2d_eigenvector(
+            pos,
             eigenvector,
-            eigenvalue: unstable_lambda,
+            1,
+            unstable_lambda,
             saddle_type,
-        };
+            None, // No attractor center
+        );
 
         if let Ok((traj_plus, traj_minus)) =
             computer.compute_manifold(&saddle_pt, &all_fixed_points_pos)
