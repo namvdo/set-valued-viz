@@ -507,9 +507,6 @@ impl UnstableManifoldComputer {
         let mut current_state = state_1;
         let mut iteration = 1;
 
-        // param_inner tracks the parameter for each point (0 = saddle, 1 = perturbed initial)
-        // We'll track (state, param) pairs for proper refinement
-        let mut param_current = 1.0_f64; // The current endpoint has param = 1
 
         let start_time = get_time_secs();
         let spacing_tol = if saddle.saddle_type == SaddleType::DualRepeller {
