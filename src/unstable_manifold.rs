@@ -1440,8 +1440,20 @@ pub fn compute_manifold_from_orbits(
             .iter()
             .all(|(x, y)| x.abs() <= 2.0 && y.abs() <= 2.0);
         if !in_range {
+            console_log!(
+                "Skipping orbit period {} - outside display range",
+                orbit.period
+            );
             continue;
         }
+
+        console_log!(
+            "Orbit period {}: {} points, stability='{}', in_range={}",
+            orbit.period,
+            orbit.points.len(),
+            orbit.stability,
+            in_range
+        );
 
         // Add all points as potential termination targets
         for (x, y) in &orbit.points {
@@ -1456,8 +1468,22 @@ pub fn compute_manifold_from_orbits(
             });
         }
 
+
+        // important!
+        // include saddle and unstable (dual repeller) orbits for manifold computation
         if orbit.stability == "saddle" || orbit.stability == "unstable" {
+            console_log!(
+                "  -> Adding period-{} {} orbit for manifold computation",
+                orbit.period,
+                orbit.stability
+            );
             saddle_orbits.push(orbit);
+        } else {
+            console_log!(
+                "  -> Skipping period-{} {} orbit (not saddle/unstable)",
+                orbit.period,
+                orbit.stability
+            );
         }
     }
 
@@ -1492,13 +1518,24 @@ pub fn compute_manifold_from_orbits(
     let computer = UnstableManifoldComputer::new(params, config);
 
     for orbit in saddle_orbits {
-        // Use first point of the orbit for manifold computation
         if orbit.points.is_empty() {
             continue;
         }
 
-        let (px, py) = orbit.points[0];
+        // Compute manifold from EACH point in the orbit
+        // For period-n orbit, we need manifolds from all n points
+        for point_idx in 0..orbit.points.len() {
+        let (px, py) = orbit.points[point_idx];
         let pos = Vector2::new(px, py);
+
+        console_log!(
+            "Computing manifold from point {}/{} of period-{} orbit at ({:.4}, {:.4})",
+            point_idx + 1,
+            orbit.points.len(),
+            orbit.period,
+            px,
+            py
+        );
 
         // Determine eigenvector, eigenvalue, and normal
         // If we have extended points (from boundary map), extract normal and compute tangent
@@ -1506,8 +1543,8 @@ pub fn compute_manifold_from_orbits(
         // Otherwise, fallback to Henon Jacobian eigenvector
         let (eigenvector, unstable_lambda, normal_opt) =
             if let Some(ref ext) = orbit.extended_points {
-                if !ext.is_empty() {
-                    let (ex, ey, nx, ny) = ext[0];
+                if point_idx < ext.len() {
+                    let (ex, ey, nx, ny) = ext[point_idx];
                     // the extended_points contain (x, y, nx, ny)
                     // where (nx, ny) is the outward normal at the boundary
                     let normal = Vector2::new(nx, ny);
@@ -1686,6 +1723,7 @@ pub fn compute_manifold_from_orbits(
                 eigenvalue: unstable_lambda,
             });
         }
+        } // end for point_idx in orbit.points
     }
 
     let result = ComputeResult {
