@@ -164,16 +164,16 @@ const SetValuedViz = () => {
 
     const [manifoldState, setManifoldState] = useState({
         manifolds: [],
-        stableManifolds: [], 
+        stableManifolds: [],
         fixedPoints: [],
         intersections: [],
         isComputing: false,
         isReady: false,
         showOrbits: true,
         showOrbitLines: false,
-        showUnstableManifold: true, 
-        showStableManifold: false, 
-        intersectionThreshold: 0.05, 
+        showUnstableManifold: true,
+        showStableManifold: false,
+        intersectionThreshold: 0.05,
         highlightedOrbitId: null,
         // Trajectory tracking state
         currentPoint: { x: 0.1, y: 0.1, nx: 1.0, ny: 0.0 }, // 4D point for boundary map
@@ -549,7 +549,7 @@ const SetValuedViz = () => {
         };
         initSystem();
         return () => { cancelled = true; };
-    }, [wasmModule, dynamicSystem, params.a, params.b, params.maxPeriod, params.startX, params.startY]);
+    }, [wasmModule, dynamicSystem, params.a, params.b, params.epsilon, params.maxPeriod, params.startX, params.startY]);
 
     useEffect(() => {
         if (mode !== 'manifold') return;
@@ -1875,22 +1875,30 @@ const SetValuedViz = () => {
                                             style={styles.slider} />
                                     </label>
                                     <div style={{ fontSize: '11px', marginTop: '6px' }}>
-                                        {manifoldState.intersections.some(i => i.has_intersection) ? (
-                                            <div style={{
-                                                color: '#e74c3c',
-                                                fontWeight: 'bold',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '6px'
-                                            }}>
-                                                <span style={{ fontSize: '14px' }}>⚠</span>
-                                                Bifurcation detected (d = {
-                                                    Math.min(...manifoldState.intersections.filter(i => i.has_intersection).map(i => i.min_distance)).toFixed(4)
-                                                })
-                                            </div>
-                                        ) : (
-                                            <div style={{ color: '#27ae60' }}>✓ No intersection</div>
-                                        )}
+                                        {(() => {
+                                            const heteroClinic = manifoldState.intersections.filter(i => i.has_intersection);
+                                            if (heteroClinic.length > 0) {
+                                                const minDist = Math.min(...heteroClinic.map(i => i.min_distance));
+                                                return (
+                                                    <div style={{
+                                                        color: '#e74c3c',
+                                                        fontWeight: 'bold',
+                                                    }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                            <span style={{ fontSize: '14px' }}>⚠</span>
+                                                            <span>Heteroclinic connection!</span>
+                                                        </div>
+                                                        <div style={{ fontSize: '10px', color: '#e74c3c', opacity: 0.8, marginTop: '4px' }}>
+                                                            {heteroClinic.length} connection{heteroClinic.length > 1 ? 's' : ''} found (min d = {minDist.toFixed(4)})
+                                                        </div>
+                                                    </div>
+                                                );
+                                            } else if (manifoldState.intersections.length > 0) {
+                                                return <div style={{ color: '#27ae60' }}>✓ No heteroclinic connections ({manifoldState.intersections.length} pairs checked)</div>;
+                                            } else {
+                                                return <div style={{ color: '#888' }}>Need ≥2 saddles for detection</div>;
+                                            }
+                                        })()}
                                     </div>
                                 </div>
                             )}

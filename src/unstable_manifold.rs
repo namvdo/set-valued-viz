@@ -829,107 +829,6 @@ pub struct ComputeResult {
     pub fixed_points: Vec<FixedPointResult>,
 }
 
-struct NewtonSolver {
-    params: HenonParams,
-    max_iter: usize,
-    tol: f64,
-}
-
-impl NewtonSolver {
-    fn new(params: HenonParams) -> Self {
-        Self {
-            params,
-            max_iter: 100,
-            tol: 1e-10,
-        }
-    }
-
-    fn solve_extended_period(
-        &self,
-        initial_state: ExtendedState,
-        period: usize,
-    ) -> Option<ExtendedState> {
-        let mut x = initial_state;
-
-        for _ in 0..self.max_iter {
-            // F^k(x) - x = 0
-            // Jacobian is J_F^k(x) - I
-
-            let mut f_val = x;
-            let mut jac_acc = Matrix4::<f64>::identity();
-
-            // Compute F^k(x) and Jacobian roughly using chain rule or finite difference
-            // Since we don't have analytical Jacobian for extended map in Rust easily available
-            // Let's use finite difference for the full 4D Jacobian of the extended map
-
-            // Re-evaluate F^k(x)
-            match self.params.extended_map(x, period) {
-                Ok(res) => f_val = res,
-                Err(_) => return None,
-            }
-
-            let diff_pos = f_val.pos - x.pos;
-            let diff_norm = f_val.normal - x.normal;
-
-            if diff_pos.norm() < self.tol && diff_norm.norm() < self.tol {
-                return Some(x);
-            }
-
-            let eps = 1e-7;
-            let mut jac = Matrix4::<f64>::zeros();
-
-            let extracted_state = Vector4::new(x.pos.x, x.pos.y, x.normal.x, x.normal.y);
-
-            for i in 0..4 {
-                let mut perturbed = extracted_state;
-                perturbed[i] += eps;
-                let state_p = ExtendedState {
-                    pos: Vector2::new(perturbed[0], perturbed[1]),
-                    normal: Vector2::new(perturbed[2], perturbed[3]),
-                };
-
-                if let Ok(res_p) = self.params.extended_map(state_p, period) {
-                    let d_pos = (res_p.pos - f_val.pos) / eps;
-                    let d_norm = (res_p.normal - f_val.normal) / eps;
-
-                    jac[(0, i)] = d_pos.x;
-                    jac[(1, i)] = d_pos.y;
-                    jac[(2, i)] = d_norm.x;
-                    jac[(3, i)] = d_norm.y;
-                } else {
-                    return None;
-                }
-            }
-
-            let jac_minus_i = jac - Matrix4::<f64>::identity();
-
-            let residual = Vector4::new(
-                f_val.pos.x - x.pos.x,
-                f_val.pos.y - x.pos.y,
-                f_val.normal.x - x.normal.x,
-                f_val.normal.y - x.normal.y,
-            );
-
-            if let Some(inv) = jac_minus_i.try_inverse() {
-                let delta = -(inv * residual);
-                x.pos.x += delta[0];
-                x.pos.y += delta[1];
-                x.normal.x += delta[2];
-                x.normal.y += delta[3];
-
-                let n_norm = x.normal.norm();
-                if n_norm > 1e-10 {
-                    x.normal /= n_norm;
-                }
-            } else {
-                return None;
-            }
-        }
-
-        None
-    }
-}
-
 #[wasm_bindgen]
 pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, JsValue> {
     // Check cache first
@@ -1057,7 +956,7 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
     let mut unstable_points_indices = Vec::new();
 
     // Classify points and filter to [-2, 2] range
-    for (idx, state) in unique_states.iter().enumerate() {
+    for (_, state) in unique_states.iter().enumerate() {
         // Skip points outside [-2, 2] range for display
         if state.pos.x.abs() > 2.0 || state.pos.y.abs() > 2.0 {
             console_log!(
@@ -1755,7 +1654,10 @@ pub struct StableUnstableResult {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct IntersectionInfo {
-    pub saddle_index: usize,
+    /// Index of saddle point whose UNSTABLE manifold is checked
+    pub unstable_saddle_index: usize,
+    /// Index of saddle point whose STABLE manifold is checked
+    pub stable_saddle_index: usize,
     pub has_intersection: bool,
     pub min_distance: f64,
 }
@@ -1880,7 +1782,7 @@ pub fn compute_stable_and_unstable_manifolds(
     let config = ManifoldConfig::default();
     let computer = UnstableManifoldComputer::new(params, config);
 
-    for (orbit_idx, orbit) in saddle_orbits.iter().enumerate() {
+    for (_, orbit) in saddle_orbits.iter().enumerate() {
         if orbit.points.is_empty() {
             continue;
         }
@@ -1986,7 +1888,7 @@ pub fn compute_stable_and_unstable_manifolds(
                     tangent_2d: unstable_eigenvec,
                     eigenvalue: unstable_lambda,
                     tangent_4d: None,
-                    saddle_type: SaddleType::Regular, 
+                    saddle_type: SaddleType::Regular,
                     normal,
                 }
             } else {
@@ -2046,7 +1948,7 @@ pub fn compute_stable_and_unstable_manifolds(
                     tangent_2d: stable_eigenvec,
                     eigenvalue: stable_lambda,
                     tangent_4d: None,
-                    saddle_type: SaddleType::DualRepeller, 
+                    saddle_type: SaddleType::DualRepeller,
                     normal,
                 }
             } else {
@@ -2099,34 +2001,59 @@ pub fn compute_stable_and_unstable_manifolds(
                 None
             };
 
-            // check for intersection between stable and unstable manifolds
+            // Collect manifolds (intersection detection done AFTER all manifolds computed)
+            if let Some(u) = unstable_result {
+                unstable_manifolds.push(u);
+            }
+            if let Some(s) = stable_result {
+                stable_manifolds.push(s);
+            }
+        }
+    }
+
+    console_log!(
+        "Checking heteroclinic intersections between {} unstable and {} stable manifolds",
+        unstable_manifolds.len(),
+        stable_manifolds.len()
+    );
+
+    for (u_idx, u_man) in unstable_manifolds.iter().enumerate() {
+        for (s_idx, s_man) in stable_manifolds.iter().enumerate() {
+            // Skip if same saddle point (they trivially intersect at the saddle)
+            let u_saddle = u_man.saddle_point;
+            let s_saddle = s_man.saddle_point;
+            let same_saddle =
+                (u_saddle.0 - s_saddle.0).abs() < 1e-8 && (u_saddle.1 - s_saddle.1).abs() < 1e-8;
+
+            if same_saddle {
+                continue; 
+            }
+
+            // Combine all unstable points
+            let mut u_points: Vec<Vector2<f64>> = u_man
+                .plus
+                .points
+                .iter()
+                .map(|(x, y)| Vector2::new(*x, *y))
+                .collect();
+            u_points.extend(u_man.minus.points.iter().map(|(x, y)| Vector2::new(*x, *y)));
+
+            // Combine all stable points
+            let mut s_points: Vec<Vector2<f64>> = s_man
+                .plus
+                .points
+                .iter()
+                .map(|(x, y)| Vector2::new(*x, *y))
+                .collect();
+            s_points.extend(s_man.minus.points.iter().map(|(x, y)| Vector2::new(*x, *y)));
+
+            // Find minimum distance between manifolds
             let mut min_distance = f64::INFINITY;
-            if let (Some(ref u_man), Some(ref s_man)) = (&unstable_result, &stable_result) {
-                // Combine all unstable points
-                let mut u_points: Vec<Vector2<f64>> = u_man
-                    .plus
-                    .points
-                    .iter()
-                    .map(|(x, y)| Vector2::new(*x, *y))
-                    .collect();
-                u_points.extend(u_man.minus.points.iter().map(|(x, y)| Vector2::new(*x, *y)));
-
-                // Combine all stable points
-                let mut s_points: Vec<Vector2<f64>> = s_man
-                    .plus
-                    .points
-                    .iter()
-                    .map(|(x, y)| Vector2::new(*x, *y))
-                    .collect();
-                s_points.extend(s_man.minus.points.iter().map(|(x, y)| Vector2::new(*x, *y)));
-
-                // Find minimum distance (approximate Hausdorff-like check)
-                for u_pt in &u_points {
-                    for s_pt in &s_points {
-                        let dist = (u_pt - s_pt).norm();
-                        if dist < min_distance {
-                            min_distance = dist;
-                        }
+            for u_pt in &u_points {
+                for s_pt in &s_points {
+                    let dist = (u_pt - s_pt).norm();
+                    if dist < min_distance {
+                        min_distance = dist;
                     }
                 }
             }
@@ -2134,25 +2061,19 @@ pub fn compute_stable_and_unstable_manifolds(
             let has_intersection = min_distance < intersection_threshold;
             if has_intersection {
                 console_log!(
-                    "INTERSECTION DETECTED at saddle ({:.4}, {:.4}), min_dist={:.6}",
-                    px,
-                    py,
+                    "HETEROCLINIC CONNECTION: Unstable({:.3},{:.3}) -> Stable({:.3},{:.3}), dist={:.6}",
+                    u_saddle.0, u_saddle.1,
+                    s_saddle.0, s_saddle.1,
                     min_distance
                 );
             }
 
             intersections.push(IntersectionInfo {
-                saddle_index: orbit_idx,
+                unstable_saddle_index: u_idx,
+                stable_saddle_index: s_idx,
                 has_intersection,
                 min_distance,
             });
-
-            if let Some(u) = unstable_result {
-                unstable_manifolds.push(u);
-            }
-            if let Some(s) = stable_result {
-                stable_manifolds.push(s);
-            }
         }
     }
 
