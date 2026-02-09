@@ -1,4 +1,3 @@
-use core::num;
 use nalgebra::{Matrix2, Matrix4, Vector2, Vector4};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -97,16 +96,16 @@ pub struct ManifoldConfig {
 impl Default for ManifoldConfig {
     fn default() -> Self {
         Self {
-            perturb_tol: 1e-5,      
-            spacing_tol: 5e-3,      
-            spacing_upper: 10.0,    
-            conv_tol: 1e-14,        
-            stable_tol: 1e-19,      
-            max_iter: 8000,         
-            max_points: 700_000,    
-            time_limit: 10.0,       
-            inner_max: 2000,        
-            self_cross_tol: 0.002,  
+            perturb_tol: 1e-5,
+            spacing_tol: 5e-3,
+            spacing_upper: 10.0,
+            conv_tol: 1e-14,
+            stable_tol: 1e-19,
+            max_iter: 8000,
+            max_points: 700_000,
+            time_limit: 10.0,
+            inner_max: 2000,
+            self_cross_tol: 0.002,
             self_compare_skip: 100,
         }
     }
@@ -313,10 +312,7 @@ impl HenonParams {
         //
         // At position (x, y), this becomes:
         let coeff = -2.0 * self.a * pos.y / self.b;
-        let jac_inv_inv_t = Matrix2::new(
-            coeff, self.b,
-            1.0, 0.0
-        );
+        let jac_inv_inv_t = Matrix2::new(coeff, self.b, 1.0, 0.0);
 
         let transformed = jac_inv_inv_t * normal;
         let norm = transformed.norm();
@@ -424,15 +420,19 @@ impl UnstableManifoldComputer {
             return Err("Period cannot be zero".to_string());
         }
 
-        // handle negative eigenvalues by doubling period 
+        // handle negative eigenvalues by doubling period
         // this ensures eigenvalue becomes positive after period doubling
         if saddle.eigenvalue < 0.0 {
-            console_log!("Negative eigenvalue {:.4}, doubling period from {} to {}",
-                saddle.eigenvalue, n_period, n_period * 2);
+            console_log!(
+                "Negative eigenvalue {:.4}, doubling period from {} to {}",
+                saddle.eigenvalue,
+                n_period,
+                n_period * 2
+            );
             n_period *= 2;
         }
 
-        // initial perturbation along the eigenvector direction 
+        // initial perturbation along the eigenvector direction
         let perturb_distance = self.config.perturb_tol;
         let eigenvector = saddle.tangent_2d; // The unstable eigenvector
         let perturbed_pos = saddle.position + direction_sign * perturb_distance * eigenvector;
@@ -449,7 +449,7 @@ impl UnstableManifoldComputer {
             perturb_distance
         );
 
-        // use normal from saddle 
+        // use normal from saddle
         let initial_normal = saddle.normal;
 
         console_log!(
@@ -507,10 +507,9 @@ impl UnstableManifoldComputer {
         let mut current_state = state_1;
         let mut iteration = 1;
 
-
         let start_time = get_time_secs();
         let spacing_tol = if saddle.saddle_type == SaddleType::DualRepeller {
-            2e-4 
+            2e-4
         } else {
             self.config.spacing_tol
         };
@@ -656,7 +655,7 @@ impl UnstableManifoldComputer {
         }
     }
 
-    /// Parametric refinement 
+    /// Parametric refinement
     ///
     /// The key idea: we track a parameter m in [0, 1] for each point where:
     /// - m = 0 corresponds to state_old (endpoint at iteration j-1)
@@ -668,12 +667,12 @@ impl UnstableManifoldComputer {
     /// Then apply the boundary map 'iteration' times.
     fn refine_segment(
         &self,
-        state_0: ExtendedState,           // initial perturbed state (at saddle + delta*eigenvec)
-        dist_vec_0_pos: Vector2<f64>,     // F(state_0).pos - state_0.pos
-        dist_vec_0_normal: Vector2<f64>,  // F(state_0).normal - state_0.normal
-        state_old: ExtendedState,         // P_{start} at this iteration
-        state_new: ExtendedState,         // P_{end} at this iteration
-        iteration: usize,                 // current iteration number j
+        state_0: ExtendedState, // initial perturbed state (at saddle + delta*eigenvec)
+        dist_vec_0_pos: Vector2<f64>, // F(state_0).pos - state_0.pos
+        dist_vec_0_normal: Vector2<f64>, // F(state_0).normal - state_0.normal
+        state_old: ExtendedState, // P_{start} at this iteration
+        state_new: ExtendedState, // P_{end} at this iteration
+        iteration: usize,       // current iteration number j
         n_period: usize,
         map_fn: &dyn Fn(ExtendedState, usize) -> Result<ExtendedState, String>,
         spacing_tol: f64,
@@ -683,10 +682,7 @@ impl UnstableManifoldComputer {
         // Initialize add_pt array with endpoints
         // Each entry: (state, parameter)
         // param = 0 corresponds to state_old, param = 1 corresponds to state_new
-        let mut add_pt: Vec<(ExtendedState, f64)> = vec![
-            (state_old, 0.0),
-            (state_new, 1.0),
-        ];
+        let mut add_pt: Vec<(ExtendedState, f64)> = vec![(state_old, 0.0), (state_new, 1.0)];
 
         let mut inner_iter = 0;
 
@@ -708,7 +704,10 @@ impl UnstableManifoldComputer {
 
             inner_iter += 1;
             if inner_iter > self.config.inner_max {
-                console_log!("Inner refinement loop exceeded {} iterations", self.config.inner_max);
+                console_log!(
+                    "Inner refinement loop exceeded {} iterations",
+                    self.config.inner_max
+                );
                 break;
             }
 
@@ -749,8 +748,11 @@ impl UnstableManifoldComputer {
                 for _ in 0..iteration {
                     match map_fn(intermediate_state, n_period) {
                         Ok(s) => {
-                            if !s.pos.x.is_finite() || !s.pos.y.is_finite()
-                                || s.pos.x.abs() > 200.0 || s.pos.y.abs() > 200.0 {
+                            if !s.pos.x.is_finite()
+                                || !s.pos.y.is_finite()
+                                || s.pos.x.abs() > 200.0
+                                || s.pos.y.abs() > 200.0
+                            {
                                 valid = false;
                                 break;
                             }
@@ -786,7 +788,6 @@ impl UnstableManifoldComputer {
         }
         Ok(refined_states)
     }
-
 
     pub fn compute_manifold(
         &self,
@@ -1111,7 +1112,7 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
             stability: stability.to_string(),
         });
 
-        // ALL fixed points are potential termination targets 
+        // ALL fixed points are potential termination targets
         all_fixed_points_pos.push(state.pos);
 
         if stability == "Saddle" || stability == "Repeller" {
@@ -1465,7 +1466,6 @@ pub fn compute_manifold_from_orbits(
             });
         }
 
-
         // important!
         // include saddle and unstable (dual repeller) orbits for manifold computation
         if orbit.stability == "saddle" || orbit.stability == "unstable" {
@@ -1522,24 +1522,25 @@ pub fn compute_manifold_from_orbits(
         // Compute manifold from EACH point in the orbit
         // For period-n orbit, we need manifolds from all n points
         for point_idx in 0..orbit.points.len() {
-        let (px, py) = orbit.points[point_idx];
-        let pos = Vector2::new(px, py);
+            let (px, py) = orbit.points[point_idx];
+            let pos = Vector2::new(px, py);
 
-        console_log!(
-            "Computing manifold from point {}/{} of period-{} orbit at ({:.4}, {:.4})",
-            point_idx + 1,
-            orbit.points.len(),
-            orbit.period,
-            px,
-            py
-        );
+            console_log!(
+                "Computing manifold from point {}/{} of period-{} orbit at ({:.4}, {:.4})",
+                point_idx + 1,
+                orbit.points.len(),
+                orbit.period,
+                px,
+                py
+            );
 
-        // Determine eigenvector, eigenvalue, and normal
-        // If we have extended points (from boundary map), extract normal and compute tangent
-        // The eigenvector for perturbation should be the TANGENT (perpendicular to normal)
-        // Otherwise, fallback to Henon Jacobian eigenvector
-        let (eigenvector, unstable_lambda, normal_opt) =
-            if let Some(ref ext) = orbit.extended_points {
+            // Determine eigenvector, eigenvalue, and normal
+            // If we have extended points (from boundary map), extract normal and compute tangent
+            // The eigenvector for perturbation should be the TANGENT (perpendicular to normal)
+            // Otherwise, fallback to Henon Jacobian eigenvector
+            let (eigenvector, unstable_lambda, normal_opt) = if let Some(ref ext) =
+                orbit.extended_points
+            {
                 if point_idx < ext.len() {
                     let (ex, ey, nx, ny) = ext[point_idx];
                     // the extended_points contain (x, y, nx, ny)
@@ -1578,7 +1579,11 @@ pub fn compute_manifold_from_orbits(
                         let sqrt_disc = disc.sqrt();
                         let l1 = (trace + sqrt_disc) / 2.0;
                         let l2 = (trace - sqrt_disc) / 2.0;
-                        if l1.abs() > l2.abs() { l1 } else { l2 }
+                        if l1.abs() > l2.abs() {
+                            l1
+                        } else {
+                            l2
+                        }
                     } else {
                         trace / 2.0
                     };
@@ -1649,83 +1654,520 @@ pub fn compute_manifold_from_orbits(
                 (eigenvector, unstable_lambda, None)
             };
 
-        let saddle_type = if orbit.stability == "unstable" {
-            SaddleType::DualRepeller
-        } else {
-            SaddleType::Regular
-        };
+            let saddle_type = if orbit.stability == "unstable" {
+                SaddleType::DualRepeller
+            } else {
+                SaddleType::Regular
+            };
 
-        // Create SaddlePoint with proper normal:
-        // If boundary map provided normal, use it. Otherwise pass None for geometric calculation
-        let saddle_pt = if let Some(normal) = normal_opt {
-            // Use from_4d_eigenvector or construct manually with the correct normal
-            SaddlePoint {
-                position: pos,
-                period: orbit.period,
-                tangent_2d: eigenvector / eigenvector.norm(),
-                eigenvalue: unstable_lambda,
-                tangent_4d: None,
-                saddle_type,
-                normal: normal / normal.norm(),
-            }
-        } else {
-            SaddlePoint::from_2d_eigenvector(
-                pos,
-                eigenvector,
-                orbit.period,
-                unstable_lambda,
-                saddle_type,
-                None,
-            )
-        };
-
-        console_log!(
-            "Computing manifold for period-{} saddle at ({:.4}, {:.4})",
-            orbit.period,
-            px,
-            py
-        );
-
-        if let Ok((traj_plus, traj_minus)) = computer.compute_manifold(&saddle_pt, &all_points) {
-            let plus_points: Vec<(f64, f64)> = traj_plus
-                .points
-                .iter()
-                .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
-                .map(|s| (s.pos.x, s.pos.y))
-                .collect();
-
-            let minus_points: Vec<(f64, f64)> = traj_minus
-                .points
-                .iter()
-                .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
-                .map(|s| (s.pos.x, s.pos.y))
-                .collect();
+            // Create SaddlePoint with proper normal:
+            // If boundary map provided normal, use it. Otherwise pass None for geometric calculation
+            let saddle_pt = if let Some(normal) = normal_opt {
+                // Use from_4d_eigenvector or construct manually with the correct normal
+                SaddlePoint {
+                    position: pos,
+                    period: orbit.period,
+                    tangent_2d: eigenvector / eigenvector.norm(),
+                    eigenvalue: unstable_lambda,
+                    tangent_4d: None,
+                    saddle_type,
+                    normal: normal / normal.norm(),
+                }
+            } else {
+                SaddlePoint::from_2d_eigenvector(
+                    pos,
+                    eigenvector,
+                    orbit.period,
+                    unstable_lambda,
+                    saddle_type,
+                    None,
+                )
+            };
 
             console_log!(
-                "Manifold computed: +{} pts, -{} pts",
-                plus_points.len(),
-                minus_points.len()
+                "Computing manifold for period-{} saddle at ({:.4}, {:.4})",
+                orbit.period,
+                px,
+                py
             );
 
-            manifolds_result.push(ManifoldResult {
-                plus: TrajectoryRet {
-                    points: plus_points,
-                    stop_reason: format!("{:?}", traj_plus.stop_reason),
-                },
-                minus: TrajectoryRet {
-                    points: minus_points,
-                    stop_reason: format!("{:?}", traj_minus.stop_reason),
-                },
-                saddle_point: (px, py),
-                eigenvalue: unstable_lambda,
-            });
-        }
+            if let Ok((traj_plus, traj_minus)) = computer.compute_manifold(&saddle_pt, &all_points)
+            {
+                let plus_points: Vec<(f64, f64)> = traj_plus
+                    .points
+                    .iter()
+                    .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
+                    .map(|s| (s.pos.x, s.pos.y))
+                    .collect();
+
+                let minus_points: Vec<(f64, f64)> = traj_minus
+                    .points
+                    .iter()
+                    .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
+                    .map(|s| (s.pos.x, s.pos.y))
+                    .collect();
+
+                console_log!(
+                    "Manifold computed: +{} pts, -{} pts",
+                    plus_points.len(),
+                    minus_points.len()
+                );
+
+                manifolds_result.push(ManifoldResult {
+                    plus: TrajectoryRet {
+                        points: plus_points,
+                        stop_reason: format!("{:?}", traj_plus.stop_reason),
+                    },
+                    minus: TrajectoryRet {
+                        points: minus_points,
+                        stop_reason: format!("{:?}", traj_minus.stop_reason),
+                    },
+                    saddle_point: (px, py),
+                    eigenvalue: unstable_lambda,
+                });
+            }
         } // end for point_idx in orbit.points
     }
 
     let result = ComputeResult {
         manifolds: manifolds_result,
         fixed_points: fixed_points_result,
+    };
+
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    match result.serialize(&serializer) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            console_error!("Serialization error: {:?}", e);
+            Err(JsValue::from_str("Failed to serialize result"))
+        }
+    }
+}
+
+/// Result structure for stable/unstable manifold computation
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StableUnstableResult {
+    pub unstable_manifolds: Vec<ManifoldResult>,
+    pub stable_manifolds: Vec<ManifoldResult>,
+    pub fixed_points: Vec<FixedPointResult>,
+    pub intersections: Vec<IntersectionInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct IntersectionInfo {
+    pub saddle_index: usize,
+    pub has_intersection: bool,
+    pub min_distance: f64,
+}
+
+/// Compute both stable and unstable manifolds from periodic orbits
+///
+/// For each saddle orbit:
+/// - Unstable manifold: Use unstable eigenvector (|lambda| > 1) with forward map
+/// - Stable manifold: Use stable eigenvector (|lambda| < 1) with inverse map
+///
+/// The stable manifold is computed using SaddleType::DualRepeller which triggers
+/// the use of the inverse boundary map (extended_map_inverse).
+#[wasm_bindgen]
+pub fn compute_stable_and_unstable_manifolds(
+    a: f64,
+    b: f64,
+    epsilon: f64,
+    orbits_js: JsValue,
+    intersection_threshold: f64,
+) -> Result<JsValue, JsValue> {
+    console_log!(
+        "Computing stable and unstable manifolds with a={}, b={}, eps={}, threshold={}",
+        a,
+        b,
+        epsilon,
+        intersection_threshold
+    );
+
+    let params = match HenonParams::new(a, b, epsilon) {
+        Ok(p) => p,
+        Err(e) => {
+            console_error!("Invalid parameters: {}", e);
+            return Err(JsValue::from_str(&e));
+        }
+    };
+
+    // Parse orbits from JS
+    #[derive(Deserialize)]
+    struct OrbitInput {
+        points: Vec<(f64, f64)>,
+        extended_points: Option<Vec<(f64, f64, f64, f64)>>,
+        period: usize,
+        stability: String,
+        #[serde(default)]
+        eigenvalues: Vec<f64>,
+    }
+
+    let orbits: Vec<OrbitInput> = match serde_wasm_bindgen::from_value(orbits_js) {
+        Ok(v) => v,
+        Err(e) => {
+            console_error!("Failed to parse orbits: {:?}", e);
+            return Err(JsValue::from_str("Failed to parse orbits"));
+        }
+    };
+
+    console_log!(
+        "Parsed {} orbits for stable/unstable manifold computation",
+        orbits.len()
+    );
+
+    let mut all_points: Vec<Vector2<f64>> = Vec::new();
+    let mut saddle_orbits: Vec<&OrbitInput> = Vec::new();
+    let mut fixed_points_result: Vec<FixedPointResult> = Vec::new();
+
+    // Collect saddle orbits and all points
+    for orbit in &orbits {
+        let in_range = orbit
+            .points
+            .iter()
+            .all(|(x, y)| x.abs() <= 2.0 && y.abs() <= 2.0);
+        if !in_range {
+            continue;
+        }
+
+        for (x, y) in &orbit.points {
+            all_points.push(Vector2::new(*x, *y));
+            fixed_points_result.push(FixedPointResult {
+                x: *x,
+                y: *y,
+                eigenvalues: (0.0, 0.0),
+                stability: orbit.stability.clone(),
+            });
+        }
+
+        if orbit.stability == "saddle" {
+            console_log!(
+                "Adding period-{} saddle orbit for stable/unstable manifold computation",
+                orbit.period
+            );
+            saddle_orbits.push(orbit);
+        }
+    }
+
+    console_log!(
+        "Found {} saddle orbits, {} total points",
+        saddle_orbits.len(),
+        all_points.len()
+    );
+
+    // compute eigenvalues for fixed points
+    for fp in &mut fixed_points_result {
+        let jac = params.jacobian(Vector2::new(fp.x, fp.y));
+        let trace = jac.trace();
+        let det = jac.determinant();
+        let disc = trace * trace - 4.0 * det;
+        let (l1, l2) = if disc >= 0.0 {
+            let sqrt_disc = disc.sqrt();
+            ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0)
+        } else {
+            let real = trace / 2.0;
+            let imag = (-disc).sqrt() / 2.0;
+            let mag = (real * real + imag * imag).sqrt();
+            (mag, mag)
+        };
+        fp.eigenvalues = (l1, l2);
+    }
+
+    let mut unstable_manifolds: Vec<ManifoldResult> = Vec::new();
+    let mut stable_manifolds: Vec<ManifoldResult> = Vec::new();
+    let mut intersections: Vec<IntersectionInfo> = Vec::new();
+
+    let config = ManifoldConfig::default();
+    let computer = UnstableManifoldComputer::new(params, config);
+
+    for (orbit_idx, orbit) in saddle_orbits.iter().enumerate() {
+        if orbit.points.is_empty() {
+            continue;
+        }
+
+        // Process each point in the orbit
+        for point_idx in 0..orbit.points.len() {
+            let (px, py) = orbit.points[point_idx];
+            let pos = Vector2::new(px, py);
+
+            console_log!(
+                "Computing manifolds for point {}/{} of period-{} saddle at ({:.4}, {:.4})",
+                point_idx + 1,
+                orbit.points.len(),
+                orbit.period,
+                px,
+                py
+            );
+
+            // Compute accumulated Jacobian for period-n map
+            let jac = params.jacobian(pos);
+            let mut jac_accum = jac;
+            let mut current_pos = pos;
+            for _ in 1..orbit.period {
+                current_pos = Vector2::new(
+                    1.0 - a * current_pos.x * current_pos.x + current_pos.y,
+                    b * current_pos.x,
+                );
+                let next_jac = params.jacobian(current_pos);
+                jac_accum = next_jac * jac_accum;
+            }
+
+            let trace = jac_accum.trace();
+            let det = jac_accum.determinant();
+            let disc = trace * trace - 4.0 * det;
+
+            let (l1, l2) = if disc >= 0.0 {
+                let sqrt_disc = disc.sqrt();
+                ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0)
+            } else {
+                (trace / 2.0, trace / 2.0)
+            };
+
+            let (unstable_lambda, stable_lambda) = if l1.abs() > l2.abs() {
+                (l1, l2)
+            } else {
+                (l2, l1)
+            };
+
+            let j11 = jac_accum[(0, 0)];
+            let j12 = jac_accum[(0, 1)];
+
+            let compute_eigenvector = |lambda: f64| -> Vector2<f64> {
+                let v1 = 1.0;
+                let v2 = -(j11 - lambda) / j12.max(1e-10);
+                let norm = (v1 * v1 + v2 * v2).sqrt();
+                if norm > 1e-10 {
+                    Vector2::new(v1 / norm, v2 / norm)
+                } else {
+                    Vector2::new(1.0, 0.0)
+                }
+            };
+
+            let unstable_eigenvec = compute_eigenvector(unstable_lambda);
+            let stable_eigenvec = compute_eigenvector(stable_lambda);
+
+            console_log!(
+                "Eigenvalues: λ_u={:.4} (|λ|={:.4}), λ_s={:.4} (|λ|={:.4})",
+                unstable_lambda,
+                unstable_lambda.abs(),
+                stable_lambda,
+                stable_lambda.abs()
+            );
+            console_log!(
+                "Eigenvectors: v_u=({:.4}, {:.4}), v_s=({:.4}, {:.4})",
+                unstable_eigenvec.x,
+                unstable_eigenvec.y,
+                stable_eigenvec.x,
+                stable_eigenvec.y
+            );
+
+            // get normal from extended points if available
+            let normal_opt = if let Some(ref ext) = orbit.extended_points {
+                if point_idx < ext.len() {
+                    let (_, _, nx, ny) = ext[point_idx];
+                    let normal = Vector2::new(nx, ny);
+                    let norm = normal.norm();
+                    if norm > 1e-10 {
+                        Some(normal / norm)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let saddle_unstable = if let Some(normal) = normal_opt {
+                SaddlePoint {
+                    position: pos,
+                    period: orbit.period,
+                    tangent_2d: unstable_eigenvec,
+                    eigenvalue: unstable_lambda,
+                    tangent_4d: None,
+                    saddle_type: SaddleType::Regular, 
+                    normal,
+                }
+            } else {
+                SaddlePoint::from_2d_eigenvector(
+                    pos,
+                    unstable_eigenvec,
+                    orbit.period,
+                    unstable_lambda,
+                    SaddleType::Regular, // Forward map
+                    None,
+                )
+            };
+
+            let unstable_result = if let Ok((traj_plus, traj_minus)) =
+                computer.compute_manifold(&saddle_unstable, &all_points)
+            {
+                let plus_points: Vec<(f64, f64)> = traj_plus
+                    .points
+                    .iter()
+                    .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
+                    .map(|s| (s.pos.x, s.pos.y))
+                    .collect();
+
+                let minus_points: Vec<(f64, f64)> = traj_minus
+                    .points
+                    .iter()
+                    .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
+                    .map(|s| (s.pos.x, s.pos.y))
+                    .collect();
+
+                console_log!(
+                    "Unstable manifold: +{} pts, -{} pts",
+                    plus_points.len(),
+                    minus_points.len()
+                );
+
+                Some(ManifoldResult {
+                    plus: TrajectoryRet {
+                        points: plus_points,
+                        stop_reason: format!("{:?}", traj_plus.stop_reason),
+                    },
+                    minus: TrajectoryRet {
+                        points: minus_points,
+                        stop_reason: format!("{:?}", traj_minus.stop_reason),
+                    },
+                    saddle_point: (px, py),
+                    eigenvalue: unstable_lambda,
+                })
+            } else {
+                None
+            };
+
+            let saddle_stable = if let Some(normal) = normal_opt {
+                SaddlePoint {
+                    position: pos,
+                    period: orbit.period,
+                    tangent_2d: stable_eigenvec,
+                    eigenvalue: stable_lambda,
+                    tangent_4d: None,
+                    saddle_type: SaddleType::DualRepeller, 
+                    normal,
+                }
+            } else {
+                SaddlePoint::from_2d_eigenvector(
+                    pos,
+                    stable_eigenvec,
+                    orbit.period,
+                    stable_lambda,
+                    SaddleType::DualRepeller,
+                    None,
+                )
+            };
+
+            let stable_result = if let Ok((traj_plus, traj_minus)) =
+                computer.compute_manifold(&saddle_stable, &all_points)
+            {
+                let plus_points: Vec<(f64, f64)> = traj_plus
+                    .points
+                    .iter()
+                    .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
+                    .map(|s| (s.pos.x, s.pos.y))
+                    .collect();
+
+                let minus_points: Vec<(f64, f64)> = traj_minus
+                    .points
+                    .iter()
+                    .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
+                    .map(|s| (s.pos.x, s.pos.y))
+                    .collect();
+
+                console_log!(
+                    "Stable manifold: +{} pts, -{} pts",
+                    plus_points.len(),
+                    minus_points.len()
+                );
+
+                Some(ManifoldResult {
+                    plus: TrajectoryRet {
+                        points: plus_points,
+                        stop_reason: format!("{:?}", traj_plus.stop_reason),
+                    },
+                    minus: TrajectoryRet {
+                        points: minus_points,
+                        stop_reason: format!("{:?}", traj_minus.stop_reason),
+                    },
+                    saddle_point: (px, py),
+                    eigenvalue: stable_lambda,
+                })
+            } else {
+                None
+            };
+
+            // check for intersection between stable and unstable manifolds
+            let mut min_distance = f64::INFINITY;
+            if let (Some(ref u_man), Some(ref s_man)) = (&unstable_result, &stable_result) {
+                // Combine all unstable points
+                let mut u_points: Vec<Vector2<f64>> = u_man
+                    .plus
+                    .points
+                    .iter()
+                    .map(|(x, y)| Vector2::new(*x, *y))
+                    .collect();
+                u_points.extend(u_man.minus.points.iter().map(|(x, y)| Vector2::new(*x, *y)));
+
+                // Combine all stable points
+                let mut s_points: Vec<Vector2<f64>> = s_man
+                    .plus
+                    .points
+                    .iter()
+                    .map(|(x, y)| Vector2::new(*x, *y))
+                    .collect();
+                s_points.extend(s_man.minus.points.iter().map(|(x, y)| Vector2::new(*x, *y)));
+
+                // Find minimum distance (approximate Hausdorff-like check)
+                for u_pt in &u_points {
+                    for s_pt in &s_points {
+                        let dist = (u_pt - s_pt).norm();
+                        if dist < min_distance {
+                            min_distance = dist;
+                        }
+                    }
+                }
+            }
+
+            let has_intersection = min_distance < intersection_threshold;
+            if has_intersection {
+                console_log!(
+                    "INTERSECTION DETECTED at saddle ({:.4}, {:.4}), min_dist={:.6}",
+                    px,
+                    py,
+                    min_distance
+                );
+            }
+
+            intersections.push(IntersectionInfo {
+                saddle_index: orbit_idx,
+                has_intersection,
+                min_distance,
+            });
+
+            if let Some(u) = unstable_result {
+                unstable_manifolds.push(u);
+            }
+            if let Some(s) = stable_result {
+                stable_manifolds.push(s);
+            }
+        }
+    }
+
+    console_log!(
+        "Computed {} unstable, {} stable manifolds, {} intersection checks",
+        unstable_manifolds.len(),
+        stable_manifolds.len(),
+        intersections.len()
+    );
+
+    let result = StableUnstableResult {
+        unstable_manifolds,
+        stable_manifolds,
+        fixed_points: fixed_points_result,
+        intersections,
     };
 
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);

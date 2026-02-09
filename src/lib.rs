@@ -22,3 +22,6 @@ pub use duffing_manifold::*;
 
 mod duffing_periodic;
 pub use duffing_periodic::*;
+
+mod hausdorff;
+pub use hausdorff::*;

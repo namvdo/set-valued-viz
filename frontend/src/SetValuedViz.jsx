@@ -117,7 +117,8 @@ const ORBIT_COLORS = {
     period5: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#eedf32' },
     period6plus: { stable: '#27ae60', unstable: '#e74c3c', saddle: '#eedf32' },
     trajectory: '#ff00ff',  // Bright magenta for high visibility
-    manifold: '#1e90ff',
+    manifold: '#1e90ff',  // Blue for unstable manifold
+    stableManifold: '#ffa500', // Orange for stable manifold
     attractor: '#27ae60',
     repeller: '#e74c3c',
     saddlePoint: '#eedf32',
@@ -163,11 +164,16 @@ const SetValuedViz = () => {
 
     const [manifoldState, setManifoldState] = useState({
         manifolds: [],
+        stableManifolds: [], 
         fixedPoints: [],
+        intersections: [],
         isComputing: false,
         isReady: false,
         showOrbits: true,
         showOrbitLines: false,
+        showUnstableManifold: true, 
+        showStableManifold: false, 
+        intersectionThreshold: 0.05, 
         highlightedOrbitId: null,
         // Trajectory tracking state
         currentPoint: { x: 0.1, y: 0.1, nx: 1.0, ny: 0.0 }, // 4D point for boundary map
@@ -578,21 +584,45 @@ const SetValuedViz = () => {
                     // Use periodic orbits from the periodic state if available
                     // Otherwise fall back to the simple computation
                     if (periodicState.orbits && periodicState.orbits.length > 0) {
-                        console.log('Using periodic orbits for manifold:', periodicState.orbits.length, 'orbits');
-                        const result = wasmModule.compute_manifold_from_orbits(
-                            params.a,
-                            params.b,
-                            params.epsilon,
-                            periodicState.orbits
-                        );
+                        // Check if stable manifold display is enabled
+                        if (manifoldState.showStableManifold) {
+                            console.log('Computing stable AND unstable manifolds:', periodicState.orbits.length, 'orbits');
+                            const result = wasmModule.compute_stable_and_unstable_manifolds(
+                                params.a,
+                                params.b,
+                                params.epsilon,
+                                periodicState.orbits,
+                                manifoldState.intersectionThreshold
+                            );
 
-                        setManifoldState(prev => ({
-                            ...prev,
-                            manifolds: result.manifolds || [],
-                            fixedPoints: result.fixed_points || [],
-                            isComputing: false,
-                            isReady: true
-                        }));
+                            setManifoldState(prev => ({
+                                ...prev,
+                                manifolds: result.unstable_manifolds || [],
+                                stableManifolds: result.stable_manifolds || [],
+                                fixedPoints: result.fixed_points || [],
+                                intersections: result.intersections || [],
+                                isComputing: false,
+                                isReady: true
+                            }));
+                        } else {
+                            console.log('Using periodic orbits for manifold:', periodicState.orbits.length, 'orbits');
+                            const result = wasmModule.compute_manifold_from_orbits(
+                                params.a,
+                                params.b,
+                                params.epsilon,
+                                periodicState.orbits
+                            );
+
+                            setManifoldState(prev => ({
+                                ...prev,
+                                manifolds: result.manifolds || [],
+                                stableManifolds: [],
+                                fixedPoints: result.fixed_points || [],
+                                intersections: [],
+                                isComputing: false,
+                                isReady: true
+                            }));
+                        }
                     } else {
                         console.log('No periodic orbits available, using simple computation');
                         const result = wasmModule.compute_manifold_simple(params.a, params.b, params.epsilon);
@@ -600,7 +630,9 @@ const SetValuedViz = () => {
                         setManifoldState(prev => ({
                             ...prev,
                             manifolds: result.manifolds || [],
+                            stableManifolds: [],
                             fixedPoints: result.fixed_points || [],
+                            intersections: [],
                             isComputing: false,
                             isReady: true
                         }));
@@ -617,7 +649,7 @@ const SetValuedViz = () => {
                 clearTimeout(manifoldDebounceRef.current);
             }
         };
-    }, [mode, dynamicSystem, params.a, params.b, params.epsilon, periodicState.orbits, wasmModule]);
+    }, [mode, dynamicSystem, params.a, params.b, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.intersectionThreshold]);
 
     // Sequential animation - advance to next step only when manifold computation completes
     useEffect(() => {
@@ -816,11 +848,13 @@ const SetValuedViz = () => {
             ctx.fillStyle = '#aaa';
             ctx.fillText(`Current: (${periodicState.currentPoint.x.toFixed(6)}, ${periodicState.currentPoint.y.toFixed(6)})`, 20, height - 32);
         } else if (mode === 'manifold') {
-            ctx.fillText(`Unstable Manifold`, 20, height - 55);
+            ctx.fillText(`Manifold Approximation`, 20, height - 55);
             ctx.font = '14px monospace';
             ctx.fillStyle = '#aaa';
-            const pts = manifoldState.manifolds.reduce((sum, m) => sum + (m.points_positive?.length || 0) + (m.points_negative?.length || 0), 0);
-            ctx.fillText(`${manifoldState.fixedPoints.length} fixed points, ${pts} manifold points`, 20, height - 32);
+            const unstablePts = manifoldState.manifolds.reduce((sum, m) => sum + (m.points_positive?.length || 0) + (m.points_negative?.length || 0), 0);
+            const stablePts = manifoldState.stableManifolds.reduce((sum, m) => sum + (m.points_positive?.length || 0) + (m.points_negative?.length || 0), 0);
+            const stableInfo = manifoldState.showStableManifold ? `, ${stablePts} stable pts` : '';
+            ctx.fillText(`${manifoldState.fixedPoints.length} fixed pts, ${unstablePts} unstable pts${stableInfo}`, 20, height - 32);
         }
 
         ctx.font = 'bold 14px monospace';
@@ -843,7 +877,7 @@ const SetValuedViz = () => {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-    }, [mode, params, periodicState.iteration, periodicState.currentPoint, manifoldState.manifolds, manifoldState.fixedPoints]);
+    }, [mode, params, periodicState.iteration, periodicState.currentPoint, manifoldState.manifolds, manifoldState.fixedPoints, manifoldState.stableManifolds, manifoldState.showUnstableManifold, manifoldState.showStableManifold]);
 
     const startEncoding = useCallback(async () => {
         if (recordedFramesRef.current.length === 0) {
@@ -1042,25 +1076,52 @@ const SetValuedViz = () => {
                 scene.add(sphere);
             }
         } else {
-            // Render manifolds
-            manifoldState.manifolds.forEach(m => {
-                [m.plus, m.minus].forEach(traj => {
-                    if (traj && traj.points && traj.points.length > 1) {
-                        const lineGeom = new THREE.BufferGeometry();
-                        const positions = new Float32Array(traj.points.length * 3);
-                        traj.points.forEach(([x, y], i) => {
-                            positions[i * 3] = x;
-                            positions[i * 3 + 1] = y;
-                            positions[i * 3 + 2] = 0.1;
-                        });
-                        lineGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-                        const lineMat = new THREE.LineBasicMaterial({ color: new THREE.Color(ORBIT_COLORS.manifold), linewidth: 2 });
-                        const line = new THREE.Line(lineGeom, lineMat);
-                        line.userData.type = 'manifold';
-                        scene.add(line);
-                    }
+            // Render unstable manifolds (blue) - only when showUnstableManifold is enabled
+            if (manifoldState.showUnstableManifold && manifoldState.manifolds.length > 0) {
+                manifoldState.manifolds.forEach(m => {
+                    [m.plus, m.minus].forEach(traj => {
+                        if (traj && traj.points && traj.points.length > 1) {
+                            const lineGeom = new THREE.BufferGeometry();
+                            const positions = new Float32Array(traj.points.length * 3);
+                            traj.points.forEach(([x, y], i) => {
+                                positions[i * 3] = x;
+                                positions[i * 3 + 1] = y;
+                                positions[i * 3 + 2] = 0.1;
+                            });
+                            lineGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                            const lineMat = new THREE.LineBasicMaterial({ color: new THREE.Color(ORBIT_COLORS.manifold), linewidth: 2 });
+                            const line = new THREE.Line(lineGeom, lineMat);
+                            line.userData.type = 'manifold';
+                            scene.add(line);
+                        }
+                    });
                 });
-            });
+            }
+
+            // Render stable manifolds (orange) - only when showStableManifold is enabled
+            if (manifoldState.showStableManifold && manifoldState.stableManifolds.length > 0) {
+                manifoldState.stableManifolds.forEach(m => {
+                    [m.plus, m.minus].forEach(traj => {
+                        if (traj && traj.points && traj.points.length > 1) {
+                            const lineGeom = new THREE.BufferGeometry();
+                            const positions = new Float32Array(traj.points.length * 3);
+                            traj.points.forEach(([x, y], i) => {
+                                positions[i * 3] = x;
+                                positions[i * 3 + 1] = y;
+                                positions[i * 3 + 2] = 0.08; // Slightly behind unstable manifolds
+                            });
+                            lineGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                            const lineMat = new THREE.LineBasicMaterial({
+                                color: new THREE.Color(ORBIT_COLORS.stableManifold),
+                                linewidth: 2
+                            });
+                            const line = new THREE.Line(lineGeom, lineMat);
+                            line.userData.type = 'manifold';
+                            scene.add(line);
+                        }
+                    });
+                });
+            }
 
             manifoldState.fixedPoints.forEach(fp => {
                 const stabLower = (fp.stability || '').toLowerCase();
@@ -1621,7 +1682,7 @@ const SetValuedViz = () => {
                             onClick={() => setMode('manifold')}
                             style={{ ...styles.toggleButton, ...(mode === 'manifold' ? styles.toggleActive : {}) }}
                         >
-                            Unstable Manifold
+                            Manifold Approximation
                         </button>
                     </div>
                 </div>
@@ -1717,6 +1778,123 @@ const SetValuedViz = () => {
                                 onChange={(e) => setParams({ ...params, epsilon: parseFloat(e.target.value) })}
                                 style={styles.slider} />
                         </label>
+                    )}
+
+                    {mode === 'manifold' && dynamicSystem === 'henon' && (
+                        <div style={{ marginTop: '12px', borderTop: '1px solid #333', paddingTop: '12px' }}>
+                            <h4 style={{ fontSize: '12px', fontWeight: '600', marginBottom: '10px', color: '#888' }}>
+                                Manifold Display
+                            </h4>
+
+                            {/* Unstable Manifold Toggle */}
+                            <label style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '10px',
+                                marginBottom: '10px',
+                                padding: '8px 10px',
+                                backgroundColor: manifoldState.showUnstableManifold ? 'rgba(30, 144, 255, 0.15)' : 'transparent',
+                                borderRadius: '6px',
+                                border: `1px solid ${manifoldState.showUnstableManifold ? ORBIT_COLORS.manifold : '#444'}`,
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease'
+                            }}>
+                                <input
+                                    type="checkbox"
+                                    checked={manifoldState.showUnstableManifold}
+                                    onChange={(e) => setManifoldState(prev => ({ ...prev, showUnstableManifold: e.target.checked }))}
+                                    style={{ width: '16px', height: '16px', accentColor: ORBIT_COLORS.manifold }}
+                                />
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <div style={{
+                                        width: '12px',
+                                        height: '3px',
+                                        backgroundColor: ORBIT_COLORS.manifold,
+                                        borderRadius: '2px'
+                                    }} />
+                                    <span style={{ color: '#ccc', fontSize: '13px' }}>Unstable Manifold</span>
+                                </div>
+                            </label>
+
+                            <label style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '10px',
+                                marginBottom: '10px',
+                                padding: '8px 10px',
+                                backgroundColor: manifoldState.showStableManifold ? 'rgba(255, 165, 0, 0.15)' : 'transparent',
+                                borderRadius: '6px',
+                                border: `1px solid ${manifoldState.showStableManifold ? ORBIT_COLORS.stableManifold : '#444'}`,
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease'
+                            }}>
+                                <input
+                                    type="checkbox"
+                                    checked={manifoldState.showStableManifold}
+                                    onChange={(e) => setManifoldState(prev => ({ ...prev, showStableManifold: e.target.checked }))}
+                                    style={{ width: '16px', height: '16px', accentColor: ORBIT_COLORS.stableManifold }}
+                                />
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <div style={{
+                                        width: '12px',
+                                        height: '3px',
+                                        backgroundColor: ORBIT_COLORS.stableManifold,
+                                        borderRadius: '2px'
+                                    }} />
+                                    <span style={{ color: '#ccc', fontSize: '13px' }}>Stable Manifold</span>
+                                </div>
+                            </label>
+
+                            {manifoldState.showStableManifold && (
+                                <div style={{
+                                    marginTop: '8px',
+                                    padding: '10px',
+                                    backgroundColor: 'rgba(0,0,0,0.2)',
+                                    borderRadius: '6px',
+                                    border: '1px solid #333'
+                                }}>
+                                    <div style={{ fontSize: '11px', fontWeight: '600', color: '#888', marginBottom: '8px' }}>
+                                        Intersection Detection
+                                    </div>
+                                    <label style={styles.label}>
+                                        <div style={styles.paramRow}>
+                                            <span>Threshold ε</span>
+                                            <input type="number" step="0.01" value={manifoldState.intersectionThreshold}
+                                                onChange={(e) => setManifoldState(prev => ({
+                                                    ...prev,
+                                                    intersectionThreshold: parseFloat(e.target.value) || 0.01
+                                                }))}
+                                                style={styles.numberInput} />
+                                        </div>
+                                        <input type="range" min="0.001" max="0.2" step="0.001"
+                                            value={manifoldState.intersectionThreshold}
+                                            onChange={(e) => setManifoldState(prev => ({
+                                                ...prev,
+                                                intersectionThreshold: parseFloat(e.target.value)
+                                            }))}
+                                            style={styles.slider} />
+                                    </label>
+                                    <div style={{ fontSize: '11px', marginTop: '6px' }}>
+                                        {manifoldState.intersections.some(i => i.has_intersection) ? (
+                                            <div style={{
+                                                color: '#e74c3c',
+                                                fontWeight: 'bold',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '6px'
+                                            }}>
+                                                <span style={{ fontSize: '14px' }}>⚠</span>
+                                                Bifurcation detected (d = {
+                                                    Math.min(...manifoldState.intersections.filter(i => i.has_intersection).map(i => i.min_distance)).toFixed(4)
+                                                })
+                                            </div>
+                                        ) : (
+                                            <div style={{ color: '#27ae60' }}>✓ No intersection</div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     )}
                 </div>
 

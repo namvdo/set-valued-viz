@@ -4,7 +4,9 @@ use nalgebra::Vector2;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-use crate::{HenonParams, ManifoldConfig, SaddlePoint, SaddleType, Trajectory, UnstableManifoldComputer, hausdorff};
+use crate::{
+    HenonParams, ManifoldConfig, SaddlePoint, SaddleType, Trajectory, UnstableManifoldComputer,
+};
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
@@ -145,7 +147,6 @@ pub fn compute_hausdorff_distance(
     })
 }
 
-
 fn trajectory_to_points(trajectory: &Trajectory) -> Vec<Vector2<f64>> {
     trajectory
         .points
@@ -162,7 +163,7 @@ pub fn compute_hausdorff_distance_between_manifolds(
     unstable_minus_js: JsValue,
     stable_plus_js: JsValue,
     stable_minus_js: JsValue,
-    num_closest_pairs: usize
+    num_closest_pairs: usize,
 ) -> Result<JsValue, JsValue> {
     console_log!("Computing Hausdorff distance between manifolds");
 
@@ -171,8 +172,9 @@ pub fn compute_hausdorff_distance_between_manifolds(
             .map_err(|e| format!("Failed to parse points: {:?}", e))?;
 
         Ok(points
-            .iter().filter(|(x,y)| x.is_finite() && y.is_finite())
-            .map(|(x,y)| Vector2::new(*x, *y))
+            .iter()
+            .filter(|(x, y)| x.is_finite() && y.is_finite())
+            .map(|(x, y)| Vector2::new(*x, *y))
             .collect())
     };
 
@@ -180,7 +182,6 @@ pub fn compute_hausdorff_distance_between_manifolds(
     let unstable_minus = parse_points(unstable_minus_js)?;
     let stable_plus = parse_points(stable_plus_js)?;
     let stable_minus = parse_points(stable_minus_js)?;
-
 
     console_log!(
         "Parsed: U+ {} pts, U- {} pts, S+ {} pts, S- {} pts",
@@ -196,14 +197,14 @@ pub fn compute_hausdorff_distance_between_manifolds(
     let mut stable_manifold = stable_plus.clone();
     stable_manifold.extend(stable_minus.iter().cloned());
 
-    let result = compute_hausdorff_distance(&unstable_manifold, &stable_manifold, num_closest_pairs)
-        .map_err(|e| JsValue::from_str(&e))?;
+    let result =
+        compute_hausdorff_distance(&unstable_manifold, &stable_manifold, num_closest_pairs)
+            .map_err(|e| JsValue::from_str(&e))?;
 
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
     result
         .serialize(&serializer)
         .map_err(|e| JsValue::from_str(&format!("Serialization error: {:?}", e)))
-
 }
 
 #[wasm_bindgen]
@@ -212,7 +213,7 @@ pub fn compute_bifurcation_hausdorff(
     epsilon: f64,
     a_min: f64,
     a_max: f64,
-    num_samples: usize
+    num_samples: usize,
 ) -> Result<JsValue, JsValue> {
     console_log!(
         "Computing bifurcation Hausdorff for a ∈ [{}, {}] with {} samples",
@@ -233,8 +234,8 @@ pub fn compute_bifurcation_hausdorff(
         hausdorff_distance: f64,
         max_unstable_to_stable: f64,
         max_stable_to_unstable: f64,
-        has_intersection: bool, 
-        intersection_threshold: f64
+        has_intersection: bool,
+        intersection_threshold: f64,
     }
 
     let mut result: Vec<BifurcationPoint> = Vec::new();
@@ -244,10 +245,10 @@ pub fn compute_bifurcation_hausdorff(
         let a = a_min + i as f64 * delta_a;
         console_log!("Computing for a = {:.4}", a);
 
-        let params = HenonParams::new(a, b, epsilon) {
+        let params = match HenonParams::new(a, b, epsilon) {
             Ok(p) => p,
             Err(e) => {
-                console_error!("Invalid parameters at a={}: {}", a, e);
+                console_log!("Invalid parameters at a={}: {}", a, e);
                 continue;
             }
         };
@@ -259,13 +260,13 @@ pub fn compute_bifurcation_hausdorff(
         }
 
         let sqrt_disc = discriminant.sqrt();
-        let x1 = (-(1.0 - b) + sqrt_dist) / (2.0 * a);
+        let x1 = (-(1.0 - b) + sqrt_disc) / (2.0 * a);
         let y1 = b * x1;
 
         let jac = params.jacobian(Vector2::new(x1, y1));
         let trace = jac.trace();
         let det = jac.determinant();
-        let eig_disc = trace * trace - 4.0 * discriminant;
+        let eig_disc = trace * trace - 4.0 * det;
 
         if eig_disc < 0.0 {
             console_log!("Complex eigenvalues for a={}, skipping", a);
@@ -276,19 +277,19 @@ pub fn compute_bifurcation_hausdorff(
         let l1 = (trace + sqrt_eig) / 2.0;
         let l2 = (trace - sqrt_eig) / 2.0;
 
-         if !((l1.abs() < 1.0 && l2.abs() > 1.0) || (l1.abs() > 1.0 && l2.abs() < 1.0)) {
+        if !((l1.abs() < 1.0 && l2.abs() > 1.0) || (l1.abs() > 1.0 && l2.abs() < 1.0)) {
             console_log!("Not a saddle for a={}, skipping", a);
             continue;
         }
 
-        let unstable_lambda = if l1.abs() > l2.abs() {l1 } else {l2};
-        let stable_lambda = if l1.abs() < l2.abs() {l1} else {l2};
+        let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
+        let stable_lambda = if l1.abs() < l2.abs() { l1 } else { l2 };
 
         let compute_eigenvector = |lambda: f64| -> Vector2<f64> {
-            let v1= 1.0;
+            let v1 = 1.0;
             let v2 = 2.0 * a * x1 + lambda;
             let norm = (v1 * v1 + v2 * v2).sqrt();
-            Vector2::new(v1/norm, v2/norm)
+            Vector2::new(v1 / norm, v2 / norm)
         };
 
         let unstable_eigenvec = compute_eigenvector(unstable_lambda);
@@ -303,11 +304,11 @@ pub fn compute_bifurcation_hausdorff(
 
         let saddle_unstable = SaddlePoint::from_2d_eigenvector(
             Vector2::new(x1, y1),
-            unstable_eigenvec, 
-            1, 
+            unstable_eigenvec,
+            1,
             unstable_lambda,
             SaddleType::Regular,
-            None
+            None,
         );
 
         let computer = UnstableManifoldComputer::new(params, config.clone());
@@ -319,7 +320,7 @@ pub fn compute_bifurcation_hausdorff(
                 pts
             }
             Err(e) => {
-                console_error!("Failed to compute unstable manifold: {}", e);
+                console_log!("Failed to compute unstable manifold: {}", e);
                 continue;
             }
         };
@@ -340,7 +341,7 @@ pub fn compute_bifurcation_hausdorff(
                 pts
             }
             Err(e) => {
-                console_error!("Failed to compute stable manifold: {}", e);
+                console_log!("Failed to compute stable manifold: {}", e);
                 continue;
             }
         };
@@ -361,7 +362,6 @@ pub fn compute_bifurcation_hausdorff(
             Ok(hausdorff) => {
                 let has_intersection = hausdorff.distance < intersection_threshold;
 
-
                 console_log!(
                     "a={:.4}: d_H={:.6}, intersection={}",
                     a,
@@ -369,21 +369,28 @@ pub fn compute_bifurcation_hausdorff(
                     has_intersection
                 );
 
-                results.push(BifurcationPoint {
-                    a, 
+                result.push(BifurcationPoint {
+                    a,
                     hausdorff_distance: hausdorff.distance,
                     max_unstable_to_stable: hausdorff.max_from_a,
                     max_stable_to_unstable: hausdorff.max_from_b,
                     has_intersection,
-                    intersection_threshold
+                    intersection_threshold,
                 });
-            },
+            }
             Err(e) => {
-                console_error!("Hausdorff computation failed for a={}: {}", a, e);
+                console_log!("Hausdorff computation failed for a={}: {}", a, e);
             }
         }
-
-
     }
 
+    console_log!(
+        "Bifurcation analysis complete. {} valid samples",
+        result.len()
+    );
+
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    result
+        .serialize(&serializer)
+        .map_err(|e| JsValue::from_str(&format!("Serialization error: {:?}", e)))
 }
