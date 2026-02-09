@@ -11,7 +11,7 @@ $F(A) = \bigcup_{x \in A} F(x)$
 In our setting, we model bounded additive noise through set-valued map:
 $F(x) = B_\epsilon(f(x)) = \{f(x) + \xi : \|\xi\| \leq \epsilon\}$ where $f: \mathbb{R}^n \to \mathbb{R}^n$ is the underlying single-valued deterministic map (the Hénon map in our case), and $B_\epsilon(f(x))$ represent all possible perturbed states within distance $\epsilon$ of the deterministic image.
 
-Rather than tracking every possible point within the noise ball $B_\epsilon(f(x))$ which would be computationally expensive to compute as the noise balls grow, we instead track the boundary evolution through an extended boundary map $F(x,y,n_x,n_y)=\bigl(f(x,y)+\varepsilon\,\mathbf{n}',\,\mathbf{n}'\bigr)$. Since the maximum uncertainty occurs at the boundary $\partial B_\epsilon(f(x))$ (points at distance exactly $\epsilon$ from the deterministic image), we focus exclusively on tracking how these boundary points evolve.
+Rather than tracking every possible point within the noise ball $B_\epsilon(f(x))$ which would be computationally expensive to compute as the noise balls grow, we instead track the boundary evolution through an extended boundary map $F(x,y,nx,ny)=\bigl(f(x,y)+\varepsilon\,\mathbf{nx}',\mathbf{ny}'\bigr)$. Since the maximum uncertainty occurs at the boundary $\partial B_\epsilon(f(x))$ (points at distance exactly $\epsilon$ from the deterministic image), we focus exclusively on tracking how these boundary points evolve.
 
 
 ### Unstable manifold visualization for boundary map evolution with a=0.4, b=0.3 and epsilon=0.0625
