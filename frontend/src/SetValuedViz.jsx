@@ -1973,18 +1973,7 @@ const SetValuedViz = () => {
                                 </label>
                             )}
 
-                            <label style={styles.label}>
-                                <div style={styles.paramRow}>
-                                    <span>Epsilon (ε) =</span>
-                                    <input type="number" step="0.01" min="0.001" max="0.5" value={ulamState.epsilon}
-                                        onChange={(e) => setUlamState({ ...ulamState, epsilon: parseFloat(e.target.value) || 0.05 })}
-                                        style={styles.numberInput} disabled={ulamState.isComputing} />
-                                </div>
-                                <input type="range" min="0.01" max="0.3" step="0.01" value={ulamState.epsilon}
-                                    onChange={(e) => setUlamState({ ...ulamState, epsilon: parseFloat(e.target.value) })}
-                                    style={styles.slider} disabled={ulamState.isComputing} />
-                                <span style={{ fontSize: '10px', color: '#666' }}>Ball radius for boundary detection</span>
-                            </label>
+
 
                             <label style={styles.label}>
                                 <div style={styles.paramRow}>
