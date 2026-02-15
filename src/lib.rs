@@ -2,9 +2,6 @@
 mod boundary_periodic;
 pub use boundary_periodic::*;
 
-mod func_equation;
-pub use func_equation::*;
-
 mod unstable_manifold;
 pub use unstable_manifold::*;
 
