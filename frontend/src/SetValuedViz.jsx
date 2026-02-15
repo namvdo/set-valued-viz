@@ -1081,18 +1081,18 @@ const SetValuedViz = () => {
                 manifoldState.manifolds.forEach(m => {
                     [m.plus, m.minus].forEach(traj => {
                         if (traj && traj.points && traj.points.length > 1) {
-                            const lineGeom = new THREE.BufferGeometry();
-                            const positions = new Float32Array(traj.points.length * 3);
-                            traj.points.forEach(([x, y], i) => {
-                                positions[i * 3] = x;
-                                positions[i * 3 + 1] = y;
-                                positions[i * 3 + 2] = 0.1;
+
+                            traj.points.forEach(([x, y]) => {
+                                const geom = new THREE.SphereGeometry(0.008, 6, 6);
+                                const mat = new THREE.MeshBasicMaterial({
+                                    color: new THREE.Color(ORBIT_COLORS.manifold)
+                                });
+                                const sphere = new THREE.Mesh(geom, mat);
+                                sphere.position.set(x, y, 0.1);
+                                sphere.userData.type = 'manifold';
+                                scene.add(sphere);
                             });
-                            lineGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-                            const lineMat = new THREE.LineBasicMaterial({ color: new THREE.Color(ORBIT_COLORS.manifold), linewidth: 2 });
-                            const line = new THREE.Line(lineGeom, lineMat);
-                            line.userData.type = 'manifold';
-                            scene.add(line);
+
                         }
                     });
                 });
