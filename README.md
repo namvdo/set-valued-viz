@@ -15,9 +15,9 @@ Rather than tracking every possible point within the noise ball $B_\epsilon(f(x)
 
 
 ### Unstable manifold visualization for boundary map evolution with a=0.4, b=0.3 and epsilon=0.0625
-![Set-valued dynamical system with additive bounded noise Visualization](./images/unstable_manifold_for_boundary_map.png)
+![Set-valued dynamical system with additive bounded noise Visualization](./images/sdsv_oulu_demo.png)
 
-### An example of a 4-periodic point found with A = 1.4 and B = 0.3
+### An example of a 4-periodic point found for the boundary map with A = 1.4 and B = 0.3, epsilon=0.0625
 ![4-periodic point](./images/sdsv_oulu_periodic_point_demo.png)
 ## **Getting Started**
 ### **1. Clone the Repository**
