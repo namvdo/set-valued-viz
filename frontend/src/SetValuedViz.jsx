@@ -1806,17 +1806,17 @@ const SetValuedViz = () => {
                             </label>
                         </>
                     )}
-                    {mode === 'manifold' && (
+                    {(mode === 'manifold' || mode === 'periodic') && (
                         <label style={styles.label}>
                             <div style={styles.paramRow}>
                                 <span>epsilon =</span>
                                 <input type="number" step="0.001" value={params.epsilon}
                                     onChange={(e) => setParams({ ...params, epsilon: parseFloat(e.target.value) || 0.01 })}
-                                    style={styles.numberInput} />
+                                    style={styles.numberInput} disabled={periodicState.isRunning} />
                             </div>
                             <input type="range" min="0.001" max="0.2" step="0.001" value={params.epsilon}
                                 onChange={(e) => setParams({ ...params, epsilon: parseFloat(e.target.value) })}
-                                style={styles.slider} />
+                                style={styles.slider} disabled={periodicState.isRunning} />
                         </label>
                     )}
 
