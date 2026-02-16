@@ -926,9 +926,7 @@ const SetValuedViz = () => {
         }
     }, [manifoldState.isComputing, animationState.isAnimating, recordingState.recordingEnabled, animationState.currentStep, captureFrame]);
 
-    // Start encoding when animation finishes (if recording was enabled and frames were captured)
     useEffect(() => {
-        // Trigger encoding when: animation stops, recording was enabled, we have frames, and not already encoding
         if (!animationState.isAnimating && recordingState.recordingEnabled && recordedFramesRef.current.length > 0 && !recordingState.isEncoding) {
             console.log(`[Recording] Animation finished with ${recordedFramesRef.current.length} frames, starting encoding...`);
             startEncoding();
@@ -1036,22 +1034,31 @@ const SetValuedViz = () => {
         if (manifoldState.showTrail && manifoldState.trajectoryPoints.length > 0) {
             manifoldState.trajectoryPoints.forEach((point, idx) => {
                 const normalizedIdx = idx / manifoldState.trajectoryPoints.length;
-                const size = 0.012 * (0.3 + 0.7 * normalizedIdx);
-                const geom = new THREE.SphereGeometry(size, 6, 6);
-                const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(ORBIT_COLORS.trajectory), opacity: 0.2 + 0.6 * normalizedIdx, transparent: true });
+                const size = 0.022 * (0.4 + 0.6 * normalizedIdx);
+                const geom = new THREE.SphereGeometry(size, 8, 8);
+                const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(ORBIT_COLORS.trajectory), opacity: 0.4 + 0.6 * normalizedIdx, transparent: true });
                 const sphere = new THREE.Mesh(geom, mat);
-                sphere.position.set(point.x, point.y, 0.05);
+                sphere.position.set(point.x, point.y, 0.25);
                 sphere.userData.type = 'trajectory';
                 scene.add(sphere);
             });
         }
 
-        // Render current trajectory point
+        // Render current trajectory point with glow ring
         if (manifoldState.hasStarted && manifoldState.currentPoint) {
-            const geom = new THREE.SphereGeometry(0.04, 16, 16);
+            // Outer glow ring
+            const glowGeom = new THREE.RingGeometry(0.05, 0.05, 20);
+            const glowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(ORBIT_COLORS.trajectory), opacity: 0.6, transparent: true, side: THREE.DoubleSide });
+            const glowRing = new THREE.Mesh(glowGeom, glowMat);
+            glowRing.position.set(manifoldState.currentPoint.x, manifoldState.currentPoint.y, 0.3);
+            glowRing.userData.type = 'trajectory';
+            scene.add(glowRing);
+
+            // Core point
+            const geom = new THREE.SphereGeometry(0.02, 16, 16);
             const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color('#ffffff') });
             const sphere = new THREE.Mesh(geom, mat);
-            sphere.position.set(manifoldState.currentPoint.x, manifoldState.currentPoint.y, 0.2);
+            sphere.position.set(manifoldState.currentPoint.x, manifoldState.currentPoint.y, 0.3);
             sphere.userData.type = 'trajectory';
             scene.add(sphere);
         }
@@ -2017,6 +2024,31 @@ const SetValuedViz = () => {
                 {/* Display */}
                 <div style={styles.section}>
                     <h3 style={styles.sectionTitle}>Display</h3>
+                    {dynamicSystem === 'henon' && (
+                        <>
+                            <label style={styles.checkboxLabel}>
+                                <input type="checkbox" checked={manifoldState.showUnstableManifold}
+                                    onChange={(e) => setManifoldState(prev => ({ ...prev, showUnstableManifold: e.target.checked }))}
+                                    style={{ accentColor: ORBIT_COLORS.manifold }} />
+                                <span style={{ ...styles.colorBox, backgroundColor: ORBIT_COLORS.manifold, borderRadius: '50%' }} />
+                                Unstable manifold
+                            </label>
+                            <label style={styles.checkboxLabel}>
+                                <input type="checkbox" checked={manifoldState.showStableManifold}
+                                    onChange={(e) => setManifoldState(prev => ({ ...prev, showStableManifold: e.target.checked }))}
+                                    style={{ accentColor: ORBIT_COLORS.stableManifold }} />
+                                <span style={{ ...styles.colorBox, backgroundColor: ORBIT_COLORS.stableManifold, borderRadius: '50%' }} />
+                                Stable manifold
+                            </label>
+                        </>
+                    )}
+                    <label style={styles.checkboxLabel}>
+                        <input type="checkbox" checked={manifoldState.showTrail}
+                            onChange={(e) => setManifoldState({ ...manifoldState, showTrail: e.target.checked })}
+                            style={{ accentColor: ORBIT_COLORS.trajectory }} />
+                        <span style={{ ...styles.colorBox, backgroundColor: ORBIT_COLORS.trajectory, borderRadius: '50%' }} />
+                        Trajectory trail
+                    </label>
                     <label style={styles.checkboxLabel}>
                         <input type="checkbox" checked={manifoldState.showOrbits}
                             onChange={(e) => setManifoldState({ ...manifoldState, showOrbits: e.target.checked })} />
@@ -2026,11 +2058,6 @@ const SetValuedViz = () => {
                         <input type="checkbox" checked={manifoldState.showOrbitLines}
                             onChange={(e) => setManifoldState({ ...manifoldState, showOrbitLines: e.target.checked })} />
                         Show orbit lines
-                    </label>
-                    <label style={styles.checkboxLabel}>
-                        <input type="checkbox" checked={manifoldState.showTrail}
-                            onChange={(e) => setManifoldState({ ...manifoldState, showTrail: e.target.checked })} />
-                        Show trajectory trail
                     </label>
                     {[1, 2, 3, 4, 5].map(p => (
                         <label key={p} style={styles.checkboxLabel}>
