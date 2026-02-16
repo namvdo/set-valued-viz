@@ -150,8 +150,8 @@ const SetValuedViz = () => {
 
     const [periodicState, setPeriodicState] = useState({
         orbits: [],
-        trajectoryPoints: [],
-        currentPoint: { x: 0.1, y: 0.1 },
+        trajectoryPoints: [], // each point: {x, y, nx, ny}
+        currentPoint: { x: 0.1, y: 0.1, nx: 1.0, ny: 0.0 },
         iteration: 0,
         isRunning: false,
         isReady: false,
@@ -540,7 +540,7 @@ const SetValuedViz = () => {
 
                 setPeriodicState(prev => ({
                     ...prev, orbits, isReady: true,
-                    currentPoint: { x: params.startX, y: params.startY }
+                    currentPoint: { x: params.startX, y: params.startY, nx: 1.0, ny: 0.0 }
                 }));
             } catch (err) {
                 console.error('Failed to compute periodic orbits:', err);
@@ -1247,44 +1247,84 @@ const SetValuedViz = () => {
     };
 
     const stepForward = useCallback(() => {
-        if (!periodicState.isReady || periodicState.isRunning) return;
-        const { x, y } = periodicState.currentPoint;
-        if (!isFinite(x) || !isFinite(y) || Math.abs(x) > 10 || Math.abs(y) > 10) {
-            setPeriodicState(prev => ({ ...prev, currentPoint: { x: params.startX, y: params.startY }, trajectoryPoints: [], iteration: 0, hasStarted: false }));
-            return;
+        if (!periodicState.isReady || periodicState.isRunning || !wasmModule) return;
+        const { x, y, nx, ny } = periodicState.currentPoint;
+
+        // boundary map for Duffing not yet available
+        if (dynamicSystem === 'duffing') {
+            if (!isFinite(x) || !isFinite(y) || Math.abs(x) > 10 || Math.abs(y) > 10) {
+                setPeriodicState(prev => ({ ...prev, currentPoint: { x: params.startX, y: params.startY, nx: 1.0, ny: 0.0 }, trajectoryPoints: [], iteration: 0, hasStarted: false }));
+                return;
+            }
+            const next = duffingMap(x, y, params.a, params.b);
+            setPeriodicState(prev => ({ ...prev, currentPoint: { ...next, nx: 0, ny: 0 }, trajectoryPoints: [...prev.trajectoryPoints, { x, y, nx: 1.0, ny: 0.0 }], iteration: prev.iteration + 1, hasStarted: true }));
+        } else {
+            const { boundary_map } = wasmModule;
+            if (!boundary_map) return;
+
+            if (!isFinite(x) || !isFinite(y) || Math.abs(x) > 10 || Math.abs(y) > 10) {
+                setPeriodicState(prev => ({ ...prev, currentPoint: { x: params.startX, y: params.startY, nx: 1.0, ny: 0.0 }, trajectoryPoints: [], iteration: 0, hasStarted: false }));
+                return;
+            }
+
+            // Ensure nx, ny are defined (fallback if migrating from old state)
+            const currentNx = nx !== undefined ? nx : 1.0;
+            const currentNy = ny !== undefined ? ny : 0.0;
+
+            const nextPoint = boundary_map(x, y, currentNx, currentNy, params.a, params.b, params.epsilon);
+            setPeriodicState(prev => ({
+                ...prev,
+                currentPoint: { x: nextPoint.x, y: nextPoint.y, nx: nextPoint.nx, ny: nextPoint.ny },
+                trajectoryPoints: [...prev.trajectoryPoints, { x, y, nx: currentNx, ny: currentNy }],
+                iteration: prev.iteration + 1,
+                hasStarted: true
+            }));
         }
-        // Use appropriate map based on dynamicSystem
-        const mapFn = dynamicSystem === 'duffing' ? duffingMap : henonMap;
-        const nextPoint = mapFn(x, y, params.a, params.b);
-        setPeriodicState(prev => ({ ...prev, currentPoint: nextPoint, trajectoryPoints: [...prev.trajectoryPoints, { x, y }], iteration: prev.iteration + 1, hasStarted: true }));
-    }, [periodicState.isReady, periodicState.isRunning, periodicState.currentPoint, params, dynamicSystem]);
+    }, [periodicState.isReady, periodicState.isRunning, periodicState.currentPoint, params, dynamicSystem, wasmModule]);
 
     const runToConvergence = useCallback(() => {
-        if (!periodicState.isReady || periodicState.isRunning) return;
+        if (!periodicState.isReady || periodicState.isRunning || !wasmModule) return;
         setPeriodicState(prev => ({ ...prev, isRunning: true }));
-
-        // Use appropriate map based on dynamicSystem
-        const mapFn = dynamicSystem === 'duffing' ? duffingMap : henonMap;
 
         let currentX = periodicState.currentPoint.x;
         let currentY = periodicState.currentPoint.y;
+        let currentNx = periodicState.currentPoint.nx !== undefined ? periodicState.currentPoint.nx : 1.0;
+        let currentNy = periodicState.currentPoint.ny !== undefined ? periodicState.currentPoint.ny : 0.0;
+
         let iteration = periodicState.iteration;
         const newPoints = [...periodicState.trajectoryPoints];
         const batchSize = 5;
 
+        const { boundary_map } = wasmModule;
+
         const animateStep = () => {
             for (let i = 0; i < batchSize && iteration < params.maxIterations; i++) {
                 if (!isFinite(currentX) || !isFinite(currentY) || Math.abs(currentX) > 10 || Math.abs(currentY) > 10) {
-                    setPeriodicState(prev => ({ ...prev, isRunning: false, showOrbits: true, hasStarted: true, trajectoryPoints: newPoints, currentPoint: { x: currentX, y: currentY }, iteration }));
+                    setPeriodicState(prev => ({ ...prev, isRunning: false, showOrbits: true, hasStarted: true, trajectoryPoints: newPoints, currentPoint: { x: currentX, y: currentY, nx: currentNx, ny: currentNy }, iteration }));
                     return;
                 }
-                newPoints.push({ x: currentX, y: currentY });
-                const next = mapFn(currentX, currentY, params.a, params.b);
-                currentX = next.x;
-                currentY = next.y;
+                newPoints.push({ x: currentX, y: currentY, nx: currentNx, ny: currentNy });
+
+                if (dynamicSystem === 'duffing') {
+                    const next = duffingMap(currentX, currentY, params.a, params.b);
+                    currentX = next.x;
+                    currentY = next.y;
+                    // nx, ny stay same for now for Duffing or dummy
+                } else if (boundary_map) {
+                    const next = boundary_map(currentX, currentY, currentNx, currentNy, params.a, params.b, params.epsilon);
+                    currentX = next.x;
+                    currentY = next.y;
+                    currentNx = next.nx;
+                    currentNy = next.ny;
+                } else {
+                    const next = henonMap(currentX, currentY, params.a, params.b);
+                    currentX = next.x;
+                    currentY = next.y;
+                }
+
                 iteration++;
             }
-            setPeriodicState(prev => ({ ...prev, currentPoint: { x: currentX, y: currentY }, trajectoryPoints: [...newPoints], iteration, hasStarted: true }));
+            setPeriodicState(prev => ({ ...prev, currentPoint: { x: currentX, y: currentY, nx: currentNx, ny: currentNy }, trajectoryPoints: [...newPoints], iteration, hasStarted: true }));
             if (iteration < params.maxIterations) {
                 batchAnimationRef.current = requestAnimationFrame(animateStep);
             } else {
@@ -1292,11 +1332,11 @@ const SetValuedViz = () => {
             }
         };
         batchAnimationRef.current = requestAnimationFrame(animateStep);
-    }, [periodicState, params, dynamicSystem]);
+    }, [periodicState, params, dynamicSystem, wasmModule]);
 
     const reset = useCallback(() => {
         if (batchAnimationRef.current) cancelAnimationFrame(batchAnimationRef.current);
-        setPeriodicState(prev => ({ ...prev, currentPoint: { x: params.startX, y: params.startY }, trajectoryPoints: [], iteration: 0, isRunning: false, hasStarted: false, showOrbits: false }));
+        setPeriodicState(prev => ({ ...prev, currentPoint: { x: params.startX, y: params.startY, nx: 1.0, ny: 0.0 }, trajectoryPoints: [], iteration: 0, isRunning: false, hasStarted: false, showOrbits: false }));
     }, [params.startX, params.startY]);
 
     // Manifold mode trajectory controls

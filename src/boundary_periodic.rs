@@ -427,6 +427,8 @@ impl Jacobian4x4 {
 pub struct TrajectoryPoint {
     pub x: f64,
     pub y: f64,
+    pub nx: f64,
+    pub ny: f64,
     pub classification: PointClassification,
 }
 
@@ -444,15 +446,15 @@ fn henon_jacobian(x: f64, _y: f64, a: f64, b: f64) -> Jacobian {
 }
 
 /// Boundary map for Henon map
-/// E(x, y, n_x, n_y) = (f_x + ep * n_x', f_y + ep * n_y', n_x', n_y')
-/// where (n_x, n_y) is the outward normal vector to the boundary
-/// and (n_x', n_y') is the outward normal vector to the boundary after one iteration
+/// E(x, y, nx, ny) = (f_x + ep * nx', fy + ep * ny', nx', ny')
+/// where (nx, ny) is the outward normal vector to the boundary
+/// and (nx', ny') is the outward normal vector to the boundary after one iteration
 /// ep is a small parameter that controls the thickness of the boundary
 ///
-/// Normal evolution: (ñ1, ñ2) = (J^-1)^T * (n1, n2)
+/// Normal evolution: (nx~, ny~) = (J^-1)^T * (nx, ny)
 /// For Henon map J^-1 = [[0, 1/b], [1, 2ax/b]]
 /// (J^-1)^T = [[0, 1], [1/b, 2ax/b]]
-/// => ñ_x = n_y, ñy = n_x/b + 2ax*n_y/b
+/// => nx~ = ny, ny~ = nx/b + 2ax*ny/b
 #[wasm_bindgen]
 pub fn boundary_map(x: f64, y: f64, nx: f64, ny: f64, a: f64, b: f64, ep: f64) -> ExtendedPoint {
     let n_tilda_x = ny;
@@ -915,39 +917,59 @@ impl BoundaryHenonSystemAnalysis {
         }
     }
 
-    pub fn track_trajectory(&mut self, initial_x: f64, initial_y: f64, max_iterations: usize) {
+    pub fn track_trajectory(
+        &mut self,
+        initial_x: f64,
+        initial_y: f64,
+        initial_nx: f64,
+        initial_ny: f64,
+        max_iterations: usize,
+    ) {
         self.trajectory.clear();
 
         let mut x = initial_x;
         let mut y = initial_y;
+        let mut nx = initial_nx;
+        let mut ny = initial_ny;
+
+        // normalize initial normal
+        let norm = (nx * nx + ny * ny).sqrt();
+        if norm > 1e-12 {
+            nx /= norm;
+            ny /= norm;
+        }
 
         let classification = self.orbit_database.classify_point(x, y, 0.005);
         self.trajectory.push(TrajectoryPoint {
             x,
             y,
+            nx,
+            ny,
             classification,
         });
 
         for iter in 1..=max_iterations {
-            let (x_new, y_new) = henon_map(x, y, self.a, self.b);
+            let next_point = boundary_map(x, y, nx, ny, self.a, self.b, self.epsilon);
 
-            if !x_new.is_finite()
-                || !y_new.is_finite()
-                || x_new.abs() > 100.0
-                || y_new.abs() > 100.0
-            {
+            if !next_point.is_finite() || !next_point.is_bounded(100.0) {
                 log_message(&format!("Point diverged at iteration {}", iter));
                 break;
             }
-            let classification = self.orbit_database.classify_point(x_new, y_new, 1e-4);
+            let classification =
+                self.orbit_database
+                    .classify_point(next_point.x, next_point.y, 1e-4);
             self.trajectory.push(TrajectoryPoint {
-                x,
-                y,
+                x: next_point.x,
+                y: next_point.y,
+                nx: next_point.nx,
+                ny: next_point.ny,
                 classification,
             });
 
-            x = x_new;
-            y = y_new;
+            x = next_point.x;
+            y = next_point.y;
+            nx = next_point.nx;
+            ny = next_point.ny;
         }
 
         log_message(&format!(
@@ -961,6 +983,8 @@ impl BoundaryHenonSystemAnalysis {
 pub struct TrajectoryPointJS {
     pub x: f64,
     pub y: f64,
+    pub nx: f64,
+    pub ny: f64,
     pub classification: String,
     pub period: Option<usize>,
     pub stability: Option<String>,
@@ -991,6 +1015,8 @@ impl From<&TrajectoryPoint> for TrajectoryPointJS {
             PointClassification::Regular => TrajectoryPointJS {
                 x: point.x,
                 y: point.y,
+                nx: point.nx,
+                ny: point.ny,
                 classification: "regular".to_string(),
                 period: None,
                 stability: None,
@@ -1002,6 +1028,8 @@ impl From<&TrajectoryPoint> for TrajectoryPointJS {
             } => TrajectoryPointJS {
                 x: point.x,
                 y: point.y,
+                nx: point.nx,
+                ny: point.ny,
                 classification: "periodic".to_string(),
                 period: Some(*period),
                 stability: Some(String::from(stability)),
@@ -1057,9 +1085,16 @@ impl BoundaryHenonSystemWasm {
             .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
     }
     #[wasm_bindgen(js_name = "trackTrajectory")]
-    pub fn track_trajectory(&mut self, initial_x: f64, initial_y: f64, max_iterations: usize) {
+    pub fn track_trajectory(
+        &mut self,
+        initial_x: f64,
+        initial_y: f64,
+        initial_nx: f64,
+        initial_ny: f64,
+        max_iterations: usize,
+    ) {
         self.system
-            .track_trajectory(initial_x, initial_y, max_iterations);
+            .track_trajectory(initial_x, initial_y, initial_nx, initial_ny, max_iterations);
         self.current_iteration = 0;
     }
 
