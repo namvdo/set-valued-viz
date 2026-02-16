@@ -27,8 +27,8 @@ pub struct BoundaryPoint {
 }
 
 // Extended point in the boundary space (x,y,n_x,n_y)
-#[derive(Debug, Clone, Copy)]
 #[wasm_bindgen]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct ExtendedPoint {
     pub x: f64,
     pub y: f64,
@@ -1122,4 +1122,45 @@ impl BoundaryHenonSystemWasm {
     pub fn get_epsilon(&self) -> f64 {
         self.system.epsilon
     }
+}
+
+#[wasm_bindgen]
+pub fn boundary_map_user_defined(
+    x: f64,
+    y: f64,
+    nx: f64,
+    ny: f64,
+    x_eq: &str,
+    y_eq: &str,
+    epsilon: f64,
+    a: f64,
+    b: f64,
+) -> Result<JsValue, JsValue> {
+    use crate::dynamical_systems::{DynamicalSystem, ExtendedState, UserDefinedDynamicalSystem};
+    use nalgebra::Vector2;
+
+    let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, a, b)
+        .map_err(|e| JsValue::from_str(&format!("Error parsing equations: {}", e)))?;
+
+    let pos = Vector2::new(x, y);
+    let normal = Vector2::new(nx, ny);
+    let state = ExtendedState { pos, normal };
+
+    // extended_map handles the full boundary map logic (map + normal transport)
+    let next_state = system
+        .extended_map(state, 1) // 1 iteration
+        .map_err(|e| JsValue::from_str(&format!("Error evaluating extended map: {}", e)))?;
+
+    let result = ExtendedPoint {
+        x: next_state.pos.x,
+        y: next_state.pos.y,
+        nx: next_state.normal.x,
+        ny: next_state.normal.y,
+    };
+
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    result.serialize(&serializer).map_err(|e| {
+        web_sys::console::error_1(&JsValue::from_str(&format!("Serialization error: {:?}", e)));
+        JsValue::from_str("Failed to serialize result")
+    })
 }

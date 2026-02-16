@@ -1,4 +1,4 @@
-use nalgebra::{Matrix2, Matrix4, Vector2, Vector4};
+use nalgebra::{Matrix2, Vector2, Vector4};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -72,11 +72,7 @@ pub struct HenonParams {
     pub epsilon: f64,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct ExtendedState {
-    pub pos: Vector2<f64>,
-    pub normal: Vector2<f64>,
-}
+use crate::dynamical_systems::{DynamicalSystem, ExtendedState, UserDefinedDynamicalSystem};
 
 #[derive(Clone, Debug)]
 pub struct ManifoldConfig {
@@ -328,78 +324,49 @@ impl HenonParams {
 
         Ok(result)
     }
+}
 
-    pub fn extended_map(
-        &self,
-        state: ExtendedState,
-        n_periods: usize,
-    ) -> Result<ExtendedState, String> {
-        let mut current = state;
-
-        for iter in 0..n_periods {
-            let new_pos = self.henon_map(&current.pos)?;
-            let new_normal = self.transform_normal(current.pos, current.normal)?;
-
-            let projected_pos = new_pos + self.epsilon * new_normal;
-
-            if !projected_pos.x.is_finite() || !projected_pos.y.is_finite() {
-                return Err(format!("Non-finite position at iteration {}", iter));
-            }
-
-            if projected_pos.x.abs() > 1000.0 || projected_pos.y.abs() > 1000.0 {
-                return Err(format!("Position diverged at iteration {}", iter));
-            }
-
-            current = ExtendedState {
-                pos: projected_pos,
-                normal: new_normal,
-            };
-        }
-
-        Ok(current)
+impl DynamicalSystem for HenonParams {
+    fn map(&self, pos: Vector2<f64>) -> Result<Vector2<f64>, String> {
+        self.henon_map(&pos)
     }
 
-    pub fn extended_map_inverse(
+    fn map_inverse(&self, pos: Vector2<f64>) -> Result<Vector2<f64>, String> {
+        self.henon_map_inverse(&pos)
+    }
+
+    fn jacobian(&self, pos: Vector2<f64>) -> Matrix2<f64> {
+        self.jacobian(pos)
+    }
+
+    fn transform_normal(
         &self,
-        state: ExtendedState,
-        n_periods: usize,
-    ) -> Result<ExtendedState, String> {
-        let mut current = state;
+        pos: Vector2<f64>,
+        normal: Vector2<f64>,
+    ) -> Result<Vector2<f64>, String> {
+        self.transform_normal(pos, normal)
+    }
 
-        for iter in 0..n_periods {
-            let unprojected_pos = current.pos - self.epsilon * current.normal;
+    fn transform_normal_inverse(
+        &self,
+        pos: Vector2<f64>,
+        normal: Vector2<f64>,
+    ) -> Result<Vector2<f64>, String> {
+        self.transform_normal_inverse(pos, normal)
+    }
 
-            if !unprojected_pos.x.is_finite() || !unprojected_pos.y.is_finite() {
-                return Err(format!(
-                    "Non-finite unprojected position at iteration {}",
-                    iter
-                ));
-            }
-
-            let new_pos = self.henon_map_inverse(&unprojected_pos)?;
-            let new_normal = self.transform_normal_inverse(unprojected_pos, current.normal)?;
-
-            if new_pos.x.abs() > 1000.0 || new_pos.y.abs() > 1000.0 {
-                return Err(format!("Position diverged at iteration {}", iter));
-            }
-
-            current = ExtendedState {
-                pos: new_pos,
-                normal: new_normal,
-            };
-        }
-
-        Ok(current)
+    fn get_epsilon(&self) -> f64 {
+        self.epsilon
     }
 }
 
-pub struct UnstableManifoldComputer {
-    params: HenonParams,
+pub struct UnstableManifoldComputer<S: DynamicalSystem> {
+    params: S,
     config: ManifoldConfig,
 }
 
-impl UnstableManifoldComputer {
-    pub fn new(params: HenonParams, config: ManifoldConfig) -> Self {
+impl<S: DynamicalSystem> UnstableManifoldComputer<S> {
+    pub fn new(params: S, config: ManifoldConfig) -> Self {
         Self { params, config }
     }
 
@@ -1277,7 +1244,224 @@ pub fn compute_manifold_js(
     }
 }
 
-/// Compute manifold from periodic orbits provided by the frontend
+#[wasm_bindgen]
+pub fn compute_user_defined_manifold(
+    x_eq: &str,
+    y_eq: &str,
+    a: f64,
+    b: f64,
+    epsilon: f64,
+) -> Result<JsValue, JsValue> {
+    console_log!(
+        "Computing user defined manifold for x={}, y={}, eps={}",
+        x_eq,
+        y_eq,
+        epsilon
+    );
+
+    let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, a, b) {
+        Ok(s) => s,
+        Err(e) => return Err(JsValue::from_str(&format!("Failed to parse system: {}", e))),
+    };
+
+    let start_points = vec![
+        Vector2::new(0.0, 0.0),
+        Vector2::new(0.6, 0.6),
+        Vector2::new(-0.6, -0.6),
+        Vector2::new(0.5, 0.5),
+        Vector2::new(-0.5, 0.5),
+        Vector2::new(0.5, -0.5),
+        Vector2::new(-0.5, -0.5),
+        Vector2::new(-1.2, -1.2),
+        Vector2::new(1.2, 1.2),
+    ];
+
+    let mut fixed_points = Vec::new();
+
+    for start in start_points {
+        let mut x = start.x;
+        let mut y = start.y;
+        let mut converged = false;
+
+        for _ in 0..100 {
+            let pos = Vector2::new(x, y);
+            match system.map(pos) {
+                Ok(next_pos) => {
+                    let f_val = next_pos - pos; // G(x) = map(x) - x
+                    if f_val.norm() < 1e-10 {
+                        converged = true;
+                        break;
+                    }
+
+                    let jac = system.jacobian(pos);
+                    let j_minus_i = jac - Matrix2::identity();
+
+                    match j_minus_i.try_inverse() {
+                        Some(inv) => {
+                            let delta = inv * f_val;
+                            x -= delta.x;
+                            y -= delta.y;
+                        }
+                        None => {
+                            // Singular Jacobian, try simple step or break
+                            // Fallback to simple iteration step?
+                            x = next_pos.x;
+                            y = next_pos.y;
+                        }
+                    }
+
+                    if x.abs() > 100.0 || y.abs() > 100.0 {
+                        break;
+                    } // Diverged
+                }
+                Err(_) => break, // Error in evaluation
+            }
+        }
+
+        if converged {
+            // Check if already found (avoid duplicates)
+            let mut duplicate = false;
+            for fp in &fixed_points {
+                let diff: Vector2<f64> = *fp - Vector2::new(x, y);
+                if diff.norm() < 1e-6 {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if !duplicate {
+                fixed_points.push(Vector2::new(x, y));
+            }
+        }
+    }
+
+    if fixed_points.is_empty() {
+        console_log!("No fixed points found for user defined system");
+    } else {
+        console_log!(
+            "Found {} fixed points: {:?}",
+            fixed_points.len(),
+            fixed_points
+        );
+    }
+
+    let mut fixed_points_result = Vec::new();
+    let mut manifolds_result = Vec::new();
+    let config = ManifoldConfig::default();
+    let computer = UnstableManifoldComputer::new(system.clone(), config);
+
+    for fp_pos in fixed_points {
+        // Analyze stability
+        let jac = system.jacobian(fp_pos);
+        let trace = jac.trace();
+        let det = jac.determinant();
+        let disc = trace * trace - 4.0 * det;
+
+        let (l1, l2) = if disc >= 0.0 {
+            let sqrt_disc = disc.sqrt();
+            ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0)
+        } else {
+            // Complex eigenvalues, take magnitude
+            let real = trace / 2.0;
+            let imag = (-disc).sqrt() / 2.0;
+            let mag = (real * real + imag * imag).sqrt();
+            (mag, mag)
+        };
+
+        let stability = if l1.abs() < 1.0 && l2.abs() < 1.0 {
+            "stable"
+        } else if l1.abs() > 1.0 && l2.abs() > 1.0 {
+            "unstable"
+        } else {
+            "saddle"
+        };
+
+        fixed_points_result.push(FixedPointResult {
+            x: fp_pos.x,
+            y: fp_pos.y,
+            eigenvalues: (l1, l2),
+            stability: stability.to_string(),
+        });
+
+        if stability == "saddle" || stability == "unstable" {
+            // Compute manifold
+            // Find unstable eigenvector
+            let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
+
+            // Simple eigenvector calculation (assuming real for saddle/unstable)
+            let eigenvector = if disc >= 0.0 {
+                // (J - lambda*I)v = 0
+                // [j11-lambda, j12]
+                // [j21, j22-lambda]
+                if (jac[(0, 0)] - unstable_lambda).abs() > 1e-10 {
+                    Vector2::new(jac[(0, 1)], unstable_lambda - jac[(0, 0)]).normalize()
+                } else if jac[(0, 1)].abs() > 1e-10 {
+                    Vector2::new(1.0, 0.0) // If j11=lambda and j12!=0, then v2=0
+                } else {
+                    Vector2::new(0.0, 1.0)
+                }
+            } else {
+                Vector2::new(1.0, 0.0) // Fallback for complex
+            };
+
+            let saddle_type = if stability == "unstable" {
+                SaddleType::DualRepeller
+            } else {
+                SaddleType::Regular
+            };
+
+            let saddle = SaddlePoint::from_2d_eigenvector(
+                fp_pos,
+                eigenvector,
+                1,
+                unstable_lambda,
+                saddle_type,
+                None,
+            );
+
+            // Target points for termination (use other fixed points?)
+            // For now just empty
+            let targets = vec![];
+
+            if let Ok((traj_plus, traj_minus)) = computer.compute_manifold(&saddle, &targets) {
+                let convert_points = |traj: &Trajectory| {
+                    traj.points
+                        .iter()
+                        .filter(|p| p.pos.x.is_finite() && p.pos.y.is_finite())
+                        .map(|p| (p.pos.x, p.pos.y))
+                        .collect::<Vec<_>>()
+                };
+
+                manifolds_result.push(ManifoldResult {
+                    plus: TrajectoryRet {
+                        points: convert_points(&traj_plus),
+                        stop_reason: format!("{:?}", traj_plus.stop_reason),
+                    },
+                    minus: TrajectoryRet {
+                        points: convert_points(&traj_minus),
+                        stop_reason: format!("{:?}", traj_minus.stop_reason),
+                    },
+                    saddle_point: (fp_pos.x, fp_pos.y),
+                    eigenvalue: unstable_lambda,
+                });
+            }
+        }
+    }
+
+    let result = ComputeResult {
+        manifolds: manifolds_result,
+        fixed_points: fixed_points_result,
+    };
+
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    match result.serialize(&serializer) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            console_error!("Serialization error: {:?}", e);
+            Err(JsValue::from_str("Failed to serialize result"))
+        }
+    }
+}
+
 /// orbits_js: Array of {points: [[x,y],...], period: number, stability: "stable"|"saddle"|"unstable"}
 #[wasm_bindgen]
 pub fn compute_manifold_from_orbits(
@@ -1670,6 +1854,42 @@ pub struct IntersectionInfo {
 ///
 /// The stable manifold is computed using SaddleType::DualRepeller which triggers
 /// the use of the inverse boundary map (extended_map_inverse).
+#[derive(Serialize)]
+struct PointResult {
+    x: f64,
+    y: f64,
+}
+
+#[wasm_bindgen]
+pub fn evaluate_user_defined_map(
+    x: f64,
+    y: f64,
+    x_eq: &str,
+    y_eq: &str,
+    a: f64,
+    b: f64,
+    epsilon: f64,
+) -> Result<JsValue, JsValue> {
+    let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, a, b)
+        .map_err(|e| JsValue::from_str(&format!("Error parsing equations: {}", e)))?;
+
+    let pos = Vector2::new(x, y);
+    let next_pos = system
+        .map(pos)
+        .map_err(|e| JsValue::from_str(&format!("Error evaluating map: {}", e)))?;
+
+    let result = PointResult {
+        x: next_pos.x,
+        y: next_pos.y,
+    };
+
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    result.serialize(&serializer).map_err(|e| {
+        console_error!("Serialization error: {:?}", e);
+        JsValue::from_str("Failed to serialize result")
+    })
+}
+
 #[wasm_bindgen]
 pub fn compute_stable_and_unstable_manifolds(
     a: f64,
@@ -2026,7 +2246,7 @@ pub fn compute_stable_and_unstable_manifolds(
                 (u_saddle.0 - s_saddle.0).abs() < 1e-8 && (u_saddle.1 - s_saddle.1).abs() < 1e-8;
 
             if same_saddle {
-                continue; 
+                continue;
             }
 
             // Combine all unstable points
