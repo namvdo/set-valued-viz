@@ -1,5 +1,6 @@
 use evalexpr::*;
 use nalgebra::{Matrix2, Vector2};
+use std::cell::RefCell;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExtendedState {
@@ -139,13 +140,57 @@ pub struct UserDefinedDynamicalSystem {
     b: f64,
 }
 
+/// preprocess equation string: convert `|expr|` notation to `abs(expr)`.
+/// handles nested absolute values by processing innermost pairs first.
+fn preprocess_abs(input: &str) -> String {
+    let mut s = input.to_string();
+    // repeatedly find the innermost |...| pair (no | inside) and replace with abs(...)
+    loop {
+        let bytes = s.as_bytes();
+        let mut found = false;
+        // find the rightmost opening | that forms an innermost pair
+        // i.e., find a | at position i such that the next | at position j has no | between them
+        let positions: Vec<usize> = bytes
+            .iter()
+            .enumerate()
+            .filter(|(_, &b)| b == b'|')
+            .map(|(i, _)| i)
+            .collect();
+        // find the smallest-span consecutive pair (true innermost)
+        let mut best: Option<(usize, usize, usize)> = None; // (start, end, span)
+        for pair in positions.windows(2) {
+            let start = pair[0];
+            let end = pair[1];
+            let span = end - start;
+            let inner = &s[start + 1..end];
+            if !inner.is_empty() {
+                if best.is_none() || span < best.unwrap().2 {
+                    best = Some((start, end, span));
+                }
+            }
+        }
+        if let Some((start, end, _)) = best {
+            let inner = &s[start + 1..end];
+            s = format!("{}abs({}){}", &s[..start], inner, &s[end + 1..]);
+            found = true;
+        }
+        if !found {
+            break;
+        }
+    }
+    s
+}
+
 impl UserDefinedDynamicalSystem {
     pub fn new(x_str: &str, y_str: &str, epsilon: f64, a: f64, b: f64) -> Result<Self, String> {
         let x_expr = if x_str.trim().is_empty() { "0" } else { x_str };
         let y_expr = if y_str.trim().is_empty() { "0" } else { y_str };
 
-        let x_node = build_operator_tree(x_expr).map_err(|e| e.to_string())?;
-        let y_node = build_operator_tree(y_expr).map_err(|e| e.to_string())?;
+        let x_expr = preprocess_abs(x_expr);
+        let y_expr = preprocess_abs(y_expr);
+
+        let x_node = build_operator_tree(&x_expr).map_err(|e| e.to_string())?;
+        let y_node = build_operator_tree(&y_expr).map_err(|e| e.to_string())?;
         Ok(Self {
             x_node,
             y_node,
@@ -184,21 +229,30 @@ fn create_math_context() -> Result<HashMapContext, String> {
     Ok(context)
 }
 
-fn eval_node(node: &Node, x: f64, y: f64, a: f64, b: f64) -> Result<f64, String> {
-    let mut context = create_math_context()?;
-    context.set_value("x".into(), Value::Float(x)).ok();
-    context.set_value("y".into(), Value::Float(y)).ok();
-    context.set_value("a".into(), Value::Float(a)).ok();
-    context.set_value("b".into(), Value::Float(b)).ok();
 
-    match node.eval_with_context(&context) {
-        Ok(val) => match val {
-            Value::Float(v) => Ok(v),
-            Value::Int(v) => Ok(v as f64),
-            _ => Err("Expression result is not a number".to_string()),
-        },
-        Err(e) => Err(e.to_string()),
-    }
+thread_local! {
+    static MATH_CONTEXT: RefCell<HashMapContext> = RefCell::new(
+        create_math_context().expect("Failed to create math context")
+    );
+}
+
+fn eval_node(node: &Node, x: f64, y: f64, a: f64, b: f64) -> Result<f64, String> {
+    MATH_CONTEXT.with(|ctx_cell| {
+        let mut context = ctx_cell.borrow_mut();
+        context.set_value("x".into(), Value::Float(x)).ok();
+        context.set_value("y".into(), Value::Float(y)).ok();
+        context.set_value("a".into(), Value::Float(a)).ok();
+        context.set_value("b".into(), Value::Float(b)).ok();
+
+        match node.eval_with_context(&*context) {
+            Ok(val) => match val {
+                Value::Float(v) => Ok(v),
+                Value::Int(v) => Ok(v as f64),
+                _ => Err("Expression result is not a number".to_string()),
+            },
+            Err(e) => Err(e.to_string()),
+        }
+    })
 }
 
 impl DynamicalSystem for UserDefinedDynamicalSystem {
@@ -288,4 +342,35 @@ mod tests {
             jac[(1, 1)]
         );
     }
+
+    #[test]
+    fn test_preprocess_abs() {
+        assert_eq!(preprocess_abs("|x|"), "abs(x)");
+        assert_eq!(preprocess_abs("1 - a * |x| + y"), "1 - a * abs(x) + y");
+        assert_eq!(preprocess_abs("||x| - |y||"), "abs(abs(x) - abs(y))");
+        assert_eq!(preprocess_abs("no pipes here"), "no pipes here");
+    }
+
+    #[test]
+    fn test_lozi_map() {
+        // Lozi map: x' = 1 - a*|x| + y, y' = b*x
+        let system =
+            UserDefinedDynamicalSystem::new("1 - a * |x| + y", "b * x", 0.01, 1.7, 0.5).unwrap();
+
+        let pos = Vector2::new(0.5, 0.3);
+        let result = system.map(pos).unwrap();
+        // x' = 1 - 1.7 * |0.5| + 0.3 = 1 - 0.85 + 0.3 = 0.45
+        // y' = 0.5 * 0.5 = 0.25
+        assert!((result.x - 0.45).abs() < 1e-10, "got {}", result.x);
+        assert!((result.y - 0.25).abs() < 1e-10, "got {}", result.y);
+
+        // test with negative x
+        let pos2 = Vector2::new(-0.5, 0.3);
+        let result2 = system.map(pos2).unwrap();
+        // x' = 1 - 1.7 * |-0.5| + 0.3 = 1 - 0.85 + 0.3 = 0.45
+        // y' = 0.5 * (-0.5) = -0.25
+        assert!((result2.x - 0.45).abs() < 1e-10, "got {}", result2.x);
+        assert!((result2.y - (-0.25)).abs() < 1e-10, "got {}", result2.y);
+    }
+
 }
