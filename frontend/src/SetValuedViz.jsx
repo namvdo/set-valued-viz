@@ -134,7 +134,18 @@ const SetValuedViz = () => {
     const batchAnimationRef = useRef(null);
     const manifoldDebounceRef = useRef(null);
 
-    const [dynamicSystem, setDynamicSystem] = useState('henon'); // 'henon' or 'duffing'
+    const [dynamicSystem, setDynamicSystem] = useState('henon'); // 'henon', 'duffing', or 'custom'
+    const [customEquations, setCustomEquations] = useState({
+        xEq: '1 - a * x^2 + y',
+        yEq: 'b * x'
+    });
+    // Debounced version — only updates after user stops typing for 1s
+    const [debouncedEquations, setDebouncedEquations] = useState({
+        xEq: '1 - a * x^2 + y',
+        yEq: 'b * x'
+    });
+    const [equationError, setEquationError] = useState(null);
+    const equationDebounceRef = useRef(null);
     const [wasmModule, setWasmModule] = useState(null);
 
     const [params, setParams] = useState({
@@ -312,8 +323,41 @@ const SetValuedViz = () => {
     }, []);
 
     useEffect(() => {
+        if (equationDebounceRef.current) {
+            clearTimeout(equationDebounceRef.current);
+        }
+        equationDebounceRef.current = setTimeout(() => {
+            if (!wasmModule || dynamicSystem !== 'custom') {
+                setDebouncedEquations(customEquations);
+                setEquationError(null);
+                return;
+            }
+            try {
+                const result = wasmModule.evaluate_user_defined_map(
+                    0.5, 0.5,
+                    customEquations.xEq, customEquations.yEq,
+                    1.0, 0.3, 0.01
+                );
+                if (result && isFinite(result.x) && isFinite(result.y)) {
+                    setDebouncedEquations(customEquations);
+                    setEquationError(null);
+                } else {
+                    setEquationError('Equations produce non-finite values');
+                }
+            } catch (err) {
+                setEquationError(String(err).replace('Error: ', ''));
+            }
+        }, 1000);
+        return () => {
+            if (equationDebounceRef.current) clearTimeout(equationDebounceRef.current);
+        };
+    }, [customEquations, wasmModule, dynamicSystem]);
+
+    useEffect(() => {
         if (dynamicSystem === 'duffing') {
             setParams(prev => ({ ...prev, a: 2.75, b: 0.2 }));
+        } else if (dynamicSystem === 'custom') {
+            setParams(prev => ({ ...prev, a: 1.4, b: 0.3, maxPeriod: 3 }));
         } else {
             setParams(prev => ({ ...prev, a: 0.4, b: 0.3 }));
         }
@@ -496,6 +540,11 @@ const SetValuedViz = () => {
         if (!wasmModule) return;
 
         let cancelled = false;
+        // Custom systems: don't auto-compute — wait for explicit user action
+        if (dynamicSystem === 'custom') {
+            setPeriodicState(prev => ({ ...prev, isReady: true, orbits: [] }));
+            return;
+        }
         setPeriodicState(prev => ({ ...prev, isReady: false, orbits: [], showOrbits: false }));
 
         const initSystem = () => {
@@ -503,15 +552,17 @@ const SetValuedViz = () => {
                 if (cancelled) return;
 
                 // Use appropriate system based on dynamicSystem selection
-                let SystemClass;
                 let system;
 
                 if (dynamicSystem === 'duffing') {
-                    SystemClass = wasmModule.DuffingSystemWasm;
-                    system = new SystemClass(params.a, params.b, params.maxPeriod);
+                    system = new wasmModule.DuffingSystemWasm(params.a, params.b, params.maxPeriod);
+                } else if (dynamicSystem === 'custom') {
+                    system = new wasmModule.BoundaryUserDefinedSystemWasm(
+                        debouncedEquations.xEq, debouncedEquations.yEq,
+                        params.a, params.b, params.epsilon, params.maxPeriod
+                    );
                 } else {
-                    SystemClass = wasmModule.BoundaryHenonSystemWasm;
-                    system = new SystemClass(params.a, params.b, params.epsilon, params.maxPeriod);
+                    system = new wasmModule.BoundaryHenonSystemWasm(params.a, params.b, params.epsilon, params.maxPeriod);
                 }
                 if (cancelled) { system.free(); return; }
 
@@ -528,7 +579,7 @@ const SetValuedViz = () => {
         };
         initSystem();
         return () => { cancelled = true; };
-    }, [wasmModule, dynamicSystem, params.a, params.b, params.epsilon, params.maxPeriod, params.startX, params.startY]);
+    }, [wasmModule, dynamicSystem, params.a, params.b, params.epsilon, params.maxPeriod, params.startX, params.startY, debouncedEquations]);
 
     useEffect(() => {
         if (manifoldDebounceRef.current) {
@@ -539,6 +590,11 @@ const SetValuedViz = () => {
 
         manifoldDebounceRef.current = setTimeout(() => {
             if (!wasmModule) return;
+            // Custom systems: don't auto-compute — wait for explicit user action
+            if (dynamicSystem === 'custom') {
+                setManifoldState(prev => ({ ...prev, isComputing: false, isReady: true, manifolds: [], stableManifolds: [], fixedPoints: [], intersections: [] }));
+                return;
+            }
             try {
                 if (dynamicSystem === 'duffing') {
                     // Use Duffing manifold computation
@@ -556,12 +612,65 @@ const SetValuedViz = () => {
                         isComputing: false,
                         isReady: true
                     }));
+                } else if (dynamicSystem === 'custom') {
+                    // Use user-defined system manifold computation
+                    if (periodicState.orbits && periodicState.orbits.length > 0) {
+                        if (manifoldState.showStableManifold) {
+                            console.log('Computing custom stable AND unstable manifolds:', periodicState.orbits.length, 'orbits');
+                            const result = wasmModule.compute_stable_and_unstable_manifolds_user_defined(
+                                debouncedEquations.xEq, debouncedEquations.yEq,
+                                params.a, params.b, params.epsilon,
+                                periodicState.orbits,
+                                manifoldState.intersectionThreshold
+                            );
+
+                            setManifoldState(prev => ({
+                                ...prev,
+                                manifolds: result.unstable_manifolds || [],
+                                stableManifolds: result.stable_manifolds || [],
+                                fixedPoints: result.fixed_points || [],
+                                intersections: result.intersections || [],
+                                isComputing: false,
+                                isReady: true
+                            }));
+                        } else {
+                            console.log('Computing custom manifold from orbits:', periodicState.orbits.length, 'orbits');
+                            const result = wasmModule.compute_manifold_from_orbits_user_defined(
+                                debouncedEquations.xEq, debouncedEquations.yEq,
+                                params.a, params.b, params.epsilon,
+                                periodicState.orbits
+                            );
+
+                            setManifoldState(prev => ({
+                                ...prev,
+                                manifolds: result.manifolds || [],
+                                stableManifolds: [],
+                                fixedPoints: result.fixed_points || [],
+                                intersections: [],
+                                isComputing: false,
+                                isReady: true
+                            }));
+                        }
+                    } else {
+                        console.log('No periodic orbits, using simple user-defined manifold');
+                        const result = wasmModule.compute_user_defined_manifold(
+                            debouncedEquations.xEq, debouncedEquations.yEq,
+                            params.a, params.b, params.epsilon
+                        );
+
+                        setManifoldState(prev => ({
+                            ...prev,
+                            manifolds: result.manifolds || [],
+                            stableManifolds: [],
+                            fixedPoints: result.fixed_points || [],
+                            intersections: [],
+                            isComputing: false,
+                            isReady: true
+                        }));
+                    }
                 } else {
                     // Use Henon manifold computation
-                    // Use periodic orbits from the periodic state if available
-                    // Otherwise fall back to the simple computation
                     if (periodicState.orbits && periodicState.orbits.length > 0) {
-                        // Check if stable manifold display is enabled
                         if (manifoldState.showStableManifold) {
                             console.log('Computing stable AND unstable manifolds:', periodicState.orbits.length, 'orbits');
                             const result = wasmModule.compute_stable_and_unstable_manifolds(
@@ -626,7 +735,7 @@ const SetValuedViz = () => {
                 clearTimeout(manifoldDebounceRef.current);
             }
         };
-    }, [dynamicSystem, params.a, params.b, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.intersectionThreshold]);
+    }, [dynamicSystem, params.a, params.b, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.intersectionThreshold, debouncedEquations]);
 
     // Sequential animation - advance to next step only when manifold computation completes
     useEffect(() => {
@@ -1151,14 +1260,23 @@ const SetValuedViz = () => {
             return;
         }
 
-        // Use boundary_map from WASM
-        const { boundary_map } = wasmModule;
-        if (!boundary_map) {
-            console.error('boundary_map not found in WASM module');
-            return;
+        // Use boundary_map from WASM - route based on dynamic system
+        let nextPoint;
+        if (dynamicSystem === 'custom') {
+            const result = wasmModule.boundary_map_user_defined(
+                x, y, nx, ny,
+                debouncedEquations.xEq, debouncedEquations.yEq,
+                params.epsilon, params.a, params.b
+            );
+            nextPoint = result;
+        } else {
+            const { boundary_map } = wasmModule;
+            if (!boundary_map) {
+                console.error('boundary_map not found in WASM module');
+                return;
+            }
+            nextPoint = boundary_map(x, y, nx, ny, params.a, params.b, params.epsilon);
         }
-
-        const nextPoint = boundary_map(x, y, nx, ny, params.a, params.b, params.epsilon);
 
         setManifoldState(prev => ({
             ...prev,
@@ -1167,18 +1285,26 @@ const SetValuedViz = () => {
             iteration: prev.iteration + 1,
             hasStarted: true
         }));
-    }, [manifoldState.isReady, manifoldState.isRunning, manifoldState.currentPoint, wasmModule, params]);
+    }, [manifoldState.isReady, manifoldState.isRunning, manifoldState.currentPoint, wasmModule, params, dynamicSystem, debouncedEquations]);
 
     const runToConvergenceManifold = useCallback(() => {
         if (!manifoldState.isReady || manifoldState.isRunning || !wasmModule) return;
         setManifoldState(prev => ({ ...prev, isRunning: true }));
 
-        const { boundary_map } = wasmModule;
-        if (!boundary_map) {
-            console.error('boundary_map not found in WASM module');
-            setManifoldState(prev => ({ ...prev, isRunning: false }));
-            return;
-        }
+        // Create a step function that handles both Henon and custom systems
+        const stepFn = (cx, cy, cnx, cny) => {
+            if (dynamicSystem === 'custom') {
+                return wasmModule.boundary_map_user_defined(
+                    cx, cy, cnx, cny,
+                    debouncedEquations.xEq, debouncedEquations.yEq,
+                    params.epsilon, params.a, params.b
+                );
+            } else {
+                const { boundary_map } = wasmModule;
+                if (!boundary_map) return null;
+                return boundary_map(cx, cy, cnx, cny, params.a, params.b, params.epsilon);
+            }
+        };
 
         let currentX = manifoldState.currentPoint.x;
         let currentY = manifoldState.currentPoint.y;
@@ -1202,7 +1328,11 @@ const SetValuedViz = () => {
                     return;
                 }
                 newPoints.push({ x: currentX, y: currentY, nx: currentNx, ny: currentNy });
-                const next = boundary_map(currentX, currentY, currentNx, currentNy, params.a, params.b, params.epsilon);
+                const next = stepFn(currentX, currentY, currentNx, currentNy);
+                if (!next) {
+                    setManifoldState(prev => ({ ...prev, isRunning: false }));
+                    return;
+                }
                 currentX = next.x;
                 currentY = next.y;
                 currentNx = next.nx;
@@ -1223,7 +1353,7 @@ const SetValuedViz = () => {
             }
         };
         batchAnimationRef.current = requestAnimationFrame(animateStep);
-    }, [manifoldState, params, wasmModule]);
+    }, [manifoldState, params, wasmModule, dynamicSystem, debouncedEquations]);
 
     const resetManifold = useCallback(() => {
         if (batchAnimationRef.current) cancelAnimationFrame(batchAnimationRef.current);
@@ -1256,19 +1386,33 @@ const SetValuedViz = () => {
         if (!wasmModule) return;
         setUlamState(prev => ({ ...prev, isComputing: true, needsRecompute: false }));
         try {
-            const { UlamComputer } = wasmModule;
-            if (!UlamComputer) {
-                console.error('UlamComputer export is missing from WASM module!');
-                throw new Error('UlamComputer definition missing');
+            let computer;
+            if (dynamicSystem === 'custom') {
+                const { UlamComputerUserDefined } = wasmModule;
+                if (!UlamComputerUserDefined) {
+                    throw new Error('UlamComputerUserDefined definition missing');
+                }
+                computer = new UlamComputerUserDefined(
+                    debouncedEquations.xEq, debouncedEquations.yEq,
+                    params.a, params.b,
+                    ulamState.subdivisions,
+                    ulamState.pointsPerBox,
+                    ulamState.epsilon
+                );
+            } else {
+                const { UlamComputer } = wasmModule;
+                if (!UlamComputer) {
+                    console.error('UlamComputer export is missing from WASM module!');
+                    throw new Error('UlamComputer definition missing');
+                }
+                computer = new UlamComputer(
+                    params.a,
+                    params.b,
+                    ulamState.subdivisions,
+                    ulamState.pointsPerBox,
+                    ulamState.epsilon
+                );
             }
-
-            const computer = new UlamComputer(
-                params.a,
-                params.b,
-                ulamState.subdivisions,
-                ulamState.pointsPerBox,
-                ulamState.epsilon
-            );
 
             ulamComputerRef.current = computer;
             const boxes = computer.get_grid_boxes();
@@ -1299,7 +1443,7 @@ const SetValuedViz = () => {
             console.error("Ulam computation failed:", err);
             setUlamState(prev => ({ ...prev, isComputing: false }));
         }
-    }, [wasmModule, params.a, params.b, ulamState.subdivisions, ulamState.pointsPerBox, ulamState.epsilon, manifoldState.hasStarted, manifoldState.currentPoint]);
+    }, [wasmModule, params.a, params.b, ulamState.subdivisions, ulamState.pointsPerBox, ulamState.epsilon, manifoldState.hasStarted, manifoldState.currentPoint, dynamicSystem, debouncedEquations]);
 
     useEffect(() => {
         setUlamState(prev => ({ ...prev, epsilon: params.epsilon }));
@@ -1495,12 +1639,57 @@ const SetValuedViz = () => {
                     >
                         <option value="henon">Hénon Map</option>
                         <option value="duffing">Duffing Map</option>
+                        <option value="custom">Custom Equations</option>
                     </select>
                     <div style={{ fontSize: '11px', color: '#666', marginTop: '4px' }}>
                         {dynamicSystem === 'henon'
                             ? 'x\' = 1 - ax² + y, y\' = bx'
-                            : 'x\' = y, y\' = -bx + ay - y³'}
+                            : dynamicSystem === 'duffing'
+                            ? 'x\' = y, y\' = -bx + ay - y³'
+                            : `x' = ${customEquations.xEq}, y' = ${customEquations.yEq}`}
                     </div>
+                    {dynamicSystem === 'custom' && (
+                        <div style={{ marginTop: '8px' }}>
+                            <label style={{ display: 'block', marginBottom: '6px' }}>
+                                <span style={{ fontSize: '12px', color: '#aaa' }}>x' =</span>
+                                <input
+                                    type="text"
+                                    value={customEquations.xEq}
+                                    onChange={(e) => setCustomEquations(prev => ({ ...prev, xEq: e.target.value }))}
+                                    style={{
+                                        width: '100%', padding: '6px 8px', marginTop: '2px',
+                                        backgroundColor: '#1a1a2e', color: '#e0e0e0',
+                                        border: '1px solid #444', borderRadius: '4px',
+                                        fontSize: '13px', fontFamily: 'monospace'
+                                    }}
+                                    disabled={manifoldState.isRunning}
+                                />
+                            </label>
+                            <label style={{ display: 'block', marginBottom: '6px' }}>
+                                <span style={{ fontSize: '12px', color: '#aaa' }}>y' =</span>
+                                <input
+                                    type="text"
+                                    value={customEquations.yEq}
+                                    onChange={(e) => setCustomEquations(prev => ({ ...prev, yEq: e.target.value }))}
+                                    style={{
+                                        width: '100%', padding: '6px 8px', marginTop: '2px',
+                                        backgroundColor: '#1a1a2e', color: '#e0e0e0',
+                                        border: '1px solid #444', borderRadius: '4px',
+                                        fontSize: '13px', fontFamily: 'monospace'
+                                    }}
+                                    disabled={manifoldState.isRunning}
+                                />
+                            </label>
+                            <div style={{ fontSize: '10px', color: '#555', lineHeight: '1.4' }}>
+                                Variables: x, y, a, b. Functions: sin, cos, tan, abs, sqrt, exp, ln. Power: ^. Absolute value: |expr| or abs(expr)
+                            </div>
+                            {equationError && (
+                                <div style={{ fontSize: '11px', color: '#e74c3c', marginTop: '4px', padding: '4px 6px', backgroundColor: '#2a1a1a', borderRadius: '3px' }}>
+                                    {equationError}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* System Parameters */}

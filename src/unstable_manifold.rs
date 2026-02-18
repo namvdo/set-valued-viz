@@ -2321,6 +2321,406 @@ pub fn compute_stable_and_unstable_manifolds(
     }
 }
 
+/// compute accumulated Jacobian for a period-n orbit using a generic system
+fn accumulate_jacobian_generic(
+    system: &dyn DynamicalSystem,
+    start_pos: Vector2<f64>,
+    period: usize,
+) -> Matrix2<f64> {
+    let jac = system.jacobian(start_pos);
+    let mut jac_accum = jac;
+    let mut current_pos = start_pos;
+    for _ in 1..period {
+        if let Ok(next) = system.map(current_pos) {
+            current_pos = next;
+        } else {
+            break;
+        }
+        let next_jac = system.jacobian(current_pos);
+        jac_accum = next_jac * jac_accum;
+    }
+    jac_accum
+}
+
+/// extract eigenvalues and eigenvector from a 2x2 Jacobian
+fn eigen_analysis_2x2(jac_accum: &Matrix2<f64>) -> (f64, f64, f64, Vector2<f64>) {
+    let trace = jac_accum.trace();
+    let det = jac_accum.determinant();
+    let disc = trace * trace - 4.0 * det;
+
+    let (l1, l2) = if disc >= 0.0 {
+        let sqrt_disc = disc.sqrt();
+        ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0)
+    } else {
+        let real = trace / 2.0;
+        let imag = (-disc).sqrt() / 2.0;
+        let mag = (real * real + imag * imag).sqrt();
+        (mag, mag)
+    };
+
+    let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
+
+    let eigenvector = if disc >= 0.0 {
+        let j11 = jac_accum[(0, 0)];
+        let j12 = jac_accum[(0, 1)];
+        if (j11 - unstable_lambda).abs() > 1e-10 && j12.abs() > 1e-10 {
+            Vector2::new(j12, unstable_lambda - j11).normalize()
+        } else if j12.abs() > 1e-10 {
+            Vector2::new(1.0, 0.0)
+        } else {
+            Vector2::new(0.0, 1.0)
+        }
+    } else {
+        Vector2::new(1.0, 0.0)
+    };
+
+    (l1, l2, unstable_lambda, eigenvector)
+}
+
+#[wasm_bindgen]
+pub fn compute_manifold_from_orbits_user_defined(
+    x_eq: &str,
+    y_eq: &str,
+    a: f64,
+    b: f64,
+    epsilon: f64,
+    orbits_js: JsValue,
+) -> Result<JsValue, JsValue> {
+    console_log!(
+        "Computing user-defined manifold from orbits: x={}, y={}, eps={}",
+        x_eq, y_eq, epsilon
+    );
+
+    let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, a, b) {
+        Ok(s) => s,
+        Err(e) => return Err(JsValue::from_str(&format!("Failed to parse system: {}", e))),
+    };
+
+    #[derive(Deserialize)]
+    struct OrbitInput {
+        points: Vec<(f64, f64)>,
+        extended_points: Option<Vec<(f64, f64, f64, f64)>>,
+        period: usize,
+        stability: String,
+    }
+
+    let orbits: Vec<OrbitInput> = match serde_wasm_bindgen::from_value(orbits_js) {
+        Ok(v) => v,
+        Err(e) => {
+            console_error!("Failed to parse orbits: {:?}", e);
+            return Err(JsValue::from_str("Failed to parse orbits"));
+        }
+    };
+
+    let mut all_points: Vec<Vector2<f64>> = Vec::new();
+    let mut saddle_orbits: Vec<&OrbitInput> = Vec::new();
+    let mut fixed_points_result: Vec<FixedPointResult> = Vec::new();
+
+    for orbit in &orbits {
+        let in_range = orbit.points.iter().all(|(x, y)| x.abs() <= 2.0 && y.abs() <= 2.0);
+        if !in_range { continue; }
+
+        for (x, y) in &orbit.points {
+            all_points.push(Vector2::new(*x, *y));
+            fixed_points_result.push(FixedPointResult {
+                x: *x, y: *y, eigenvalues: (0.0, 0.0), stability: orbit.stability.clone(),
+            });
+        }
+
+        if orbit.stability == "saddle" || orbit.stability == "unstable" {
+            saddle_orbits.push(orbit);
+        }
+    }
+
+    // Compute eigenvalues for display
+    for fp in &mut fixed_points_result {
+        let jac = system.jacobian(Vector2::new(fp.x, fp.y));
+        let (l1, l2, _, _) = eigen_analysis_2x2(&jac);
+        fp.eigenvalues = (l1, l2);
+    }
+
+    let mut manifolds_result: Vec<ManifoldResult> = Vec::new();
+    let config = ManifoldConfig::default();
+    let computer = UnstableManifoldComputer::new(system.clone(), config);
+
+    for orbit in saddle_orbits {
+        if orbit.points.is_empty() { continue; }
+
+        for point_idx in 0..orbit.points.len() {
+            let (px, py) = orbit.points[point_idx];
+            let pos = Vector2::new(px, py);
+
+            let (eigenvector, unstable_lambda, normal_opt) = if let Some(ref ext) = orbit.extended_points {
+                if point_idx < ext.len() {
+                    let (_ex, _ey, nx, ny) = ext[point_idx];
+                    let normal = Vector2::new(nx, ny);
+                    let normal_norm = normal.norm();
+                    let normal_unit = if normal_norm > 1e-10 { normal / normal_norm } else { Vector2::new(1.0, 0.0) };
+                    let tangent = Vector2::new(-normal_unit.y, normal_unit.x);
+
+                    let jac_accum = accumulate_jacobian_generic(&system, pos, orbit.period);
+                    let (_, _, lambda, _) = eigen_analysis_2x2(&jac_accum);
+
+                    (tangent, lambda, Some(normal_unit))
+                } else {
+                    (Vector2::new(1.0, 0.0), 2.0, None)
+                }
+            } else {
+                let jac_accum = accumulate_jacobian_generic(&system, pos, orbit.period);
+                let (_, _, unstable_lambda, eigenvector) = eigen_analysis_2x2(&jac_accum);
+                (eigenvector, unstable_lambda, None)
+            };
+
+            let saddle_type = if orbit.stability == "unstable" {
+                SaddleType::DualRepeller
+            } else {
+                SaddleType::Regular
+            };
+
+            let saddle_pt = if let Some(normal) = normal_opt {
+                SaddlePoint {
+                    position: pos,
+                    period: orbit.period,
+                    tangent_2d: eigenvector / eigenvector.norm(),
+                    eigenvalue: unstable_lambda,
+                    tangent_4d: None,
+                    saddle_type,
+                    normal: normal / normal.norm(),
+                }
+            } else {
+                SaddlePoint::from_2d_eigenvector(
+                    pos, eigenvector, orbit.period, unstable_lambda, saddle_type, None,
+                )
+            };
+
+            if let Ok((traj_plus, traj_minus)) = computer.compute_manifold(&saddle_pt, &all_points) {
+                let convert = |traj: &Trajectory| -> Vec<(f64, f64)> {
+                    traj.points.iter()
+                        .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
+                        .map(|s| (s.pos.x, s.pos.y))
+                        .collect()
+                };
+
+                manifolds_result.push(ManifoldResult {
+                    plus: TrajectoryRet { points: convert(&traj_plus), stop_reason: format!("{:?}", traj_plus.stop_reason) },
+                    minus: TrajectoryRet { points: convert(&traj_minus), stop_reason: format!("{:?}", traj_minus.stop_reason) },
+                    saddle_point: (px, py),
+                    eigenvalue: unstable_lambda,
+                });
+            }
+        }
+    }
+
+    let result = ComputeResult { manifolds: manifolds_result, fixed_points: fixed_points_result };
+
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    match result.serialize(&serializer) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            console_error!("Serialization error: {:?}", e);
+            Err(JsValue::from_str("Failed to serialize result"))
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub fn compute_stable_and_unstable_manifolds_user_defined(
+    x_eq: &str,
+    y_eq: &str,
+    a: f64,
+    b: f64,
+    epsilon: f64,
+    orbits_js: JsValue,
+    intersection_threshold: f64,
+) -> Result<JsValue, JsValue> {
+    console_log!(
+        "Computing user-defined stable+unstable manifolds: x={}, y={}, eps={}",
+        x_eq, y_eq, epsilon
+    );
+
+    let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, a, b) {
+        Ok(s) => s,
+        Err(e) => return Err(JsValue::from_str(&format!("Failed to parse system: {}", e))),
+    };
+
+    #[derive(Deserialize)]
+    struct OrbitInput {
+        points: Vec<(f64, f64)>,
+        extended_points: Option<Vec<(f64, f64, f64, f64)>>,
+        period: usize,
+        stability: String,
+        #[serde(default)]
+        eigenvalues: Vec<f64>,
+    }
+
+    let orbits: Vec<OrbitInput> = match serde_wasm_bindgen::from_value(orbits_js) {
+        Ok(v) => v,
+        Err(e) => {
+            console_error!("Failed to parse orbits: {:?}", e);
+            return Err(JsValue::from_str("Failed to parse orbits"));
+        }
+    };
+
+    let mut all_points: Vec<Vector2<f64>> = Vec::new();
+    let mut saddle_orbits: Vec<&OrbitInput> = Vec::new();
+    let mut fixed_points_result: Vec<FixedPointResult> = Vec::new();
+
+    for orbit in &orbits {
+        let in_range = orbit.points.iter().all(|(x, y)| x.abs() <= 2.0 && y.abs() <= 2.0);
+        if !in_range { continue; }
+
+        for (x, y) in &orbit.points {
+            all_points.push(Vector2::new(*x, *y));
+            fixed_points_result.push(FixedPointResult {
+                x: *x, y: *y, eigenvalues: (0.0, 0.0), stability: orbit.stability.clone(),
+            });
+        }
+
+        if orbit.stability == "saddle" {
+            saddle_orbits.push(orbit);
+        }
+    }
+
+    for fp in &mut fixed_points_result {
+        let jac = system.jacobian(Vector2::new(fp.x, fp.y));
+        let (l1, l2, _, _) = eigen_analysis_2x2(&jac);
+        fp.eigenvalues = (l1, l2);
+    }
+
+    let mut unstable_manifolds: Vec<ManifoldResult> = Vec::new();
+    let mut stable_manifolds: Vec<ManifoldResult> = Vec::new();
+    let mut intersections: Vec<IntersectionInfo> = Vec::new();
+
+    let config = ManifoldConfig::default();
+    let computer = UnstableManifoldComputer::new(system.clone(), config);
+
+    for orbit in &saddle_orbits {
+        if orbit.points.is_empty() { continue; }
+
+        for point_idx in 0..orbit.points.len() {
+            let (px, py) = orbit.points[point_idx];
+            let pos = Vector2::new(px, py);
+
+            let jac_accum = accumulate_jacobian_generic(&system, pos, orbit.period);
+            let trace = jac_accum.trace();
+            let det = jac_accum.determinant();
+            let disc = trace * trace - 4.0 * det;
+
+            let (l1, l2) = if disc >= 0.0 {
+                let sqrt_disc = disc.sqrt();
+                ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0)
+            } else {
+                (trace / 2.0, trace / 2.0)
+            };
+
+            let (unstable_lambda, stable_lambda) = if l1.abs() > l2.abs() { (l1, l2) } else { (l2, l1) };
+
+            let compute_eigenvector = |lambda: f64| -> Vector2<f64> {
+                let j11 = jac_accum[(0, 0)];
+                let j12 = jac_accum[(0, 1)];
+                let v1 = 1.0;
+                let v2 = -(j11 - lambda) / j12.max(1e-10);
+                let norm = (v1 * v1 + v2 * v2).sqrt();
+                if norm > 1e-10 { Vector2::new(v1 / norm, v2 / norm) } else { Vector2::new(1.0, 0.0) }
+            };
+
+            let unstable_eigenvec = compute_eigenvector(unstable_lambda);
+            let stable_eigenvec = compute_eigenvector(stable_lambda);
+
+            let normal_opt = if let Some(ref ext) = orbit.extended_points {
+                if point_idx < ext.len() {
+                    let (_, _, nx, ny) = ext[point_idx];
+                    let normal = Vector2::new(nx, ny);
+                    let norm = normal.norm();
+                    if norm > 1e-10 { Some(normal / norm) } else { None }
+                } else { None }
+            } else { None };
+
+            let make_saddle = |eigvec: Vector2<f64>, lambda: f64, stype: SaddleType| -> SaddlePoint {
+                if let Some(normal) = normal_opt {
+                    SaddlePoint {
+                        position: pos, period: orbit.period, tangent_2d: eigvec,
+                        eigenvalue: lambda, tangent_4d: None, saddle_type: stype, normal,
+                    }
+                } else {
+                    SaddlePoint::from_2d_eigenvector(pos, eigvec, orbit.period, lambda, stype, None)
+                }
+            };
+
+            let saddle_unstable = make_saddle(unstable_eigenvec, unstable_lambda, SaddleType::Regular);
+            let saddle_stable = make_saddle(stable_eigenvec, stable_lambda, SaddleType::DualRepeller);
+
+            let convert = |traj: &Trajectory| -> Vec<(f64, f64)> {
+                traj.points.iter()
+                    .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
+                    .map(|s| (s.pos.x, s.pos.y))
+                    .collect()
+            };
+
+            if let Ok((tp, tm)) = computer.compute_manifold(&saddle_unstable, &all_points) {
+                unstable_manifolds.push(ManifoldResult {
+                    plus: TrajectoryRet { points: convert(&tp), stop_reason: format!("{:?}", tp.stop_reason) },
+                    minus: TrajectoryRet { points: convert(&tm), stop_reason: format!("{:?}", tm.stop_reason) },
+                    saddle_point: (px, py), eigenvalue: unstable_lambda,
+                });
+            }
+
+            if let Ok((tp, tm)) = computer.compute_manifold(&saddle_stable, &all_points) {
+                stable_manifolds.push(ManifoldResult {
+                    plus: TrajectoryRet { points: convert(&tp), stop_reason: format!("{:?}", tp.stop_reason) },
+                    minus: TrajectoryRet { points: convert(&tm), stop_reason: format!("{:?}", tm.stop_reason) },
+                    saddle_point: (px, py), eigenvalue: stable_lambda,
+                });
+            }
+        }
+    }
+
+    // Check heteroclinic intersections
+    for (u_idx, u_man) in unstable_manifolds.iter().enumerate() {
+        for (s_idx, s_man) in stable_manifolds.iter().enumerate() {
+            let u_saddle = u_man.saddle_point;
+            let s_saddle = s_man.saddle_point;
+            if (u_saddle.0 - s_saddle.0).abs() < 1e-8 && (u_saddle.1 - s_saddle.1).abs() < 1e-8 {
+                continue;
+            }
+
+            let mut u_points: Vec<Vector2<f64>> = u_man.plus.points.iter().map(|(x, y)| Vector2::new(*x, *y)).collect();
+            u_points.extend(u_man.minus.points.iter().map(|(x, y)| Vector2::new(*x, *y)));
+
+            let mut s_points: Vec<Vector2<f64>> = s_man.plus.points.iter().map(|(x, y)| Vector2::new(*x, *y)).collect();
+            s_points.extend(s_man.minus.points.iter().map(|(x, y)| Vector2::new(*x, *y)));
+
+            let mut min_distance = f64::INFINITY;
+            for u_pt in &u_points {
+                for s_pt in &s_points {
+                    let dist = (u_pt - s_pt).norm();
+                    if dist < min_distance { min_distance = dist; }
+                }
+            }
+
+            intersections.push(IntersectionInfo {
+                unstable_saddle_index: u_idx,
+                stable_saddle_index: s_idx,
+                has_intersection: min_distance < intersection_threshold,
+                min_distance,
+            });
+        }
+    }
+
+    let result = StableUnstableResult {
+        unstable_manifolds, stable_manifolds, fixed_points: fixed_points_result, intersections,
+    };
+
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    match result.serialize(&serializer) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            console_error!("Serialization error: {:?}", e);
+            Err(JsValue::from_str("Failed to serialize result"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

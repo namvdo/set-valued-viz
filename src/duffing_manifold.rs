@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use crate::duffing::DuffingParams;
+use crate::dynamical_systems::ExtendedState;
 use crate::unstable_manifold::{
-    ExtendedState, ManifoldConfig, SaddlePoint, SaddleType, StopReason, Trajectory,
+    ManifoldConfig, SaddlePoint, SaddleType, StopReason, Trajectory,
 };
 
 #[wasm_bindgen]

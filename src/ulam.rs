@@ -292,7 +292,7 @@ impl UlamComputer {
 
     /// Compute the right eigenvector (invariant measure for forward dynamics)
     /// This is the stationary distribution: mu * P = mu
-    fn compute_right_eigenvector(
+    pub(crate) fn compute_right_eigenvector(
         transitions: &HashMap<usize, Vec<(usize, f64)>>,
         n_boxes: usize,
         iterations: usize,
@@ -334,7 +334,7 @@ impl UlamComputer {
 
     /// Compute the left eigenvector (invariant measure for backward dynamics)
     /// This is computed on the transpose: P^T * v = v
-    fn compute_left_eigenvector(
+    pub(crate) fn compute_left_eigenvector(
         transitions: &HashMap<usize, Vec<(usize, f64)>>,
         n_boxes: usize,
         iterations: usize,
@@ -429,6 +429,167 @@ impl UlamComputer {
     }
 
     /// Get the grid step size (useful for UI scaling)
+    pub fn get_grid_step(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&(self.grid.step.x, self.grid.step.y)).unwrap()
+    }
+
+    pub fn get_box_index(&self, x: f64, y: f64) -> isize {
+        match self.grid.search(&Vector2::new(x, y)) {
+            Some(idx) => idx as isize,
+            None => -1,
+        }
+    }
+
+    pub fn get_intersecting_boxes(&self, x: f64, y: f64) -> JsValue {
+        let point = Vector2::new(x, y);
+        let boxes = self.grid.find_intersecting_boxes(&point, self.epsilon);
+        serde_wasm_bindgen::to_value(&boxes).unwrap()
+    }
+
+    pub fn get_dimensions(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.grid.dims).unwrap()
+    }
+}
+
+use crate::dynamical_systems::{DynamicalSystem, UserDefinedDynamicalSystem};
+
+#[wasm_bindgen]
+pub struct UlamComputerUserDefined {
+    grid: Grid,
+    transitions: HashMap<usize, Vec<(usize, f64)>>,
+    right_eigenvector: Vec<f64>,
+    left_eigenvector: Vec<f64>,
+    epsilon: f64,
+}
+
+#[wasm_bindgen]
+impl UlamComputerUserDefined {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        x_eq: &str,
+        y_eq: &str,
+        a: f64,
+        b: f64,
+        subdivisions: usize,
+        points_per_box: usize,
+        epsilon: f64,
+    ) -> Result<UlamComputerUserDefined, String> {
+        let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, 0.001, a, b)?;
+
+        let min = Vector2::new(-2.0, -1.5);
+        let max = Vector2::new(2.0, 1.5);
+        let grid = Grid::new(min, max, subdivisions);
+
+        let n_boxes = grid.boxes.len();
+        let samples_per_dim = (points_per_box as f64).sqrt().ceil() as usize;
+
+        console_log!(
+            "UlamUserDefined: {} boxes, {}x{} samples/box, epsilon = {}",
+            n_boxes, samples_per_dim, samples_per_dim, epsilon
+        );
+
+        let mut transitions: HashMap<usize, Vec<(usize, f64)>> = HashMap::new();
+
+        for i in 0..n_boxes {
+            let rect = &grid.boxes[i];
+            let center = Vector2::new(rect.center.0, rect.center.1);
+            let radius = Vector2::new(rect.radius.0, rect.radius.1);
+
+            let mut counts: HashMap<usize, usize> = HashMap::new();
+            let mut total_valid = 0usize;
+
+            for sy in 0..samples_per_dim {
+                for sx in 0..samples_per_dim {
+                    let tx = if samples_per_dim > 1 {
+                        -1.0 + 2.0 * (sx as f64) / ((samples_per_dim - 1) as f64)
+                    } else {
+                        0.0
+                    };
+                    let ty = if samples_per_dim > 1 {
+                        -1.0 + 2.0 * (sy as f64) / ((samples_per_dim - 1) as f64)
+                    } else {
+                        0.0
+                    };
+
+                    let pt = Vector2::new(center.x + tx * radius.x, center.y + ty * radius.y);
+
+                    if let Ok(mapped) = system.map(pt) {
+                        let intersecting = grid.find_intersecting_boxes(&mapped, epsilon);
+                        if !intersecting.is_empty() {
+                            total_valid += 1;
+                            for target_idx in intersecting {
+                                *counts.entry(target_idx).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if total_valid > 0 {
+                let mut probs = Vec::with_capacity(counts.len());
+                let total = counts.values().sum::<usize>() as f64;
+                for (target, count) in counts {
+                    probs.push((target, (count as f64) / total));
+                }
+                transitions.insert(i, probs);
+            }
+        }
+
+        let right_eigenvector = UlamComputer::compute_right_eigenvector(&transitions, n_boxes, 100);
+        let left_eigenvector = UlamComputer::compute_left_eigenvector(&transitions, n_boxes, 100);
+
+        console_log!(
+            "UlamUserDefined complete. Right EV sum: {:.6}, Left EV sum: {:.6}",
+            right_eigenvector.iter().sum::<f64>(),
+            left_eigenvector.iter().sum::<f64>()
+        );
+
+        Ok(UlamComputerUserDefined {
+            grid,
+            transitions,
+            right_eigenvector,
+            left_eigenvector,
+            epsilon,
+        })
+    }
+
+    pub fn get_grid_boxes(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.grid.boxes).unwrap()
+    }
+
+    pub fn get_transitions(&self, from_box_idx: usize) -> JsValue {
+        #[derive(Serialize)]
+        struct Transition {
+            index: usize,
+            probability: f64,
+        }
+
+        if let Some(probs) = self.transitions.get(&from_box_idx) {
+            let result: Vec<Transition> = probs
+                .iter()
+                .map(|(idx, p)| Transition {
+                    index: *idx,
+                    probability: *p,
+                })
+                .collect();
+            serde_wasm_bindgen::to_value(&result).unwrap()
+        } else {
+            JsValue::NULL
+        }
+    }
+
+    pub fn get_invariant_measure(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.right_eigenvector).unwrap()
+    }
+
+    pub fn get_left_eigenvector(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.left_eigenvector).unwrap()
+    }
+
+    pub fn get_epsilon(&self) -> f64 {
+        self.epsilon
+    }
+
     pub fn get_grid_step(&self) -> JsValue {
         serde_wasm_bindgen::to_value(&(self.grid.step.x, self.grid.step.y)).unwrap()
     }
