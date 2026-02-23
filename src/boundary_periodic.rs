@@ -734,7 +734,7 @@ pub fn find_boundary_periodic_point_davidchack_lai(
         + (mapped.nx - nx).powi(2)
         + (mapped.ny - ny).powi(2);
 
-    if dist < 1e-6 {
+    if dist < 1e-10 {
         return Some(final_point);
     } else {
         None
