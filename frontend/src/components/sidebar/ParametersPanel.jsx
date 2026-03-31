@@ -1,0 +1,90 @@
+import React from 'react';
+import { Collapsible } from '../ui/Collapsible';
+import { Slider } from '../ui/Slider';
+
+export const ParametersPanel = ({ systemId, params, setParams, disabled, systems, applyPreset }) => {
+
+  const sys = Object.values(systems).flat().find(s => s.id === systemId);
+  const presets = sys?.presets || [];
+
+  return (
+    <Collapsible title="Parameters" defaultOpen={true}>
+      {presets.length > 0 && (
+        <div className="presets">
+          {presets.map(p => (
+            <button
+              key={p.name}
+              className="preset"
+              onClick={() => applyPreset(p.vals)}
+            >
+              {p.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {systemId !== 'duffing_ode' && (
+        <>
+          <Slider label="a" hint="nonlinearity" min={0.1} max={systemId === 'duffing' ? 3.0 : 2.0} step={0.01} value={params.a} onChange={v => setParams(prev => ({ ...prev, a: v }))} disabled={disabled} />
+          <Slider label="b" hint="contraction" min={0.1} max={systemId === 'duffing' ? 1.0 : 0.5} step={0.01} value={params.b} onChange={v => setParams(prev => ({ ...prev, b: v }))} disabled={disabled} />
+        </>
+      )}
+
+      {systemId === 'duffing_ode' && (
+        <>
+          <Slider label="δ" hint="damping" min={0.01} max={2.0} step={0.01} value={params.delta} onChange={v => setParams(prev => ({ ...prev, delta: v }))} disabled={disabled} />
+          <Slider label="h" hint="step size" min={0.001} max={0.5} step={0.001} value={params.h} onChange={v => setParams(prev => ({ ...prev, h: v }))} disabled={disabled} />
+        </>
+      )}
+
+      <Slider label="ε" hint="ball radius" min={0.001} max={systemId === 'duffing_ode' ? 0.5 : 0.2} step={0.001} value={params.epsilon} onChange={v => setParams(prev => ({ ...prev, epsilon: v }))} disabled={disabled} />
+
+
+      {systemId !== 'duffing_ode' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '2px' }}>
+          <div>
+            <input
+              className={`p-val ${disabled ? 'disabled' : ''}`}
+              style={{ width: '100%' }}
+              type="number"
+              min="1" max={systemId === 'duffing_ode' ? 10 : 20} step="1"
+              value={params.maxPeriod}
+              onChange={(e) => setParams(prev => ({ ...prev, maxPeriod: parseInt(e.target.value) || 2 }))}
+              disabled={disabled}
+            />
+            <input
+              type="range"
+              className={`p-track ${disabled ? 'disabled' : ''}`}
+              style={{ marginTop: '4px' }}
+              min="1" max="10" step="1"
+              value={params.maxPeriod}
+              onChange={(e) => setParams(prev => ({ ...prev, maxPeriod: parseInt(e.target.value) }))}
+              disabled={disabled}
+            />
+          </div>
+          <div>
+            <div style={{ fontSize: '10px', color: 'var(--text-3)', marginBottom: '3px' }}>Max iter</div>
+            <input
+              className={`p-val ${disabled ? 'disabled' : ''}`}
+              style={{ width: '100%' }}
+              type="number"
+              min="100" max="10000" step="100"
+              value={params.maxIterations}
+              onChange={(e) => setParams(prev => ({ ...prev, maxIterations: parseInt(e.target.value) || 100 }))}
+              disabled={disabled}
+            />
+            <input
+              type="range"
+              className={`p-track ${disabled ? 'disabled' : ''}`}
+              style={{ marginTop: '4px' }}
+              min="100" max="5000" step="100"
+              value={params.maxIterations}
+              onChange={(e) => setParams(prev => ({ ...prev, maxIterations: parseInt(e.target.value) }))}
+              disabled={disabled}
+            />
+          </div>
+        </div>
+      )}
+    </Collapsible>
+  );
+}

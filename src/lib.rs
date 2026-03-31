@@ -25,3 +25,6 @@ pub use hausdorff::*;
 
 mod dynamical_systems;
 pub use dynamical_systems::*;
+
+mod continuous_ds;
+pub use continuous_ds::*;

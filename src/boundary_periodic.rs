@@ -58,7 +58,7 @@ impl ExtendedPoint {
     }
 
     pub fn normalize(&mut self) {
-        let norm = (self.nx * self.nx + self.ny * self.ny);
+        let norm = self.nx * self.nx + self.ny * self.ny;
         if norm > 1e-12 {
             self.nx /= norm;
             self.ny /= norm;
