@@ -551,27 +551,44 @@ const SetValuedViz = () => {
         if (!canvas) return;
 
         const handleClick = (event) => {
-            if (!ulamState.showUlamOverlay || !ulamState.gridBoxes.length) return;
-
             const rect = canvas.getBoundingClientRect();
             const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
             const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-            raycasterRef.current.setFromCamera(new THREE.Vector2(x, y), cameraRef.current);
+            if (ulamState.showUlamOverlay && ulamState.gridBoxes.length) {
+                raycasterRef.current.setFromCamera(new THREE.Vector2(x, y), cameraRef.current);
+                const scene = sceneRef.current;
+                const ulamMesh = scene.getObjectByName('ulam-grid');
 
-            const scene = sceneRef.current;
-            const ulamMesh = scene.getObjectByName('ulam-grid');
-
-            if (ulamMesh) {
-                const intersects = raycasterRef.current.intersectObject(ulamMesh);
-                if (intersects.length > 0) {
-                    const instanceId = intersects[0].instanceId;
-                    if (instanceId !== undefined) {
-                        handleUlamClick(instanceId);
+                if (ulamMesh) {
+                    const intersects = raycasterRef.current.intersectObject(ulamMesh);
+                    if (intersects.length > 0) {
+                        const instanceId = intersects[0].instanceId;
+                        if (instanceId !== undefined) {
+                            handleUlamClick(instanceId);
+                            return;
+                        }
+                    } else {
+                        setUlamState(prev => ({ ...prev, selectedBoxIndex: null, transitions: null }));
+                        return;
                     }
-                } else {
-                    setUlamState(prev => ({ ...prev, selectedBoxIndex: null, transitions: null }));
                 }
+            }
+
+            // Click bare canvas to set startPoint
+            raycasterRef.current.setFromCamera(new THREE.Vector2(x, y), cameraRef.current);
+            const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+            const target = new THREE.Vector3();
+            raycasterRef.current.ray.intersectPlane(plane, target);
+            if (target) {
+                setManifoldState(prev => {
+                    const newStart = { ...prev.startPoint, x: target.x, y: target.y };
+                    return {
+                        ...prev,
+                        startPoint: newStart,
+                        currentPoint: prev.hasStarted ? prev.currentPoint : newStart
+                    };
+                });
             }
         };
 
@@ -1483,11 +1500,13 @@ const SetValuedViz = () => {
             bdeSimRef.current = new wasmModule.BdeSimulatorWasm(
                 params.delta,
                 params.epsilon,
-                0.0, 0.0, 0.05, 1000
+                manifoldState.startPoint.x,
+                manifoldState.startPoint.y,
+                0.05, 1000
             );
             setBdeState({ points: bdeSimRef.current.get_points(), isRunning: false });
         }
-    }, [wasmModule, params.delta, params.epsilon]);
+    }, [wasmModule, params.delta, params.epsilon, manifoldState.startPoint.x, manifoldState.startPoint.y]);
 
     const resetManifold = useCallback(() => {
         if (batchAnimationRef.current) cancelAnimationFrame(batchAnimationRef.current);
@@ -1774,10 +1793,14 @@ const SetValuedViz = () => {
     };
 
     const updateStartPoint = (key, value) => {
-        setManifoldState(prev => ({
-            ...prev,
-            startPoint: { ...prev.startPoint, [key]: value }
-        }));
+        setManifoldState(prev => {
+            const newStart = { ...prev.startPoint, [key]: value };
+            return {
+                ...prev,
+                startPoint: newStart,
+                currentPoint: prev.hasStarted ? prev.currentPoint : newStart
+            };
+        });
         if (typeof window.update_start_point === 'function') {
             window.update_start_point(
                 key === 'x' ? value : manifoldState.startPoint.x,
