@@ -64,42 +64,28 @@ export const Sidebar = (props) => {
           </>
         )}
 
-        {props.type === 'continuous' && (
-          null
-        )}
+        <StartingPoint
+          type={props.type}
+          startPoint={props.manifoldState.startPoint}
+          updateStartPoint={props.updateStartPoint}
+        />
 
         {props.type === 'discrete' && (
-          <>
-            <StartingPoint
-              type={props.type}
-              startPoint={props.manifoldState.startPoint}
-              updateStartPoint={props.updateStartPoint}
-            />
-
-            <AnimationPanel
-              animationState={props.animationState}
-              setAnimationState={props.setAnimationState}
-              manifoldState={props.manifoldState}
-              recordingState={props.recordingState}
-              startAnimation={props.startAnimation}
-              stopAnimation={props.stopAnimation}
-              toggleRecording={props.toggleRecording}
-            />
-
-            <UlamPanel
-              ulamState={props.ulamState}
-              setUlamState={props.setUlamState}
-            />
-          </>
-        )}
-
-        {props.type === 'continuous' && (
-          <StartingPoint
-            type={props.type}
-            startPoint={props.manifoldState.startPoint}
-            updateStartPoint={props.updateStartPoint}
+          <AnimationPanel
+            animationState={props.animationState}
+            setAnimationState={props.setAnimationState}
+            manifoldState={props.manifoldState}
+            recordingState={props.recordingState}
+            startAnimation={props.startAnimation}
+            stopAnimation={props.stopAnimation}
+            toggleRecording={props.toggleRecording}
           />
         )}
+
+        <UlamPanel
+          ulamState={props.ulamState}
+          setUlamState={props.setUlamState}
+        />
 
       </div>
 

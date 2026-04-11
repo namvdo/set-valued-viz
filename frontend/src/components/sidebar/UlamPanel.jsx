@@ -6,44 +6,44 @@ import { Slider } from '../ui/Slider';
 export const UlamPanel = ({ ulamState, setUlamState }) => {
   return (
     <Collapsible title="Ulam / Markov" defaultOpen={false}>
-      <Toggle 
-        label="Grid overlay" 
-        checked={ulamState.showUlamOverlay} 
-        onChange={v => setUlamState(prev => ({ ...prev, showUlamOverlay: v }))} 
+      <Toggle
+        label="Grid overlay"
+        checked={ulamState.showUlamOverlay}
+        onChange={v => setUlamState(prev => ({ ...prev, showUlamOverlay: v }))}
       />
-      
+
       {ulamState.showUlamOverlay && (
         <>
-          <Toggle 
-            label="Show transitions" 
-            checked={ulamState.showTransitions} 
-            onChange={v => setUlamState(prev => ({ ...prev, showTransitions: v }))} 
+          <Toggle
+            label="Show transitions"
+            checked={ulamState.showTransitions}
+            onChange={v => setUlamState(prev => ({ ...prev, showTransitions: v }))}
           />
-          <Toggle 
-            label="Track current box" 
-            checked={ulamState.showCurrentBox} 
-            onChange={v => setUlamState(prev => ({ ...prev, showCurrentBox: v }))} 
+          <Toggle
+            label="Track current box"
+            checked={ulamState.showCurrentBox}
+            onChange={v => setUlamState(prev => ({ ...prev, showCurrentBox: v }))}
           />
           <div className="spacer"></div>
 
-          <Slider 
-            label="Grid size" 
-            min={10} max={100} step={5} 
-            value={ulamState.subdivisions} 
-            onChange={v => setUlamState(prev => ({ ...prev, subdivisions: v }))} 
-            disabled={ulamState.isComputing} 
+          <Slider
+            label="Grid size"
+            min={10} max={200} step={5}
+            value={ulamState.subdivisions}
+            onChange={v => setUlamState(prev => ({ ...prev, subdivisions: v }))}
+            disabled={ulamState.isComputing}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: 'var(--text-3)', marginTop: '2px' }}>
             <span>10</span><span>100</span>
           </div>
 
           <div style={{ marginBottom: '4px' }}>
-            <Slider 
-              label="Samples / box" 
-              min={16} max={256} step={16} 
-              value={ulamState.pointsPerBox} 
-              onChange={v => setUlamState(prev => ({ ...prev, pointsPerBox: v }))} 
-              disabled={ulamState.isComputing} 
+            <Slider
+              label="Samples / box"
+              min={16} max={256} step={16}
+              value={ulamState.pointsPerBox}
+              onChange={v => setUlamState(prev => ({ ...prev, pointsPerBox: v }))}
+              disabled={ulamState.isComputing}
             />
           </div>
 

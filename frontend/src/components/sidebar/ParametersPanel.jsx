@@ -37,7 +37,7 @@ export const ParametersPanel = ({ systemId, params, setParams, disabled, systems
         </>
       )}
 
-      <Slider label="ε" hint="ball radius" min={0.001} max={systemId === 'duffing_ode' ? 0.5 : 0.2} step={0.001} value={params.epsilon} onChange={v => setParams(prev => ({ ...prev, epsilon: v }))} disabled={disabled} />
+      <Slider label="ε" hint="ball radius" min={0.000} max={systemId === 'duffing_ode' ? 0.5 : 0.2} step={0.001} value={params.epsilon} onChange={v => setParams(prev => ({ ...prev, epsilon: v }))} disabled={disabled} />
 
 
       {systemId !== 'duffing_ode' && (

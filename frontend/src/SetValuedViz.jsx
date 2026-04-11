@@ -137,12 +137,11 @@ const SetValuedViz = () => {
     const batchAnimationRef = useRef(null);
     const manifoldDebounceRef = useRef(null);
 
-    const [dynamicSystem, setDynamicSystem] = useState('henon'); // 'henon', 'duffing', or 'custom'
+    const [dynamicSystem, setDynamicSystem] = useState('duffing_ode'); // 'henon', 'duffing', or 'custom'
     const [customEquations, setCustomEquations] = useState({
         xEq: '1 - a * x^2 + y',
         yEq: 'b * x'
     });
-    // Debounced version — only updates after user stops typing for 1s
     const [debouncedEquations, setDebouncedEquations] = useState({
         xEq: '1 - a * x^2 + y',
         yEq: 'b * x'
@@ -156,7 +155,7 @@ const SetValuedViz = () => {
         b: 0.3,
         delta: 0.15,
         h: 0.05,
-        epsilon: 0.0625,
+        epsilon: 0.1,
         startX: 0.1,
         startY: 0.1,
         maxIterations: 1000,
@@ -182,7 +181,6 @@ const SetValuedViz = () => {
         showStableManifold: false,
         intersectionThreshold: 0.05,
         highlightedOrbitId: null,
-        // Trajectory tracking state
         currentPoint: { x: 0.1, y: 0.1, nx: 1.0, ny: 0.0 }, // 4D point for boundary map
         trajectoryPoints: [],
         iteration: 0,
@@ -823,22 +821,18 @@ const SetValuedViz = () => {
         };
     }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.intersectionThreshold, debouncedEquations]);
 
-    // Sequential animation - advance to next step only when manifold computation completes
     useEffect(() => {
         if (!animationState.isAnimating) {
             return;
         }
 
-        // Only advance when manifold is ready (not computing)
         if (manifoldState.isComputing) {
             return;
         }
 
         const { parameter, rangeValue, direction, steps, currentStep, baseValue } = animationState;
 
-        // Check if we've completed all steps
         if (currentStep >= steps) {
-            // Animation complete
             setAnimationState(prev => ({
                 ...prev,
                 isAnimating: false
@@ -846,12 +840,10 @@ const SetValuedViz = () => {
             return;
         }
 
-        // Calculate the next value
         const stepSize = rangeValue / steps;
         const nextStep = currentStep + 1;
         const nextValue = baseValue + (direction * stepSize * nextStep);
 
-        // Update the parameter and advance step
         setParams(p => ({ ...p, [parameter]: parseFloat(nextValue.toFixed(4)) }));
         setAnimationState(prev => ({
             ...prev,
@@ -864,7 +856,6 @@ const SetValuedViz = () => {
         const baseVal = params[animationState.parameter];
         const targetVal = baseVal + (animationState.direction * animationState.rangeValue);
 
-        // Capture initial frame if recording
         if (recordingState.recordingEnabled && canvasRef.current) {
             try {
                 const canvas = canvasRef.current;
@@ -874,7 +865,6 @@ const SetValuedViz = () => {
                 const ctx = offscreen.getContext('2d');
                 ctx.drawImage(canvas, 0, 0, width, height);
 
-                // Draw parameter overlay
                 const overlayText = `a = ${params.a.toFixed(4)}  b = ${params.b.toFixed(4)}  ε = ${params.epsilon.toFixed(4)}`;
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
                 ctx.fillRect(10, height - 40, 400, 30);
@@ -931,7 +921,6 @@ const SetValuedViz = () => {
         return bitmap;
     }, [params.a, params.b, params.epsilon, recordingState.recordingEnabled]);
 
-    // Initialize video encoder worker
     const initEncoderWorker = useCallback(() => {
         if (encoderWorkerRef.current) {
             encoderWorkerRef.current.terminate();
@@ -1086,7 +1075,6 @@ const SetValuedViz = () => {
         worker.postMessage({ type: 'finish' });
     }, [initEncoderWorker, generateFilename]);
 
-    // Simple frame capture: capture whenever manifold finishes computing while recording
     const wasComputingRef = useRef(false);
 
     useEffect(() => {
@@ -1094,16 +1082,13 @@ const SetValuedViz = () => {
         const isComputing = manifoldState.isComputing;
         wasComputingRef.current = isComputing;
 
-        // Only care about recording during animation
         if (!recordingState.recordingEnabled || !animationState.isAnimating) {
             return;
         }
 
-        // Capture when manifold computation finishes (true -> false transition)
         if (wasComputing && !isComputing) {
             console.log(`[Recording] Manifold finished, capturing frame for step ${animationState.currentStep}...`);
 
-            // Use requestAnimationFrame to ensure render is complete
             requestAnimationFrame(async () => {
                 try {
                     const frame = await captureFrame();
@@ -1157,7 +1142,6 @@ const SetValuedViz = () => {
             scene.remove(obj);
         });
 
-        // Render unstable manifolds (blue)
         if (manifoldState.showUnstableManifold && manifoldState.manifolds.length > 0) {
             manifoldState.manifolds.forEach(m => {
                 [m.plus, m.minus].forEach(traj => {
@@ -1177,7 +1161,6 @@ const SetValuedViz = () => {
             });
         }
 
-        // Render stable manifolds (orange)
         if (manifoldState.showStableManifold && manifoldState.stableManifolds.length > 0) {
             manifoldState.stableManifolds.forEach(m => {
                 [m.plus, m.minus].forEach(traj => {
@@ -1197,18 +1180,19 @@ const SetValuedViz = () => {
             });
         }
 
-        // Render BDE boundary loop as points
-        if (dynamicSystem === 'duffing_ode' && bdeState.points && bdeState.points.length > 0) {
-            bdeState.points.forEach(p => {
-                const geom = new THREE.SphereGeometry(0.012, 6, 6);
-                const mat = new THREE.MeshBasicMaterial({
-                    color: new THREE.Color('#3d5afe') // blue boundary
-                });
-                const sphere = new THREE.Mesh(geom, mat);
-                sphere.position.set(p.x, p.y, 0.15);
-                sphere.userData.type = 'bde';
-                scene.add(sphere);
+        if (dynamicSystem === 'duffing_ode' && bdeState.points && bdeState.points.length > 1) {
+            const pts = bdeState.points.map(p => new THREE.Vector3(p.x, p.y, 0.15));
+            pts.push(pts[0].clone());
+            const geom = new THREE.BufferGeometry().setFromPoints(pts);
+            const mat = new THREE.LineBasicMaterial({
+                color: new THREE.Color('#3d5afe'),
+                linewidth: 2,
+                transparent: true,
+                opacity: 0.85
             });
+            const line = new THREE.Line(geom, mat);
+            line.userData.type = 'bde';
+            scene.add(line);
         }
 
         manifoldState.fixedPoints.forEach(fp => {
@@ -1481,10 +1465,15 @@ const SetValuedViz = () => {
             setBdeState(prev => ({ ...prev, isRunning: false }));
         } else {
             setBdeState(prev => ({ ...prev, isRunning: true }));
+            let frameCount = 0;
             const stepBde = () => {
                 if (!bdeSimRef.current) return;
                 for (let i = 0; i < 3; i++) {
                     bdeSimRef.current.step(params.h);
+                }
+                frameCount++;
+                if (frameCount % 20 === 0) {
+                    bdeSimRef.current.reparameterize();
                 }
                 setBdeState(prev => ({ ...prev, points: bdeSimRef.current.get_points() }));
                 bdeAnimRef.current = requestAnimationFrame(stepBde);
@@ -1559,13 +1548,14 @@ const SetValuedViz = () => {
                     ulamState.epsilon
                 );
             } else if (dynamicSystem === 'duffing_ode') {
-                const { UlamComputerEulerMap } = wasmModule;
-                if (!UlamComputerEulerMap) {
-                    throw new Error('UlamComputerEulerMap definition missing. Please run Ulam computations on discrete maps only or implement the Ulam computer for continuous systems.');
+                const { UlamComputerContinuous } = wasmModule;
+                if (!UlamComputerContinuous) {
+                    throw new Error('UlamComputerContinuous not found — rebuild WASM');
                 }
-                computer = new UlamComputerEulerMap(
+                const capitalT = Math.max(params.h * 10, 0.5);
+                computer = new UlamComputerContinuous(
                     params.delta,
-                    params.h,
+                    capitalT,
                     ulamState.subdivisions,
                     ulamState.pointsPerBox,
                     ulamState.epsilon
@@ -1697,9 +1687,9 @@ const SetValuedViz = () => {
         const material = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             transparent: true,
-            opacity: 0.5, // Base opacity, vertex colors will modulate
+            opacity: 0.5, 
             side: THREE.DoubleSide,
-            depthWrite: false // Good for overlays
+            depthWrite: false 
         });
 
         const mesh = new THREE.InstancedMesh(geometry, material, count);
@@ -1709,7 +1699,6 @@ const SetValuedViz = () => {
         const dummy = new THREE.Object3D();
         const color = new THREE.Color();
 
-        // Build map of transitions for fast lookup if selected
         const transitionMap = new Map();
         if (ulamState.selectedBoxIndex !== null && ulamState.transitions) {
             ulamState.transitions.forEach(t => {
