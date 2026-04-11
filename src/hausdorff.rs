@@ -26,12 +26,6 @@ macro_rules! console_log {
     }
 }
 
-/// Compute Hausdorff distance between 2 manifolds
-///
-/// The Hausdorff distance is defined as:
-/// d_H(A,B) = max{ sup_{a in A} d(a, B), sup_{b in B} d(b, A)}
-/// where d(p, S) = infimum_{s in S} || p - s ||
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HausdorffResult {
     pub distance: f64,

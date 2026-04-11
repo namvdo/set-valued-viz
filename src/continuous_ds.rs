@@ -96,8 +96,8 @@ impl EulerMap {
         if !h.is_finite() || h <= 0.0 {
             return Err("Step size h must be finite and positive".to_string());
         }
-        if !epsilon.is_finite() || epsilon <= 0.0 {
-            return Err("Epsilon must be positive and finite".to_string());
+        if !epsilon.is_finite() || epsilon < 0.0 {
+            return Err("Epsilon must be non-negative and finite".to_string());
         }
         Ok(Self { ode, h, epsilon })
     }
@@ -503,6 +503,32 @@ mod tests {
     }
 
     #[test]
+    fn test_duffing_ode_is_odd() {
+        let delta = 0.3;
+        let ode = DuffingODE::new(delta).unwrap();
+
+        let pos = Vector2::new(0.8, -1.2);
+        let val = ode.vector_field(pos).unwrap();
+        let neg_val = ode.vector_field(-pos).unwrap();
+
+        assert!((val.x + neg_val.x).abs() < 1e-12);
+        assert!((val.y + neg_val.y).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_duffing_jacobian() {
+        let delta = 0.3;
+        let ode = DuffingODE::new(delta).unwrap();
+        let pos = Vector2::new(2.0, -1.0);
+        let jac = ode.jacobian(pos);
+
+        assert!((jac.m11 - 0.0).abs() < 1e-12);
+        assert!((jac.m12 - 1.0).abs() < 1e-12);
+        assert!((jac.m21 - -11.0).abs() < 1e-12);
+        assert!((jac.m22 + 0.3).abs() < 1e-12);
+    }
+
+    #[test]
     fn test_euler_step() {
         let delta = 0.5;
         let ode = DuffingODE::new(delta).unwrap();
@@ -515,6 +541,23 @@ mod tests {
 
         assert!((next.x - 1.2).abs() < 1e-10);
         assert!((next.y - 1.9).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_euler_allows_zero_epsilon() {
+        let delta = 0.1;
+        let ode = DuffingODE::new(delta).unwrap();
+        let h = 0.05;
+        let euler = EulerMap::new(ode, h, 0.0).unwrap();
+        assert!((euler.get_epsilon() - 0.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_euler_rejects_negative_epsilon() {
+        let delta = 0.1;
+        let ode = DuffingODE::new(delta).unwrap();
+        let h = 0.05;
+        assert!(EulerMap::new(ode, h, -0.01).is_err());
     }
 
     #[test]
@@ -543,6 +586,59 @@ mod tests {
         let euler = EulerMap::new(ode, h, eps).unwrap();
 
         assert!((euler.get_epsilon() - 0.15).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_bde_rhs_zero_epsilon_matches_vector_field() {
+        let delta = 0.2;
+        let ode = DuffingODE::new(delta).unwrap();
+        let x = Vector2::new(0.5, -0.25);
+        let n = Vector2::new(0.6, 0.8);
+
+        let (dx, _dn) = bde_rhs(&ode, 0.0, x, n).unwrap();
+        let fx = ode.vector_field(x).unwrap();
+        assert!((dx - fx).norm() < 1e-12);
+    }
+
+    #[test]
+    fn test_bde_rhs_noise_adds_normal_component() {
+        let delta = 0.2;
+        let ode = DuffingODE::new(delta).unwrap();
+        let x = Vector2::new(0.5, -0.25);
+        let n = Vector2::new(0.6, 0.8);
+        let eps = 0.2;
+
+        let (dx0, _dn0) = bde_rhs(&ode, 0.0, x, n).unwrap();
+        let (dx1, _dn1) = bde_rhs(&ode, eps, x, n).unwrap();
+        let expected = dx0 + n * eps;
+
+        assert!((dx1 - expected).norm() < 1e-12);
+    }
+
+    #[test]
+    fn test_rk4_bde_step_matches_ode_when_epsilon_zero() {
+        let delta = 0.15;
+        let ode = DuffingODE::new(delta).unwrap();
+        let x = Vector2::new(0.4, -0.7);
+        let n = Vector2::new(0.3, 0.9539392014169457); // already unit-length
+        let h = 0.05;
+
+        let (xp, _np) = rk4_bde_step(&ode, 0.0, h, x, n).unwrap();
+        let x_ode = ode.rk4_step(x, h).unwrap();
+
+        assert!((xp - x_ode).norm() < 1e-12);
+    }
+
+    #[test]
+    fn test_rk4_bde_step_normal_is_unit() {
+        let delta = 0.15;
+        let ode = DuffingODE::new(delta).unwrap();
+        let x = Vector2::new(-0.3, 0.45);
+        let n = Vector2::new(0.8, 0.6);
+        let h = 0.05;
+
+        let (_xp, np) = rk4_bde_step(&ode, 0.1, h, x, n).unwrap();
+        assert!((np.norm() - 1.0).abs() < 1e-10);
     }
 }
 

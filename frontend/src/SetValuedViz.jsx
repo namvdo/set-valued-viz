@@ -1794,8 +1794,6 @@ const SetValuedViz = () => {
             window.update_start_point(
                 key === 'x' ? value : manifoldState.startPoint.x,
                 key === 'y' ? value : manifoldState.startPoint.y,
-                key === 'nx' ? value : manifoldState.startPoint.nx,
-                key === 'ny' ? value : manifoldState.startPoint.ny
             );
         }
     };
