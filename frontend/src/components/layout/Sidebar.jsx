@@ -64,11 +64,13 @@ export const Sidebar = (props) => {
           </>
         )}
 
-        <StartingPoint
-          type={props.type}
-          startPoint={props.manifoldState.startPoint}
-          updateStartPoint={props.updateStartPoint}
-        />
+        {props.type === 'continuous' && (
+          <StartingPoint
+            type={props.type}
+            startPoint={props.manifoldState.startPoint}
+            updateStartPoint={props.updateStartPoint}
+          />
+        )}
 
         {props.type === 'discrete' && (
           <AnimationPanel

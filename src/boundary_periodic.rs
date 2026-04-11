@@ -58,7 +58,7 @@ impl ExtendedPoint {
     }
 
     pub fn normalize(&mut self) {
-        let norm = self.nx * self.nx + self.ny * self.ny;
+        let norm = (self.nx * self.nx + self.ny * self.ny).sqrt();
         if norm > 1e-12 {
             self.nx /= norm;
             self.ny /= norm;
@@ -667,10 +667,9 @@ pub fn find_boundary_periodic_point_davidchack_lai(
         // compute Jacobian of g = E^n - I
         let jac_g = jac_fn.subtract_identity();
 
-        // Davidchank-Lai stabilization: (β||g||I - (Dg)) * Δ = g
+        // Davidchank-Lai stabilization
         let scaled_beta = beta_val * g_norm;
 
-        // modified Jacobian:  β||g||I - Jac_g
 
         let mut modified_jac = [[0.0; 4]; 4];
         for i in 0..4 {
@@ -681,7 +680,6 @@ pub fn find_boundary_periodic_point_davidchack_lai(
         }
         let modified_jac = Jacobian4x4 { data: modified_jac };
 
-        // Solve for Δ = (β||g||I - (Dg))^-1 * g
         let jac_inv = match modified_jac.inverse() {
             Some(inv) => inv,
             None => return None,
@@ -725,7 +723,6 @@ pub fn find_boundary_periodic_point_davidchack_lai(
         }
     }
 
-    // final check if we converged
     let final_point = ExtendedPoint::new(x, y, nx, ny);
     let (mapped, _) = compose_boundary_map_n_times(final_point, period, a, b, epsilon);
 
@@ -1511,7 +1508,6 @@ pub fn boundary_map_user_defined(
     let normal = Vector2::new(nx, ny);
     let state = ExtendedState { pos, normal };
 
-    // extended_map handles the full boundary map logic (map + normal transport)
     let next_state = system
         .extended_map(state, 1) // 1 iteration
         .map_err(|e| JsValue::from_str(&format!("Error evaluating extended map: {}", e)))?;

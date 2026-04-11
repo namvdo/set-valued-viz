@@ -8,7 +8,9 @@ export const Viewport = ({ type, canvasRef, tooltip, manifoldState, ulamState, h
         <button className="vp-btn" title="Zoom out" onClick={handleZoomOut}>−</button>
         <button className="vp-btn" title="Reset view" onClick={handleResetView}>⌂</button>
         <div className="vp-sep"></div>
-        <button className="vp-btn active" title="Place start point">📍</button>
+        {type === 'continuous' && (
+          <button className="vp-btn active" title="Place start point">📍</button>
+        )}
         <button className="vp-btn" title="Pan" onClick={handlePanMode}>⊹</button>
         <div className="vp-sep"></div>
         <button className="vp-btn" title="Save PNG" onClick={savePNG}>↓</button>

@@ -1,5 +1,5 @@
 /target
-*.pdf
 .idea
 py*/__pycache__
 venv
+materials
