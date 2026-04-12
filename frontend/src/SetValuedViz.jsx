@@ -206,7 +206,6 @@ const SetValuedViz = () => {
         showOrbitLines: false,
         showUnstableManifold: false,
         showStableManifold: false,
-        showRepellerManifold: false,
         intersectionThreshold: 0.05,
         highlightedOrbitId: null,
         currentPoint: { x: 0.1, y: 0.1, nx: 1.0, ny: 0.0 }, // 4D point for boundary map
@@ -820,7 +819,7 @@ const SetValuedViz = () => {
         manifoldDebounceRef.current = setTimeout(() => {
             if (!wasmModule) return;
 
-            const manifoldsEnabled = manifoldState.showUnstableManifold || manifoldState.showStableManifold || manifoldState.showRepellerManifold;
+            const manifoldsEnabled = manifoldState.showUnstableManifold || manifoldState.showStableManifold;
 
             if (!manifoldsEnabled && (dynamicSystem === 'henon' || dynamicSystem === 'duffing' || dynamicSystem === 'custom')) {
                 const orbits = periodicState.orbits || [];
@@ -1073,7 +1072,7 @@ const SetValuedViz = () => {
                 clearTimeout(manifoldDebounceRef.current);
             }
         };
-    }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.showRepellerManifold, manifoldState.intersectionThreshold, debouncedEquations, paramValidation, manifoldState.startPoint.x, manifoldState.startPoint.y, viewRange]);
+    }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.intersectionThreshold, debouncedEquations, paramValidation, manifoldState.startPoint.x, manifoldState.startPoint.y, viewRange]);
 
     useEffect(() => {
         if (!animationState.isAnimating) {
@@ -1396,25 +1395,9 @@ const SetValuedViz = () => {
             scene.remove(obj);
         });
 
-        if ((manifoldState.showUnstableManifold || manifoldState.showRepellerManifold) && manifoldState.manifolds.length > 0) {
-            // Determine which saddle points are repellers vs saddles
-            const repellerPoints = new Set();
-            manifoldState.fixedPoints.forEach(fp => {
-                const stab = (fp.stability || '').toLowerCase();
-                if (stab === 'repeller' || stab === 'unstable') {
-                    repellerPoints.add(`${fp.x.toFixed(8)},${fp.y.toFixed(8)}`);
-                }
-            });
-
+        if (manifoldState.showUnstableManifold && manifoldState.manifolds.length > 0) {
             manifoldState.manifolds.forEach(m => {
-                const spKey = `${m.saddle_point[0].toFixed(8)},${m.saddle_point[1].toFixed(8)}`;
-                const isRepellerManifold = repellerPoints.has(spKey);
-
-                // Skip if this manifold type isn't toggled on
-                if (isRepellerManifold && !manifoldState.showRepellerManifold) return;
-                if (!isRepellerManifold && !manifoldState.showUnstableManifold) return;
-
-                const color = isRepellerManifold ? ORBIT_COLORS.repellerManifold : ORBIT_COLORS.manifold;
+                const color = ORBIT_COLORS.manifold;
 
                 [m.plus, m.minus].forEach(traj => {
                     if (traj && traj.points && traj.points.length > 1) {
