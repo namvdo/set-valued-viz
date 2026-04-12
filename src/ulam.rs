@@ -1,3 +1,4 @@
+use crate::range::{clamp_pair, RANGE_LIMIT};
 use crate::unstable_manifold::HenonParams;
 use nalgebra::Vector2;
 use serde::{Deserialize, Serialize};
@@ -190,12 +191,17 @@ impl UlamComputer {
         subdivisions: usize,
         points_per_box: usize,
         epsilon: f64,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
     ) -> Result<UlamComputer, String> {
         let params = HenonParams::new(a, b, 0.001)?;
 
-        // Domain for Henon map visualization
-        let min = Vector2::new(-2.0, -1.5);
-        let max = Vector2::new(2.0, 1.5);
+        let (x_min, x_max) = clamp_pair(x_min, x_max, RANGE_LIMIT);
+        let (y_min, y_max) = clamp_pair(y_min, y_max, RANGE_LIMIT);
+        let min = Vector2::new(x_min, y_min);
+        let max = Vector2::new(x_max, y_max);
         let grid = Grid::new(min, max, subdivisions);
 
         let n_boxes = grid.boxes.len();
@@ -473,12 +479,18 @@ impl UlamComputerUserDefined {
         subdivisions: usize,
         points_per_box: usize,
         epsilon: f64,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
     ) -> Result<UlamComputerUserDefined, String> {
         let param_set = parameter_set_from_js(params).map_err(|e| e.to_string())?;
         let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, 0.001, param_set)?;
 
-        let min = Vector2::new(-2.0, -1.5);
-        let max = Vector2::new(2.0, 1.5);
+        let (x_min, x_max) = clamp_pair(x_min, x_max, RANGE_LIMIT);
+        let (y_min, y_max) = clamp_pair(y_min, y_max, RANGE_LIMIT);
+        let min = Vector2::new(x_min, y_min);
+        let max = Vector2::new(x_max, y_max);
         let grid = Grid::new(min, max, subdivisions);
 
         let n_boxes = grid.boxes.len();
@@ -645,6 +657,10 @@ impl UlamComputerContinuous {
         subdivisions: usize,
         points_per_box: usize,
         epsilon: f64,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
     ) -> Result<UlamComputerContinuous, String> {
         if !capital_t.is_finite() || capital_t <= 0.0 {
             return Err("integration time T must be finite and positive".to_string());
@@ -652,8 +668,10 @@ impl UlamComputerContinuous {
 
         let ode = DuffingODE::new(delta)?;
 
-        let min = Vector2::new(-2.0, -1.5);
-        let max = Vector2::new(2.0, 1.5);
+        let (x_min, x_max) = clamp_pair(x_min, x_max, RANGE_LIMIT);
+        let (y_min, y_max) = clamp_pair(y_min, y_max, RANGE_LIMIT);
+        let min = Vector2::new(x_min, y_min);
+        let max = Vector2::new(x_max, y_max);
         let grid = Grid::new(min, max, subdivisions);
         let n_boxes = grid.boxes.len();
         let samples_per_dim = (points_per_box as f64).sqrt().ceil() as usize;
@@ -833,6 +851,10 @@ impl UlamComputerContinuousUserDefined {
         subdivisions: usize,
         points_per_box: usize,
         epsilon: f64,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
     ) -> Result<UlamComputerContinuousUserDefined, String> {
         if !capital_t.is_finite() || capital_t <= 0.0 {
             return Err("integration time T must be finite and positive".to_string());
@@ -841,8 +863,10 @@ impl UlamComputerContinuousUserDefined {
         let param_set = parameter_set_from_js(params).map_err(|e| e.to_string())?;
         let ode = UserDefinedOdeSystem::new(x_eq, y_eq, param_set)?;
 
-        let min = Vector2::new(-2.0, -1.5);
-        let max = Vector2::new(2.0, 1.5);
+        let (x_min, x_max) = clamp_pair(x_min, x_max, RANGE_LIMIT);
+        let (y_min, y_max) = clamp_pair(y_min, y_max, RANGE_LIMIT);
+        let min = Vector2::new(x_min, y_min);
+        let max = Vector2::new(x_max, y_max);
         let grid = Grid::new(min, max, subdivisions);
         let n_boxes = grid.boxes.len();
         let samples_per_dim = (points_per_box as f64).sqrt().ceil() as usize;

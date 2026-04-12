@@ -25,6 +25,7 @@ pub use hausdorff::*;
 
 mod parameters;
 mod user_defined;
+mod range;
 
 mod dynamical_systems;
 pub use dynamical_systems::*;

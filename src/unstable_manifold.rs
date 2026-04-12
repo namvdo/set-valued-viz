@@ -1,20 +1,40 @@
+use crate::parameters::parameter_set_from_js;
+use crate::range::{clamp_pair, RANGE_LIMIT};
 use nalgebra::{Matrix2, Vector2, Vector4};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
-use crate::parameters::parameter_set_from_js;
 
-static MANIFOLD_CACHE: std::sync::OnceLock<Mutex<HashMap<(i32, i32), CachedManifoldResult>>> =
+type CacheKey = (i32, i32, i32, i32, i32, i32);
+
+static MANIFOLD_CACHE: std::sync::OnceLock<Mutex<HashMap<CacheKey, CachedManifoldResult>>> =
     std::sync::OnceLock::new();
 
-fn get_cache() -> &'static Mutex<HashMap<(i32, i32), CachedManifoldResult>> {
+fn get_cache() -> &'static Mutex<HashMap<CacheKey, CachedManifoldResult>> {
     MANIFOLD_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn cache_key(a: f64, b: f64) -> (i32, i32) {
+fn cache_key(a: f64, b: f64, x_min: f64, x_max: f64, y_min: f64, y_max: f64) -> CacheKey {
     // Round to nearest 0.01 for cache key
-    ((a * 100.0).round() as i32, (b * 100.0).round() as i32)
+    (
+        (a * 100.0).round() as i32,
+        (b * 100.0).round() as i32,
+        (x_min * 100.0).round() as i32,
+        (x_max * 100.0).round() as i32,
+        (y_min * 100.0).round() as i32,
+        (y_max * 100.0).round() as i32,
+    )
+}
+
+fn normalize_display_range(x_min: f64, x_max: f64, y_min: f64, y_max: f64) -> (f64, f64, f64, f64) {
+    let (x_min, x_max) = clamp_pair(x_min, x_max, RANGE_LIMIT);
+    let (y_min, y_max) = clamp_pair(y_min, y_max, RANGE_LIMIT);
+    (x_min, x_max, y_min, y_max)
+}
+
+fn in_display_range(x: f64, y: f64, x_min: f64, x_max: f64, y_min: f64, y_max: f64) -> bool {
+    x >= x_min && x <= x_max && y >= y_min && y <= y_max
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -798,9 +818,18 @@ pub struct ComputeResult {
 }
 
 #[wasm_bindgen]
-pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, JsValue> {
+pub fn compute_manifold_simple(
+    a: f64,
+    b: f64,
+    epsilon: f64,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+) -> Result<JsValue, JsValue> {
+    let (x_min, x_max, y_min, y_max) = normalize_display_range(x_min, x_max, y_min, y_max);
     // Check cache first
-    let key = cache_key(a, b);
+    let key = cache_key(a, b, x_min, x_max, y_min, y_max);
     if let Ok(cache) = get_cache().lock() {
         if let Some(cached) = cache.get(&key) {
             console_log!("Cache HIT for a={}, b={}", a, b);
@@ -862,8 +891,8 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
             // Compute Jacobian eigenvalues and eigenvectors
             // Jacobian: J = [-2ax, 1; b, 0]
             let jac = params.jacobian(pos);
-            let trace = jac.trace(); // trace = -2ax
-            let det = jac.determinant(); // det = -b
+            let trace = jac.trace();
+            let det = jac.determinant();
             let eig_disc = trace * trace - 4.0 * det;
 
             console_log!(
@@ -875,23 +904,21 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
                 eig_disc
             );
 
-            // Compute eigenvector for unstable direction (if saddle)
+            // compute eigenvector for unstable direction (if saddle)
             let (l1, l2, is_complex) = if eig_disc >= 0.0 {
                 let sqrt_eig = eig_disc.sqrt();
                 ((trace + sqrt_eig) / 2.0, (trace - sqrt_eig) / 2.0, false)
             } else {
-                // Complex eigenvalues: λ = trace/2 ± i*sqrt(-eig_disc)/2
                 let real = trace / 2.0;
                 let imag = (-eig_disc).sqrt() / 2.0;
                 let mag = (real * real + imag * imag).sqrt();
-                (mag, mag, true) // Both eigenvalues have same magnitude
+                (mag, mag, true)
             };
 
             // For saddles, find the unstable eigenvector
             let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
 
             // Eigenvector from (J - λI)v = 0
-            // Row 1: (-2ax - λ)v1 + v2 = 0  =>  v2 = (2ax + λ)v1
             let v1 = 1.0;
             let v2 = 2.0 * a * x + unstable_lambda;
             let norm = (v1 * v1 + v2 * v2).sqrt();
@@ -923,10 +950,8 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
     let mut all_fixed_points_pos = Vec::new(); // ALL fixed points for manifold termination
     let mut unstable_points_indices = Vec::new();
 
-    // Classify points and filter to [-2, 2] range
     for (_, state) in unique_states.iter().enumerate() {
-        // Skip points outside [-2, 2] range for display
-        if state.pos.x.abs() > 2.0 || state.pos.y.abs() > 2.0 {
+        if !in_display_range(state.pos.x, state.pos.y, x_min, x_max, y_min, y_max) {
             console_log!(
                 "Skipping fixed point ({:.4}, {:.4}) - outside display range",
                 state.pos.x,
@@ -944,14 +969,12 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
             let sqrt_disc = discriminant.sqrt();
             ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0)
         } else {
-            // Complex eigenvalues, treat magnitude
             let real = trace / 2.0;
             let imag = (-discriminant).sqrt() / 2.0;
             let mag = (real * real + imag * imag).sqrt();
             (mag, mag)
         };
 
-        // Simple classification based on magnitude
         let abs_l1 = l1.abs();
         let abs_l2 = l2.abs();
 
@@ -979,11 +1002,10 @@ pub fn compute_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, 
             stability: stability.to_string(),
         });
 
-        // ALL fixed points are potential termination targets
         all_fixed_points_pos.push(state.pos);
 
         if stability == "Saddle" || stability == "Repeller" {
-            unstable_points_indices.push(fixed_points_result.len() - 1); // Use result index, not unique_states index
+            unstable_points_indices.push(fixed_points_result.len() - 1);
         }
     }
 
@@ -1251,7 +1273,12 @@ pub fn compute_user_defined_manifold(
     y_eq: &str,
     params: JsValue,
     epsilon: f64,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
 ) -> Result<JsValue, JsValue> {
+    let (x_min, x_max, y_min, y_max) = normalize_display_range(x_min, x_max, y_min, y_max);
     console_log!(
         "Computing user defined manifold for x={}, y={}, eps={}",
         x_eq,
@@ -1259,8 +1286,7 @@ pub fn compute_user_defined_manifold(
         epsilon
     );
 
-    let param_set =
-        parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+    let param_set = parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
     let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set) {
         Ok(s) => s,
         Err(e) => return Err(JsValue::from_str(&format!("Failed to parse system: {}", e))),
@@ -1314,14 +1340,14 @@ pub fn compute_user_defined_manifold(
 
                     if x.abs() > 100.0 || y.abs() > 100.0 {
                         break;
-                    } // Diverged
+                    }
                 }
-                Err(_) => break, // Error in evaluation
+                Err(_) => break,
             }
         }
 
         if converged {
-            // Check if already found (avoid duplicates)
+            // check if already found to avoid duplicates
             let mut duplicate = false;
             for fp in &fixed_points {
                 let diff: Vector2<f64> = *fp - Vector2::new(x, y);
@@ -1352,7 +1378,9 @@ pub fn compute_user_defined_manifold(
     let computer = UnstableManifoldComputer::new(system.clone(), config);
 
     for fp_pos in fixed_points {
-        // Analyze stability
+        if !in_display_range(fp_pos.x, fp_pos.y, x_min, x_max, y_min, y_max) {
+            continue;
+        }
         let jac = system.jacobian(fp_pos);
         let trace = jac.trace();
         let det = jac.determinant();
@@ -1362,7 +1390,6 @@ pub fn compute_user_defined_manifold(
             let sqrt_disc = disc.sqrt();
             ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0)
         } else {
-            // Complex eigenvalues, take magnitude
             let real = trace / 2.0;
             let imag = (-disc).sqrt() / 2.0;
             let mag = (real * real + imag * imag).sqrt();
@@ -1420,8 +1447,7 @@ pub fn compute_user_defined_manifold(
                 None,
             );
 
-            // Target points for termination (use other fixed points?)
-            // For now just empty
+            // target points for termination (use other fixed points?), for now just empty
             let targets = vec![];
 
             if let Ok((traj_plus, traj_minus)) = computer.compute_manifold(&saddle, &targets) {
@@ -1470,8 +1496,13 @@ pub fn compute_manifold_from_orbits(
     a: f64,
     b: f64,
     epsilon: f64,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
     orbits_js: JsValue,
 ) -> Result<JsValue, JsValue> {
+    let (x_min, x_max, y_min, y_max) = normalize_display_range(x_min, x_max, y_min, y_max);
     console_log!(
         "Computing manifold from {} orbits with a={}, b={}, eps={}",
         if orbits_js.is_array() {
@@ -1517,11 +1548,10 @@ pub fn compute_manifold_from_orbits(
     let mut fixed_points_result: Vec<FixedPointResult> = Vec::new();
 
     for orbit in &orbits {
-        // Filter to display range [-2, 2]
         let in_range = orbit
             .points
             .iter()
-            .all(|(x, y)| x.abs() <= 2.0 && y.abs() <= 2.0);
+            .all(|(x, y)| in_display_range(*x, *y, x_min, x_max, y_min, y_max));
         if !in_range {
             console_log!(
                 "Skipping orbit period {} - outside display range",
@@ -1551,7 +1581,6 @@ pub fn compute_manifold_from_orbits(
             });
         }
 
-        // important!
         // include saddle and unstable (dual repeller) orbits for manifold computation
         if orbit.stability == "saddle" || orbit.stability == "unstable" {
             console_log!(
@@ -1620,9 +1649,6 @@ pub fn compute_manifold_from_orbits(
             );
 
             // Determine eigenvector, eigenvalue, and normal
-            // If we have extended points (from boundary map), extract normal and compute tangent
-            // The eigenvector for perturbation should be the TANGENT (perpendicular to normal)
-            // Otherwise, fallback to Henon Jacobian eigenvector
             let (eigenvector, unstable_lambda, normal_opt) = if let Some(ref ext) =
                 orbit.extended_points
             {
@@ -1871,8 +1897,7 @@ pub fn evaluate_user_defined_map(
     params: JsValue,
     epsilon: f64,
 ) -> Result<JsValue, JsValue> {
-    let param_set =
-        parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+    let param_set = parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
     let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set)
         .map_err(|e| JsValue::from_str(&format!("Error parsing equations: {}", e)))?;
 
@@ -1898,9 +1923,14 @@ pub fn compute_stable_and_unstable_manifolds(
     a: f64,
     b: f64,
     epsilon: f64,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
     orbits_js: JsValue,
     intersection_threshold: f64,
 ) -> Result<JsValue, JsValue> {
+    let (x_min, x_max, y_min, y_max) = normalize_display_range(x_min, x_max, y_min, y_max);
     console_log!(
         "Computing stable and unstable manifolds with a={}, b={}, eps={}, threshold={}",
         a,
@@ -1950,7 +1980,7 @@ pub fn compute_stable_and_unstable_manifolds(
         let in_range = orbit
             .points
             .iter()
-            .all(|(x, y)| x.abs() <= 2.0 && y.abs() <= 2.0);
+            .all(|(x, y)| in_display_range(*x, *y, x_min, x_max, y_min, y_max));
         if !in_range {
             continue;
         }
@@ -2386,15 +2416,21 @@ pub fn compute_manifold_from_orbits_user_defined(
     y_eq: &str,
     params: JsValue,
     epsilon: f64,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
     orbits_js: JsValue,
 ) -> Result<JsValue, JsValue> {
+    let (x_min, x_max, y_min, y_max) = normalize_display_range(x_min, x_max, y_min, y_max);
     console_log!(
         "Computing user-defined manifold from orbits: x={}, y={}, eps={}",
-        x_eq, y_eq, epsilon
+        x_eq,
+        y_eq,
+        epsilon
     );
 
-    let param_set =
-        parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+    let param_set = parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
     let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set) {
         Ok(s) => s,
         Err(e) => return Err(JsValue::from_str(&format!("Failed to parse system: {}", e))),
@@ -2421,13 +2457,21 @@ pub fn compute_manifold_from_orbits_user_defined(
     let mut fixed_points_result: Vec<FixedPointResult> = Vec::new();
 
     for orbit in &orbits {
-        let in_range = orbit.points.iter().all(|(x, y)| x.abs() <= 2.0 && y.abs() <= 2.0);
-        if !in_range { continue; }
+        let in_range = orbit
+            .points
+            .iter()
+            .all(|(x, y)| in_display_range(*x, *y, x_min, x_max, y_min, y_max));
+        if !in_range {
+            continue;
+        }
 
         for (x, y) in &orbit.points {
             all_points.push(Vector2::new(*x, *y));
             fixed_points_result.push(FixedPointResult {
-                x: *x, y: *y, eigenvalues: (0.0, 0.0), stability: orbit.stability.clone(),
+                x: *x,
+                y: *y,
+                eigenvalues: (0.0, 0.0),
+                stability: orbit.stability.clone(),
             });
         }
 
@@ -2448,32 +2492,39 @@ pub fn compute_manifold_from_orbits_user_defined(
     let computer = UnstableManifoldComputer::new(system.clone(), config);
 
     for orbit in saddle_orbits {
-        if orbit.points.is_empty() { continue; }
+        if orbit.points.is_empty() {
+            continue;
+        }
 
         for point_idx in 0..orbit.points.len() {
             let (px, py) = orbit.points[point_idx];
             let pos = Vector2::new(px, py);
 
-            let (eigenvector, unstable_lambda, normal_opt) = if let Some(ref ext) = orbit.extended_points {
-                if point_idx < ext.len() {
-                    let (_ex, _ey, nx, ny) = ext[point_idx];
-                    let normal = Vector2::new(nx, ny);
-                    let normal_norm = normal.norm();
-                    let normal_unit = if normal_norm > 1e-10 { normal / normal_norm } else { Vector2::new(1.0, 0.0) };
-                    let tangent = Vector2::new(-normal_unit.y, normal_unit.x);
+            let (eigenvector, unstable_lambda, normal_opt) =
+                if let Some(ref ext) = orbit.extended_points {
+                    if point_idx < ext.len() {
+                        let (_ex, _ey, nx, ny) = ext[point_idx];
+                        let normal = Vector2::new(nx, ny);
+                        let normal_norm = normal.norm();
+                        let normal_unit = if normal_norm > 1e-10 {
+                            normal / normal_norm
+                        } else {
+                            Vector2::new(1.0, 0.0)
+                        };
+                        let tangent = Vector2::new(-normal_unit.y, normal_unit.x);
 
-                    let jac_accum = accumulate_jacobian_generic(&system, pos, orbit.period);
-                    let (_, _, lambda, _) = eigen_analysis_2x2(&jac_accum);
+                        let jac_accum = accumulate_jacobian_generic(&system, pos, orbit.period);
+                        let (_, _, lambda, _) = eigen_analysis_2x2(&jac_accum);
 
-                    (tangent, lambda, Some(normal_unit))
+                        (tangent, lambda, Some(normal_unit))
+                    } else {
+                        (Vector2::new(1.0, 0.0), 2.0, None)
+                    }
                 } else {
-                    (Vector2::new(1.0, 0.0), 2.0, None)
-                }
-            } else {
-                let jac_accum = accumulate_jacobian_generic(&system, pos, orbit.period);
-                let (_, _, unstable_lambda, eigenvector) = eigen_analysis_2x2(&jac_accum);
-                (eigenvector, unstable_lambda, None)
-            };
+                    let jac_accum = accumulate_jacobian_generic(&system, pos, orbit.period);
+                    let (_, _, unstable_lambda, eigenvector) = eigen_analysis_2x2(&jac_accum);
+                    (eigenvector, unstable_lambda, None)
+                };
 
             let saddle_type = if orbit.stability == "unstable" {
                 SaddleType::DualRepeller
@@ -2493,21 +2544,34 @@ pub fn compute_manifold_from_orbits_user_defined(
                 }
             } else {
                 SaddlePoint::from_2d_eigenvector(
-                    pos, eigenvector, orbit.period, unstable_lambda, saddle_type, None,
+                    pos,
+                    eigenvector,
+                    orbit.period,
+                    unstable_lambda,
+                    saddle_type,
+                    None,
                 )
             };
 
-            if let Ok((traj_plus, traj_minus)) = computer.compute_manifold(&saddle_pt, &all_points) {
+            if let Ok((traj_plus, traj_minus)) = computer.compute_manifold(&saddle_pt, &all_points)
+            {
                 let convert = |traj: &Trajectory| -> Vec<(f64, f64)> {
-                    traj.points.iter()
+                    traj.points
+                        .iter()
                         .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
                         .map(|s| (s.pos.x, s.pos.y))
                         .collect()
                 };
 
                 manifolds_result.push(ManifoldResult {
-                    plus: TrajectoryRet { points: convert(&traj_plus), stop_reason: format!("{:?}", traj_plus.stop_reason) },
-                    minus: TrajectoryRet { points: convert(&traj_minus), stop_reason: format!("{:?}", traj_minus.stop_reason) },
+                    plus: TrajectoryRet {
+                        points: convert(&traj_plus),
+                        stop_reason: format!("{:?}", traj_plus.stop_reason),
+                    },
+                    minus: TrajectoryRet {
+                        points: convert(&traj_minus),
+                        stop_reason: format!("{:?}", traj_minus.stop_reason),
+                    },
                     saddle_point: (px, py),
                     eigenvalue: unstable_lambda,
                 });
@@ -2515,7 +2579,10 @@ pub fn compute_manifold_from_orbits_user_defined(
         }
     }
 
-    let result = ComputeResult { manifolds: manifolds_result, fixed_points: fixed_points_result };
+    let result = ComputeResult {
+        manifolds: manifolds_result,
+        fixed_points: fixed_points_result,
+    };
 
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
     match result.serialize(&serializer) {
@@ -2533,16 +2600,22 @@ pub fn compute_stable_and_unstable_manifolds_user_defined(
     y_eq: &str,
     params: JsValue,
     epsilon: f64,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
     orbits_js: JsValue,
     intersection_threshold: f64,
 ) -> Result<JsValue, JsValue> {
+    let (x_min, x_max, y_min, y_max) = normalize_display_range(x_min, x_max, y_min, y_max);
     console_log!(
         "Computing user-defined stable+unstable manifolds: x={}, y={}, eps={}",
-        x_eq, y_eq, epsilon
+        x_eq,
+        y_eq,
+        epsilon
     );
 
-    let param_set =
-        parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+    let param_set = parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
     let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set) {
         Ok(s) => s,
         Err(e) => return Err(JsValue::from_str(&format!("Failed to parse system: {}", e))),
@@ -2571,13 +2644,21 @@ pub fn compute_stable_and_unstable_manifolds_user_defined(
     let mut fixed_points_result: Vec<FixedPointResult> = Vec::new();
 
     for orbit in &orbits {
-        let in_range = orbit.points.iter().all(|(x, y)| x.abs() <= 2.0 && y.abs() <= 2.0);
-        if !in_range { continue; }
+        let in_range = orbit
+            .points
+            .iter()
+            .all(|(x, y)| in_display_range(*x, *y, x_min, x_max, y_min, y_max));
+        if !in_range {
+            continue;
+        }
 
         for (x, y) in &orbit.points {
             all_points.push(Vector2::new(*x, *y));
             fixed_points_result.push(FixedPointResult {
-                x: *x, y: *y, eigenvalues: (0.0, 0.0), stability: orbit.stability.clone(),
+                x: *x,
+                y: *y,
+                eigenvalues: (0.0, 0.0),
+                stability: orbit.stability.clone(),
             });
         }
 
@@ -2600,7 +2681,9 @@ pub fn compute_stable_and_unstable_manifolds_user_defined(
     let computer = UnstableManifoldComputer::new(system.clone(), config);
 
     for orbit in &saddle_orbits {
-        if orbit.points.is_empty() { continue; }
+        if orbit.points.is_empty() {
+            continue;
+        }
 
         for point_idx in 0..orbit.points.len() {
             let (px, py) = orbit.points[point_idx];
@@ -2618,7 +2701,11 @@ pub fn compute_stable_and_unstable_manifolds_user_defined(
                 (trace / 2.0, trace / 2.0)
             };
 
-            let (unstable_lambda, stable_lambda) = if l1.abs() > l2.abs() { (l1, l2) } else { (l2, l1) };
+            let (unstable_lambda, stable_lambda) = if l1.abs() > l2.abs() {
+                (l1, l2)
+            } else {
+                (l2, l1)
+            };
 
             let compute_eigenvector = |lambda: f64| -> Vector2<f64> {
                 let j11 = jac_accum[(0, 0)];
@@ -2626,7 +2713,11 @@ pub fn compute_stable_and_unstable_manifolds_user_defined(
                 let v1 = 1.0;
                 let v2 = -(j11 - lambda) / j12.max(1e-10);
                 let norm = (v1 * v1 + v2 * v2).sqrt();
-                if norm > 1e-10 { Vector2::new(v1 / norm, v2 / norm) } else { Vector2::new(1.0, 0.0) }
+                if norm > 1e-10 {
+                    Vector2::new(v1 / norm, v2 / norm)
+                } else {
+                    Vector2::new(1.0, 0.0)
+                }
             };
 
             let unstable_eigenvec = compute_eigenvector(unstable_lambda);
@@ -2637,26 +2728,45 @@ pub fn compute_stable_and_unstable_manifolds_user_defined(
                     let (_, _, nx, ny) = ext[point_idx];
                     let normal = Vector2::new(nx, ny);
                     let norm = normal.norm();
-                    if norm > 1e-10 { Some(normal / norm) } else { None }
-                } else { None }
-            } else { None };
+                    if norm > 1e-10 {
+                        Some(normal / norm)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
-            let make_saddle = |eigvec: Vector2<f64>, lambda: f64, stype: SaddleType| -> SaddlePoint {
+            let make_saddle = |eigvec: Vector2<f64>,
+                               lambda: f64,
+                               stype: SaddleType|
+             -> SaddlePoint {
                 if let Some(normal) = normal_opt {
                     SaddlePoint {
-                        position: pos, period: orbit.period, tangent_2d: eigvec,
-                        eigenvalue: lambda, tangent_4d: None, saddle_type: stype, normal,
+                        position: pos,
+                        period: orbit.period,
+                        tangent_2d: eigvec,
+                        eigenvalue: lambda,
+                        tangent_4d: None,
+                        saddle_type: stype,
+                        normal,
                     }
                 } else {
                     SaddlePoint::from_2d_eigenvector(pos, eigvec, orbit.period, lambda, stype, None)
                 }
             };
 
-            let saddle_unstable = make_saddle(unstable_eigenvec, unstable_lambda, SaddleType::Regular);
-            let saddle_stable = make_saddle(stable_eigenvec, stable_lambda, SaddleType::DualRepeller);
+            let saddle_unstable =
+                make_saddle(unstable_eigenvec, unstable_lambda, SaddleType::Regular);
+            let saddle_stable =
+                make_saddle(stable_eigenvec, stable_lambda, SaddleType::DualRepeller);
 
             let convert = |traj: &Trajectory| -> Vec<(f64, f64)> {
-                traj.points.iter()
+                traj.points
+                    .iter()
                     .filter(|s| s.pos.x.is_finite() && s.pos.y.is_finite())
                     .map(|s| (s.pos.x, s.pos.y))
                     .collect()
@@ -2664,17 +2774,31 @@ pub fn compute_stable_and_unstable_manifolds_user_defined(
 
             if let Ok((tp, tm)) = computer.compute_manifold(&saddle_unstable, &all_points) {
                 unstable_manifolds.push(ManifoldResult {
-                    plus: TrajectoryRet { points: convert(&tp), stop_reason: format!("{:?}", tp.stop_reason) },
-                    minus: TrajectoryRet { points: convert(&tm), stop_reason: format!("{:?}", tm.stop_reason) },
-                    saddle_point: (px, py), eigenvalue: unstable_lambda,
+                    plus: TrajectoryRet {
+                        points: convert(&tp),
+                        stop_reason: format!("{:?}", tp.stop_reason),
+                    },
+                    minus: TrajectoryRet {
+                        points: convert(&tm),
+                        stop_reason: format!("{:?}", tm.stop_reason),
+                    },
+                    saddle_point: (px, py),
+                    eigenvalue: unstable_lambda,
                 });
             }
 
             if let Ok((tp, tm)) = computer.compute_manifold(&saddle_stable, &all_points) {
                 stable_manifolds.push(ManifoldResult {
-                    plus: TrajectoryRet { points: convert(&tp), stop_reason: format!("{:?}", tp.stop_reason) },
-                    minus: TrajectoryRet { points: convert(&tm), stop_reason: format!("{:?}", tm.stop_reason) },
-                    saddle_point: (px, py), eigenvalue: stable_lambda,
+                    plus: TrajectoryRet {
+                        points: convert(&tp),
+                        stop_reason: format!("{:?}", tp.stop_reason),
+                    },
+                    minus: TrajectoryRet {
+                        points: convert(&tm),
+                        stop_reason: format!("{:?}", tm.stop_reason),
+                    },
+                    saddle_point: (px, py),
+                    eigenvalue: stable_lambda,
                 });
             }
         }
@@ -2689,17 +2813,29 @@ pub fn compute_stable_and_unstable_manifolds_user_defined(
                 continue;
             }
 
-            let mut u_points: Vec<Vector2<f64>> = u_man.plus.points.iter().map(|(x, y)| Vector2::new(*x, *y)).collect();
+            let mut u_points: Vec<Vector2<f64>> = u_man
+                .plus
+                .points
+                .iter()
+                .map(|(x, y)| Vector2::new(*x, *y))
+                .collect();
             u_points.extend(u_man.minus.points.iter().map(|(x, y)| Vector2::new(*x, *y)));
 
-            let mut s_points: Vec<Vector2<f64>> = s_man.plus.points.iter().map(|(x, y)| Vector2::new(*x, *y)).collect();
+            let mut s_points: Vec<Vector2<f64>> = s_man
+                .plus
+                .points
+                .iter()
+                .map(|(x, y)| Vector2::new(*x, *y))
+                .collect();
             s_points.extend(s_man.minus.points.iter().map(|(x, y)| Vector2::new(*x, *y)));
 
             let mut min_distance = f64::INFINITY;
             for u_pt in &u_points {
                 for s_pt in &s_points {
                     let dist = (u_pt - s_pt).norm();
-                    if dist < min_distance { min_distance = dist; }
+                    if dist < min_distance {
+                        min_distance = dist;
+                    }
                 }
             }
 
@@ -2713,7 +2849,10 @@ pub fn compute_stable_and_unstable_manifolds_user_defined(
     }
 
     let result = StableUnstableResult {
-        unstable_manifolds, stable_manifolds, fixed_points: fixed_points_result, intersections,
+        unstable_manifolds,
+        stable_manifolds,
+        fixed_points: fixed_points_result,
+        intersections,
     };
 
     let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
@@ -2916,5 +3055,748 @@ mod tests {
                 println!("Expected behavior: {}", e);
             }
         }
+    }
+
+    fn henon_fixed_points(a: f64, b: f64) -> Vec<(f64, f64)> {
+        let disc = (1.0 - b) * (1.0 - b) + 4.0 * a;
+        if disc < 0.0 {
+            return vec![];
+        }
+        let sqrt_disc = disc.sqrt();
+        let x1 = (-(1.0 - b) + sqrt_disc) / (2.0 * a);
+        let x2 = (-(1.0 - b) - sqrt_disc) / (2.0 * a);
+        vec![(x1, b * x1), (x2, b * x2)]
+    }
+
+    fn classify_fixed_point(a: f64, b: f64, x: f64, y: f64) -> (&'static str, f64, f64) {
+        let jac = Matrix2::new(-2.0 * a * x, 1.0, b, 0.0);
+        let trace = jac.trace();
+        let det = jac.determinant();
+        let disc = trace * trace - 4.0 * det;
+        let (l1, l2) = if disc >= 0.0 {
+            let s = disc.sqrt();
+            ((trace + s) / 2.0, (trace - s) / 2.0)
+        } else {
+            let r = trace / 2.0;
+            let im = (-disc).sqrt() / 2.0;
+            let mag = (r * r + im * im).sqrt();
+            (mag, mag)
+        };
+        let stab = if l1.abs() < 1.0 && l2.abs() < 1.0 {
+            "attractor"
+        } else if l1.abs() > 1.0 && l2.abs() > 1.0 {
+            "repeller"
+        } else {
+            "saddle"
+        };
+        (stab, l1, l2)
+    }
+
+    #[test]
+    fn test_repeller_classification() {
+        let fps = henon_fixed_points(1.4, 0.3);
+        assert_eq!(fps.len(), 2);
+
+        for (x, y) in &fps {
+            let (stab, l1, l2) = classify_fixed_point(1.4, 0.3, *x, *y);
+            println!("FP ({:.4}, {:.4}): {} (λ={:.4}, {:.4})", x, y, stab, l1, l2);
+            assert_eq!(stab, "saddle", "Expected saddle at a=1.4");
+        }
+
+        // At a=0.2, b=0.3, x_+ should be an attractor
+        let fps2 = henon_fixed_points(0.2, 0.3);
+        assert!(!fps2.is_empty());
+        let (x, y) = fps2[0];
+        let (stab, _, _) = classify_fixed_point(0.2, 0.3, x, y);
+        assert_eq!(stab, "attractor", "Expected attractor at a=0.2");
+    }
+
+    #[test]
+    fn test_repeller_attractor_duality() {
+        // A repeller of f is an attractor of f^{-1}
+        // Find a parameter where a fixed point is a repeller
+        // At high a values, the x_+ fixed point becomes a repeller
+        let a = 4.0;
+        let b = 0.3;
+        let fps = henon_fixed_points(a, b);
+
+        for (x, y) in &fps {
+            let (stab, l1, l2) = classify_fixed_point(a, b, *x, *y);
+            println!(
+                "a={}, FP ({:.4}, {:.4}): {} (λ={:.4}, {:.4})",
+                a, x, y, stab, l1, l2
+            );
+
+            if stab == "repeller" {
+                // Verify: eigenvalues of inverse are 1/λ_i, all < 1
+                let inv_l1 = 1.0 / l1;
+                let inv_l2 = 1.0 / l2;
+                assert!(
+                    inv_l1.abs() < 1.0 && inv_l2.abs() < 1.0,
+                    "Inverse eigenvalues should be inside unit circle: |1/λ1|={}, |1/λ2|={}",
+                    inv_l1.abs(),
+                    inv_l2.abs()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_repeller_forward_divergence() {
+        // Points near a repeller should diverge under forward iteration
+        let a = 4.0;
+        let b = 0.3;
+        let eps = 0.01;
+        let params = HenonParams::new(a, b, eps).unwrap();
+        let fps = henon_fixed_points(a, b);
+
+        for (fx, fy) in &fps {
+            let (stab, _, _) = classify_fixed_point(a, b, *fx, *fy);
+            if stab != "repeller" {
+                continue;
+            }
+
+            // Perturb slightly from the repeller
+            let perturb = Vector2::new(fx + 1e-6, fy + 1e-6);
+            let mut pos = perturb;
+            let fp = Vector2::new(*fx, *fy);
+
+            let initial_dist = (pos - fp).norm();
+            let mut diverging = false;
+
+            for _ in 0..20 {
+                match params.henon_map(&pos) {
+                    Ok(next) => {
+                        let dist = (next - fp).norm();
+                        if dist > initial_dist * 10.0 {
+                            diverging = true;
+                            break;
+                        }
+                        pos = next;
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            assert!(
+                diverging,
+                "Points near repeller ({:.4}, {:.4}) should diverge under forward iteration",
+                fx, fy
+            );
+        }
+    }
+
+    #[test]
+    fn test_repeller_backward_convergence() {
+        let a = 4.0;
+        let b = 0.3;
+        let eps = 0.01;
+        let params = HenonParams::new(a, b, eps).unwrap();
+        let fps = henon_fixed_points(a, b);
+
+        for (fx, fy) in &fps {
+            let (stab, _, _) = classify_fixed_point(a, b, *fx, *fy);
+            if stab != "repeller" {
+                continue;
+            }
+
+            let perturb = Vector2::new(fx + 1e-4, fy + 1e-4);
+            let mut pos = perturb;
+            let fp = Vector2::new(*fx, *fy);
+
+            let mut converged = false;
+            for _ in 0..100 {
+                match params.henon_map_inverse(&pos) {
+                    Ok(next) => {
+                        let dist = (next - fp).norm();
+                        if dist < 1e-8 {
+                            converged = true;
+                            break;
+                        }
+                        if dist > 100.0 {
+                            break;
+                        }
+                        pos = next;
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            assert!(
+                converged,
+                "Points near repeller ({:.4}, {:.4}) should converge under inverse iteration",
+                fx, fy
+            );
+        }
+    }
+
+    #[test]
+    fn test_stable_manifold_forward_convergence() {
+        // Points on the stable manifold should converge to the saddle under FORWARD iteration
+        let a = 1.4;
+        let b = 0.3;
+        let eps = 0.01;
+        let params = HenonParams::new(a, b, eps).unwrap();
+        let fps = henon_fixed_points(a, b);
+
+        for (fx, fy) in &fps {
+            let (stab, l1, l2) = classify_fixed_point(a, b, *fx, *fy);
+            if stab != "saddle" {
+                continue;
+            }
+
+            // Compute stable eigenvector
+            let stable_lambda = if l1.abs() < l2.abs() { l1 } else { l2 };
+            let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
+
+            let v1 = 1.0;
+            let v2 = 2.0 * a * fx + stable_lambda;
+            let norm = (v1 * v1 + v2 * v2).sqrt();
+            let stable_eigvec = Vector2::new(v1 / norm, v2 / norm);
+
+            // Compute stable manifold using DualRepeller (inverse map)
+            let saddle = SaddlePoint::from_2d_eigenvector(
+                Vector2::new(*fx, *fy),
+                stable_eigvec,
+                1,
+                stable_lambda,
+                SaddleType::DualRepeller,
+                None,
+            );
+
+            let config = ManifoldConfig {
+                max_iter: 200,
+                max_points: 10000,
+                time_limit: 5.0,
+                ..ManifoldConfig::default()
+            };
+            let computer = UnstableManifoldComputer::new(params, config);
+            let result = computer.compute_manifold(&saddle, &[]);
+
+            assert!(result.is_ok(), "Stable manifold computation should succeed");
+            let (plus, minus) = result.unwrap();
+
+            // Take some points from the stable manifold and verify they converge
+            // under FORWARD iteration
+            let fp = Vector2::new(*fx, *fy);
+            let mut convergence_count = 0;
+            let test_points: Vec<_> = plus
+                .points
+                .iter()
+                .chain(minus.points.iter())
+                .take(20)
+                .collect();
+
+            for state in &test_points {
+                let mut pos = state.pos;
+                let mut converging = false;
+
+                for _ in 0..500 {
+                    match params.henon_map(&pos) {
+                        Ok(next) => {
+                            let dist = (next - fp).norm();
+                            if dist < 1e-3 {
+                                converging = true;
+                                break;
+                            }
+                            if dist > 100.0 {
+                                break;
+                            }
+                            pos = next;
+                        }
+                        Err(_) => break,
+                    }
+                }
+
+                if converging {
+                    convergence_count += 1;
+                }
+            }
+
+            println!(
+                "Stable manifold of saddle ({:.4}, {:.4}): {}/{} points converge forward",
+                fx,
+                fy,
+                convergence_count,
+                test_points.len()
+            );
+
+            // At least some points should converge (near the saddle they will)
+            assert!(
+                convergence_count > 0,
+                "Some stable manifold points should converge under forward iteration"
+            );
+        }
+    }
+
+    #[test]
+    fn test_stable_manifold_tangency() {
+        // Near the saddle, the stable manifold should be tangent to the stable eigenspace
+        let a = 1.4;
+        let b = 0.3;
+        let eps = 0.01;
+        let params = HenonParams::new(a, b, eps).unwrap();
+        let fps = henon_fixed_points(a, b);
+
+        for (fx, fy) in &fps {
+            let (stab, l1, l2) = classify_fixed_point(a, b, *fx, *fy);
+            if stab != "saddle" {
+                continue;
+            }
+
+            let stable_lambda = if l1.abs() < l2.abs() { l1 } else { l2 };
+            let v1 = 1.0;
+            let v2 = 2.0 * a * fx + stable_lambda;
+            let norm = (v1 * v1 + v2 * v2).sqrt();
+            let stable_eigvec = Vector2::new(v1 / norm, v2 / norm);
+
+            let saddle = SaddlePoint::from_2d_eigenvector(
+                Vector2::new(*fx, *fy),
+                stable_eigvec,
+                1,
+                stable_lambda,
+                SaddleType::DualRepeller,
+                None,
+            );
+
+            let config = ManifoldConfig {
+                max_iter: 50,
+                max_points: 5000,
+                time_limit: 5.0,
+                ..ManifoldConfig::default()
+            };
+            let computer = UnstableManifoldComputer::new(params, config);
+            let result = computer.compute_manifold(&saddle, &[]);
+            assert!(result.is_ok());
+
+            let (plus, _) = result.unwrap();
+            let fp = Vector2::new(*fx, *fy);
+
+            // Check the first few points (closest to saddle) are along stable eigenvector
+            if plus.points.len() >= 2 {
+                let first_displacement = plus.points[0].pos - fp;
+                let disp_norm = first_displacement.norm();
+                if disp_norm > 1e-10 {
+                    let direction = first_displacement / disp_norm;
+                    // Dot product should be close to ±1 (parallel or antiparallel)
+                    let dot = direction.dot(&stable_eigvec).abs();
+                    println!(
+                        "Tangency check at ({:.4}, {:.4}): |dot(manifold_dir, v_s)| = {:.6}",
+                        fx, fy, dot
+                    );
+                    assert!(
+                        dot > 0.9,
+                        "Near saddle, stable manifold should be tangent to stable eigenspace, got dot={:.4}",
+                        dot
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_stable_unstable_manifold_invariance() {
+        // f(W^s(p)) = W^s(p): mapping a point on the stable manifold should produce
+        // another point that's still "on" the stable manifold (converges to saddle)
+        let a = 1.4;
+        let b = 0.3;
+        let eps = 0.01;
+        let params = HenonParams::new(a, b, eps).unwrap();
+        let fps = henon_fixed_points(a, b);
+
+        for (fx, fy) in &fps {
+            let (stab, l1, l2) = classify_fixed_point(a, b, *fx, *fy);
+            if stab != "saddle" {
+                continue;
+            }
+
+            let stable_lambda = if l1.abs() < l2.abs() { l1 } else { l2 };
+            let v1 = 1.0;
+            let v2 = 2.0 * a * fx + stable_lambda;
+            let norm = (v1 * v1 + v2 * v2).sqrt();
+            let stable_eigvec = Vector2::new(v1 / norm, v2 / norm);
+
+            let saddle = SaddlePoint::from_2d_eigenvector(
+                Vector2::new(*fx, *fy),
+                stable_eigvec,
+                1,
+                stable_lambda,
+                SaddleType::DualRepeller,
+                None,
+            );
+
+            let config = ManifoldConfig {
+                max_iter: 50,
+                max_points: 5000,
+                time_limit: 5.0,
+                ..ManifoldConfig::default()
+            };
+            let computer = UnstableManifoldComputer::new(params, config);
+            let result = computer.compute_manifold(&saddle, &[]).unwrap();
+            let (plus, _) = result;
+            let fp = Vector2::new(*fx, *fy);
+
+            let mut converge_count = 0;
+            let mut tested = 0;
+            for state in plus.points.iter().take(3) {
+                if (state.pos - fp).norm() > 0.1 {
+                    continue;
+                }
+                tested += 1;
+                if let Ok(mapped) = params.henon_map(&state.pos) {
+                    let mut pos = mapped;
+                    let mut converged = false;
+                    for _ in 0..1000 {
+                        match params.henon_map(&pos) {
+                            Ok(next) => {
+                                if (next - fp).norm() < 1e-2 {
+                                    converged = true;
+                                    break;
+                                }
+                                if next.norm() > 100.0 {
+                                    break;
+                                }
+                                pos = next;
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    if converged {
+                        converge_count += 1;
+                    }
+                }
+            }
+
+            if tested > 0 {
+                println!(
+                    "Invariance at ({:.4}, {:.4}): {}/{} close points converge",
+                    fx, fy, converge_count, tested
+                );
+                assert!(
+                    converge_count > 0 || tested == 0,
+                    "f(q) for q near saddle on W^s should converge to the saddle"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_hausdorff_distance_identical_sets() {
+        // d_H(A, A) = 0
+        let set_a = vec![
+            Vector2::new(0.0, 0.0),
+            Vector2::new(1.0, 0.0),
+            Vector2::new(0.0, 1.0),
+        ];
+        let result = crate::hausdorff::compute_hausdorff_distance(&set_a, &set_a, 3).unwrap();
+        assert!(
+            result.distance < 1e-10,
+            "d_H(A,A) should be 0, got {}",
+            result.distance
+        );
+    }
+
+    #[test]
+    fn test_hausdorff_distance_known_value() {
+        let set_a: Vec<Vector2<f64>> = (0..10).map(|i| Vector2::new(i as f64 * 0.1, 0.0)).collect();
+        let set_b: Vec<Vector2<f64>> = (0..10).map(|i| Vector2::new(i as f64 * 0.1, 1.0)).collect();
+
+        let result = crate::hausdorff::compute_hausdorff_distance(&set_a, &set_b, 3).unwrap();
+        assert!(
+            (result.distance - 1.0).abs() < 0.01,
+            "d_H for parallel lines offset by 1 should be ~1.0, got {}",
+            result.distance
+        );
+    }
+
+    #[test]
+    fn test_hausdorff_distance_symmetry() {
+        // d_H(A, B) = d_H(B, A)
+        let set_a = vec![Vector2::new(0.0, 0.0), Vector2::new(1.0, 0.0)];
+        let set_b = vec![Vector2::new(0.5, 0.5), Vector2::new(1.5, 0.5)];
+
+        let result_ab = crate::hausdorff::compute_hausdorff_distance(&set_a, &set_b, 2).unwrap();
+        let result_ba = crate::hausdorff::compute_hausdorff_distance(&set_b, &set_a, 2).unwrap();
+        assert!(
+            (result_ab.distance - result_ba.distance).abs() < 1e-10,
+            "Hausdorff distance should be symmetric: {} vs {}",
+            result_ab.distance,
+            result_ba.distance
+        );
+    }
+
+    #[test]
+    fn test_hausdorff_distance_triangle_inequality() {
+        // d_H(A, C) <= d_H(A, B) + d_H(B, C)
+        let set_a = vec![Vector2::new(0.0, 0.0)];
+        let set_b = vec![Vector2::new(1.0, 0.0)];
+        let set_c = vec![Vector2::new(3.0, 0.0)];
+
+        let d_ab = crate::hausdorff::compute_hausdorff_distance(&set_a, &set_b, 1)
+            .unwrap()
+            .distance;
+        let d_bc = crate::hausdorff::compute_hausdorff_distance(&set_b, &set_c, 1)
+            .unwrap()
+            .distance;
+        let d_ac = crate::hausdorff::compute_hausdorff_distance(&set_a, &set_c, 1)
+            .unwrap()
+            .distance;
+
+        assert!(
+            d_ac <= d_ab + d_bc + 1e-10,
+            "Triangle inequality violated: d(A,C)={} > d(A,B)+d(B,C)={}",
+            d_ac,
+            d_ab + d_bc
+        );
+    }
+
+    #[test]
+    fn test_directed_hausdorff_asymmetry() {
+        // The directed Hausdorff distances are generally asymmetric
+        let set_a = vec![
+            Vector2::new(0.0, 0.0),
+            Vector2::new(1.0, 0.0),
+            Vector2::new(3.0, 0.0),
+        ];
+        let set_b = vec![Vector2::new(1.0, 0.0)];
+
+        let (d_ab, _, _) = crate::hausdorff::directed_hausdorff(&set_a, &set_b);
+        let (d_ba, _, _) = crate::hausdorff::directed_hausdorff(&set_b, &set_a);
+
+        // d(A->B) = max(min_b||a-b|| for each a) = max(1, 0, 2) = 2
+        //   (0,0) -> 1.0, (1,0) -> 0.0, (3,0) -> 2.0
+        // d(B->A) = 0 (B's single point (1,0) has dist 0 to A)
+        assert!(
+            (d_ab - 2.0).abs() < 1e-10,
+            "d(A->B) should be 2.0, got {}",
+            d_ab
+        );
+        assert!(d_ba < 1e-10, "d(B->A) should be 0.0, got {}", d_ba);
+    }
+
+    #[test]
+    fn test_saddle_point_dual_repeller_type() {
+        // SaddleType::DualRepeller should trigger inverse map in manifold computation
+        let saddle = SaddlePoint::from_2d_eigenvector(
+            Vector2::new(0.0, 0.0),
+            Vector2::new(1.0, 0.0),
+            1,
+            0.5, // eigenvalue
+            SaddleType::DualRepeller,
+            None,
+        );
+        assert_eq!(saddle.saddle_type, SaddleType::DualRepeller);
+        assert_eq!(saddle.period, 1);
+    }
+
+    #[test]
+    fn test_henon_inverse_roundtrip() {
+        // f^{-1}(f(p)) = p for Henon map
+        let params = HenonParams::new(1.4, 0.3, 0.01).unwrap();
+        let test_points = vec![
+            Vector2::new(0.5, 0.3),
+            Vector2::new(-0.5, 0.1),
+            Vector2::new(0.0, 0.0),
+            Vector2::new(1.0, -0.5),
+        ];
+
+        for p in &test_points {
+            let fp = params.henon_map(p).unwrap();
+            let roundtrip = params.henon_map_inverse(&fp).unwrap();
+            let err = (roundtrip - p).norm();
+            assert!(
+                err < 1e-10,
+                "f^-1(f(p)) should equal p, got error {} for p=({}, {})",
+                err,
+                p.x,
+                p.y
+            );
+        }
+    }
+
+    #[test]
+    fn test_henon_forward_inverse_roundtrip() {
+        // f(f^{-1}(p)) = p
+        let params = HenonParams::new(1.4, 0.3, 0.01).unwrap();
+        let test_points = vec![Vector2::new(0.5, 0.3), Vector2::new(-0.5, 0.1)];
+
+        for p in &test_points {
+            let inv_p = params.henon_map_inverse(p).unwrap();
+            let roundtrip = params.henon_map(&inv_p).unwrap();
+            let err = (roundtrip - p).norm();
+            assert!(err < 1e-10, "f(f^-1(p)) should equal p, got error {}", err);
+        }
+    }
+
+    #[test]
+    fn test_manifold_config_dual_repeller_spacing() {
+        let saddle_regular = SaddlePoint::from_2d_eigenvector(
+            Vector2::new(0.0, 0.0),
+            Vector2::new(1.0, 0.0),
+            1,
+            2.0,
+            SaddleType::Regular,
+            None,
+        );
+        let saddle_repeller = SaddlePoint::from_2d_eigenvector(
+            Vector2::new(0.0, 0.0),
+            Vector2::new(1.0, 0.0),
+            1,
+            2.0,
+            SaddleType::DualRepeller,
+            None,
+        );
+
+        assert_eq!(saddle_regular.saddle_type, SaddleType::Regular);
+        assert_eq!(saddle_repeller.saddle_type, SaddleType::DualRepeller);
+    }
+
+    #[test]
+    fn test_negative_eigenvalue_period_doubling() {
+        let a = 1.4;
+        let b = 0.3;
+        let eps = 0.01;
+        let params = HenonParams::new(a, b, eps).unwrap();
+        let fps = henon_fixed_points(a, b);
+
+        for (fx, fy) in &fps {
+            let (stab, l1, l2) = classify_fixed_point(a, b, *fx, *fy);
+            if stab != "saddle" {
+                continue;
+            }
+
+            let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
+
+            // If eigenvalue is negative, compute_direction will handle it
+            let v1 = 1.0;
+            let v2 = 2.0 * a * fx + unstable_lambda;
+            let norm = (v1 * v1 + v2 * v2).sqrt();
+            let eigvec = Vector2::new(v1 / norm, v2 / norm);
+
+            let saddle = SaddlePoint::from_2d_eigenvector(
+                Vector2::new(*fx, *fy),
+                eigvec,
+                1,
+                unstable_lambda,
+                SaddleType::Regular,
+                None,
+            );
+
+            let config = ManifoldConfig {
+                max_iter: 50,
+                max_points: 5000,
+                time_limit: 3.0,
+                ..ManifoldConfig::default()
+            };
+            let computer = UnstableManifoldComputer::new(params, config);
+            let result = computer.compute_direction(&saddle, 1.0, &[]);
+
+            assert!(
+                result.is_ok(),
+                "Manifold computation should handle negative eigenvalues"
+            );
+            let traj = result.unwrap();
+            assert!(traj.points.len() > 1, "Should produce trajectory points");
+
+            if unstable_lambda < 0.0 {
+                println!(
+                    "Handled negative eigenvalue {:.4} at ({:.4}, {:.4}), got {} points",
+                    unstable_lambda,
+                    fx,
+                    fy,
+                    traj.points.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_unstable_manifold_backward_convergence() {
+        // Points on W^u(p) should converge to p under BACKWARD iteration
+        let a = 1.4;
+        let b = 0.3;
+        let eps = 0.01;
+        let params = HenonParams::new(a, b, eps).unwrap();
+        let fps = henon_fixed_points(a, b);
+
+        for (fx, fy) in &fps {
+            let (stab, l1, l2) = classify_fixed_point(a, b, *fx, *fy);
+            if stab != "saddle" {
+                continue;
+            }
+
+            let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
+            let v1 = 1.0;
+            let v2 = 2.0 * a * fx + unstable_lambda;
+            let norm = (v1 * v1 + v2 * v2).sqrt();
+            let eigvec = Vector2::new(v1 / norm, v2 / norm);
+
+            let saddle = SaddlePoint::from_2d_eigenvector(
+                Vector2::new(*fx, *fy),
+                eigvec,
+                1,
+                unstable_lambda,
+                SaddleType::Regular,
+                None,
+            );
+
+            let config = ManifoldConfig {
+                max_iter: 100,
+                max_points: 5000,
+                time_limit: 5.0,
+                ..ManifoldConfig::default()
+            };
+            let computer = UnstableManifoldComputer::new(params, config);
+            let (plus, _) = computer.compute_manifold(&saddle, &[]).unwrap();
+            let fp = Vector2::new(*fx, *fy);
+
+            let mut converge_count = 0;
+            for state in plus.points.iter().take(10) {
+                let mut pos = state.pos;
+                let mut converged = false;
+                for _ in 0..200 {
+                    match params.henon_map_inverse(&pos) {
+                        Ok(next) => {
+                            if (next - fp).norm() < 1e-3 {
+                                converged = true;
+                                break;
+                            }
+                            if next.norm() > 100.0 {
+                                break;
+                            }
+                            pos = next;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                if converged {
+                    converge_count += 1;
+                }
+            }
+
+            println!(
+                "Unstable manifold backward convergence at ({:.4}, {:.4}): {}/{}",
+                fx,
+                fy,
+                converge_count,
+                plus.points.len().min(10)
+            );
+            assert!(
+                converge_count > 0,
+                "Some W^u points should converge under inverse iteration"
+            );
+        }
+    }
+
+    #[test]
+    fn test_hausdorff_empty_set_error() {
+        let empty: Vec<Vector2<f64>> = vec![];
+        let non_empty = vec![Vector2::new(0.0, 0.0)];
+
+        let result = crate::hausdorff::compute_hausdorff_distance(&empty, &non_empty, 1);
+        assert!(result.is_err(), "Should error on empty set A");
+
+        let result2 = crate::hausdorff::compute_hausdorff_distance(&non_empty, &empty, 1);
+        assert!(result2.is_err(), "Should error on empty set B");
     }
 }

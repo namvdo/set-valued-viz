@@ -1,5 +1,6 @@
 use crate::dynamical_systems::{DynamicalSystem, ExtendedState, UserDefinedDynamicalSystem};
 use crate::parameters::parameter_set_from_js;
+use crate::range::{clamp_pair, RANGE_LIMIT};
 use core::f64;
 use nalgebra::Vector2;
 use serde::{Deserialize, Serialize};
@@ -746,12 +747,17 @@ pub fn davidchack_lai_boundary_map(
     max_period: usize,
     grid_size: usize,
     theta_grid_size: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
 ) -> PeriodicOrbitDatabase {
     let mut database = PeriodicOrbitDatabase::new();
 
-    // grid search in [-2.0, 2.0] x [-2.0, 2.0] x [0, 2pi]
-    let x_range = (-2.0, 2.0);
-    let y_range = (-2.0, 2.0);
+    let (x_min, x_max) = clamp_pair(x_min, x_max, RANGE_LIMIT);
+    let (y_min, y_max) = clamp_pair(y_min, y_max, RANGE_LIMIT);
+    let x_range = (x_min, x_max);
+    let y_range = (y_min, y_max);
     let theta_range = (0.0, 2.0 * PI);
 
     // stage 1: find orbits of all periods using 3D grid search
@@ -896,12 +902,31 @@ pub struct BoundaryHenonSystemAnalysis {
 }
 
 impl BoundaryHenonSystemAnalysis {
-    pub fn new(a: f64, b: f64, epsilon: f64, max_period: usize) -> Self {
+    pub fn new(
+        a: f64,
+        b: f64,
+        epsilon: f64,
+        max_period: usize,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+    ) -> Self {
         let grid_size = 20;
         let theta_grid_size = 20;
 
-        let orbit_database =
-            davidchack_lai_boundary_map(a, b, epsilon, max_period, grid_size, theta_grid_size);
+        let orbit_database = davidchack_lai_boundary_map(
+            a,
+            b,
+            epsilon,
+            max_period,
+            grid_size,
+            theta_grid_size,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        );
         log_message(&format!(
             "Total orbits found using Davidchack-Lai (boundary map): {}",
             orbit_database.total_count()
@@ -1051,10 +1076,15 @@ impl BoundaryHenonSystemWasm {
         b: f64,
         epsilon: f64,
         max_period: usize,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
     ) -> Result<BoundaryHenonSystemWasm, JsValue> {
         console_error_panic_hook::set_once();
 
-        let system = BoundaryHenonSystemAnalysis::new(a, b, epsilon, max_period);
+        let system =
+            BoundaryHenonSystemAnalysis::new(a, b, epsilon, max_period, x_min, x_max, y_min, y_max);
         Ok(Self {
             system,
             current_iteration: 0,
@@ -1376,11 +1406,17 @@ fn davidchack_lai_boundary_map_generic(
     max_period: usize,
     grid_size: usize,
     theta_grid_size: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
 ) -> PeriodicOrbitDatabase {
     let mut database = PeriodicOrbitDatabase::new();
 
-    let x_range = (-2.0, 2.0);
-    let y_range = (-2.0, 2.0);
+    let (x_min, x_max) = clamp_pair(x_min, x_max, RANGE_LIMIT);
+    let (y_min, y_max) = clamp_pair(y_min, y_max, RANGE_LIMIT);
+    let x_range = (x_min, x_max);
+    let y_range = (y_min, y_max);
     let theta_range = (0.0, 2.0 * PI);
 
     for period in 1..=max_period {
@@ -1471,6 +1507,10 @@ impl BoundaryUserDefinedSystemWasm {
         params: JsValue,
         epsilon: f64,
         max_period: usize,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
     ) -> Result<BoundaryUserDefinedSystemWasm, JsValue> {
         console_error_panic_hook::set_once();
 
@@ -1480,8 +1520,16 @@ impl BoundaryUserDefinedSystemWasm {
 
         let grid_size = 10;
         let theta_grid_size = 10;
-        let orbit_database =
-            davidchack_lai_boundary_map_generic(&system, max_period, grid_size, theta_grid_size);
+        let orbit_database = davidchack_lai_boundary_map_generic(
+            &system,
+            max_period,
+            grid_size,
+            theta_grid_size,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        );
 
         log_message(&format!(
             "Total orbits found (user-defined boundary map): {}",

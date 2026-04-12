@@ -24,11 +24,6 @@ export const StartingPoint = ({ type, startPoint, updateStartPoint }) => {
           />
         </div>
       </div>
-      {isContinuous && (
-        <div className="start-hint">
-          x is position, y is velocity.
-        </div>
-      )}
       {!isContinuous && (
         <div id="normal-inputs" className="start-grid" style={{ marginTop: '6px' }}>
           <div className="start-field">

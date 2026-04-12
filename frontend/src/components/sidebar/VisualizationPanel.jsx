@@ -2,30 +2,45 @@ import React from 'react';
 import { Collapsible } from '../ui/Collapsible';
 import { Toggle } from '../ui/Toggle';
 
-export const VisualizationPanel = ({ manifoldState, setManifoldState }) => {
+export const VisualizationPanel = ({ manifoldState, setManifoldState, viewRange, setViewRange, rangeLimit, resetViewRange }) => {
+  const limitLabel = rangeLimit ?? 10;
   return (
-    <Collapsible title="Visualization" defaultOpen={true}>
-      <div className="view-toggle">
-        <button className="view-btn active">Phase portrait</button>
-        <button className="view-btn disabled" disabled>Poincaré section</button>
-        <button className="view-btn disabled" disabled>Time series</button>
+    <Collapsible title="Axis range" defaultOpen={true}>
+      <div className="axis-range-grid">
+        <div className="axis-range-row">
+          <span className="axis-range-label">x</span>
+          <input
+            className="axis-range-input"
+            type="number"
+            value={viewRange.xMin}
+            onChange={(e) => setViewRange({ xMin: parseFloat(e.target.value) })}
+          />
+          <input
+            className="axis-range-input"
+            type="number"
+            value={viewRange.xMax}
+            onChange={(e) => setViewRange({ xMax: parseFloat(e.target.value) })}
+          />
+        </div>
+        <div className="axis-range-row">
+          <span className="axis-range-label">y</span>
+          <input
+            className="axis-range-input"
+            type="number"
+            value={viewRange.yMin}
+            onChange={(e) => setViewRange({ yMin: parseFloat(e.target.value) })}
+          />
+          <input
+            className="axis-range-input"
+            type="number"
+            value={viewRange.yMax}
+            onChange={(e) => setViewRange({ yMax: parseFloat(e.target.value) })}
+          />
+        </div>
       </div>
-      
-      <Toggle 
-        label="Trajectory trail" 
-        checked={manifoldState.showTrail} 
-        onChange={v => setManifoldState(prev => ({ ...prev, showTrail: v }))} 
-      />
-      <Toggle 
-        label="Show orbit markers" 
-        checked={manifoldState.showOrbits} 
-        onChange={v => setManifoldState(prev => ({ ...prev, showOrbits: v }))} 
-      />
-      
-      <div className="small-label" style={{ marginTop: '10px' }}>Integration method</div>
-      <div style={{ display: 'flex', gap: '4px' }}>
-        <button className="per-btn on" style={{ flex: 1, padding: '6px' }}>Euler</button>
-        <button className="per-btn" style={{ flex: 1, padding: '6px', opacity: .5, cursor: 'default' }} disabled>RK4</button>
+      <div className="axis-range-actions">
+        <button className="axis-range-reset" onClick={resetViewRange}>Reset</button>
+        <div className="axis-range-hint">Clamp ±{limitLabel}</div>
       </div>
     </Collapsible>
   );

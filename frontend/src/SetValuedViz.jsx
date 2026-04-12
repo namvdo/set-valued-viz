@@ -4,11 +4,10 @@ import { Shell } from './components/layout/Shell';
 import { Sidebar } from './components/layout/Sidebar';
 import { Viewport } from './components/layout/Viewport';
 import { normalizeParams } from './utils/paramUtils';
+import { DEFAULT_VIEW_RANGE, RANGE_LIMIT, normalizeViewRange } from './utils/viewRange';
 
-const GRID_CONFIG = {
-    xRange: [-2, 2],
-    yRange: [-1.5, 1.5],
-    gridDivisions: 8,
+const GRID_STYLE = {
+    gridDivisions: 16,
     axisColor: 0x888888,
     gridColor: 0x333333
 };
@@ -26,10 +25,9 @@ const duffingMap = (x, y, a, b) => ({
     y: -b * x + a * y - y * y * y
 });
 
-const createCoordinateSystem = (scene) => {
-    const { xRange, yRange, gridDivisions, axisColor, gridColor } = GRID_CONFIG;
-    const [xMin, xMax] = xRange;
-    const [yMin, yMax] = yRange;
+const createCoordinateSystem = (scene, range) => {
+    const { gridDivisions, axisColor, gridColor } = GRID_STYLE;
+    const { xMin, xMax, yMin, yMax } = range;
     const xStep = (xMax - xMin) / gridDivisions;
     const yStep = (yMax - yMin) / gridDivisions;
 
@@ -208,6 +206,7 @@ const SetValuedViz = () => {
         showOrbitLines: false,
         showUnstableManifold: false,
         showStableManifold: false,
+        showRepellerManifold: false,
         intersectionThreshold: 0.05,
         highlightedOrbitId: null,
         currentPoint: { x: 0.1, y: 0.1, nx: 1.0, ny: 0.0 }, // 4D point for boundary map
@@ -236,6 +235,19 @@ const SetValuedViz = () => {
         }
         return normalizeParams(activeCustomParams);
     }, [isCustomSystem, activeCustomParams]);
+
+    // Bifurcation analysis state
+    const [bifurcationState, setBifurcationState] = useState({
+        data: [],
+        isComputing: false,
+        error: null,
+        aMin: 0.1,
+        aMax: 2.0,
+        numSamples: 30,
+        threshold: 0.2,
+        intersectionCount: 0,
+        criticalValues: []
+    });
 
     // BDE Simulator
     const [bdeState, setBdeState] = useState({
@@ -299,31 +311,59 @@ const SetValuedViz = () => {
         y: 0,
         data: null
     });
+    const [viewRange, setViewRange] = useState(DEFAULT_VIEW_RANGE);
+    const viewRangeRef = useRef(viewRange);
+    const gridGroupRef = useRef(null);
 
     const raycasterRef = useRef(new THREE.Raycaster());
     const mouseRef = useRef(new THREE.Vector2());
 
-    useEffect(() => {
-        if (!canvasRef.current) return;
+    const updateViewRange = useCallback((patch) => {
+        setViewRange(prev => {
+            const next = { ...prev };
+            Object.entries(patch).forEach(([key, value]) => {
+                if (Number.isFinite(value)) {
+                    next[key] = value;
+                }
+            });
+            return normalizeViewRange(next);
+        });
+    }, []);
 
-        const scene = new THREE.Scene();
-        // Allow transparent background to show CSS background
-        // scene.background = new THREE.Color(0x0a0a0a);
-        sceneRef.current = scene;
+    const resetViewRange = useCallback(() => {
+        setViewRange(DEFAULT_VIEW_RANGE);
+    }, []);
 
-        const [xMin, xMax] = GRID_CONFIG.xRange;
-        const [yMin, yMax] = GRID_CONFIG.yRange;
-        const gridHeight = yMax - yMin;
+    const applyViewRangeToCamera = useCallback((range) => {
+        const camera = cameraRef.current;
+        if (!camera) return;
+
+        const gridHeight = range.yMax - range.yMin;
         const padding = 0.5;
         const viewWidth = window.innerWidth - 268;
         const aspect = viewWidth / window.innerHeight;
         const frustumHeight = gridHeight + padding * 2;
         const frustumWidth = frustumHeight * aspect;
 
-        const camera = new THREE.OrthographicCamera(
-            -frustumWidth / 2, frustumWidth / 2,
-            frustumHeight / 2, -frustumHeight / 2, 0.1, 1000
-        );
+        camera.left = -frustumWidth / 2;
+        camera.right = frustumWidth / 2;
+        camera.top = frustumHeight / 2;
+        camera.bottom = -frustumHeight / 2;
+
+        const centerX = (range.xMin + range.xMax) / 2;
+        const centerY = (range.yMin + range.yMax) / 2;
+        camera.position.set(centerX, centerY, 5);
+        camera.lookAt(centerX, centerY, 0);
+        camera.updateProjectionMatrix();
+    }, []);
+
+    useEffect(() => {
+        if (!canvasRef.current) return;
+
+        const scene = new THREE.Scene();
+        sceneRef.current = scene;
+
+        const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
         camera.position.z = 5;
         cameraRef.current = camera;
 
@@ -331,22 +371,20 @@ const SetValuedViz = () => {
             canvas: canvasRef.current,
             antialias: true,
             alpha: true,
-            preserveDrawingBuffer: true  // required for screenshots
+            preserveDrawingBuffer: true
         });
-        renderer.setSize(viewWidth, window.innerHeight);
+        renderer.setSize(window.innerWidth - 268, window.innerHeight);
         renderer.setPixelRatio(window.devicePixelRatio);
         rendererRef.current = renderer;
 
-        createCoordinateSystem(scene);
+        viewRangeRef.current = viewRange;
+        applyViewRangeToCamera(viewRange);
+        gridGroupRef.current = createCoordinateSystem(scene, viewRange);
 
         const handleResize = () => {
-            const newViewWidth = window.innerWidth - 268;
-            const aspect = newViewWidth / window.innerHeight;
-            const newFrustumWidth = frustumHeight * aspect;
-            camera.left = -newFrustumWidth / 2;
-            camera.right = newFrustumWidth / 2;
-            camera.updateProjectionMatrix();
-            renderer.setSize(newViewWidth, window.innerHeight);
+            const range = viewRangeRef.current;
+            applyViewRangeToCamera(range);
+            renderer.setSize(window.innerWidth - 268, window.innerHeight);
         };
         window.addEventListener('resize', handleResize);
 
@@ -362,7 +400,18 @@ const SetValuedViz = () => {
             if (batchAnimationRef.current) cancelAnimationFrame(batchAnimationRef.current);
             renderer.dispose();
         };
-    }, []);
+    }, [applyViewRangeToCamera]);
+
+    useEffect(() => {
+        viewRangeRef.current = viewRange;
+        const scene = sceneRef.current;
+        if (!scene) return;
+        if (gridGroupRef.current) {
+            scene.remove(gridGroupRef.current);
+        }
+        gridGroupRef.current = createCoordinateSystem(scene, viewRange);
+        applyViewRangeToCamera(viewRange);
+    }, [viewRange, applyViewRangeToCamera]);
 
     useEffect(() => {
         const loadWasm = async () => {
@@ -733,7 +782,16 @@ const SetValuedViz = () => {
                 } else if (dynamicSystem === 'duffing_ode') {
                     system = new wasmModule.EulerMapSystemWasm(params.delta, params.h, params.epsilon, params.maxPeriod);
                 } else {
-                    system = new wasmModule.BoundaryHenonSystemWasm(params.a, params.b, params.epsilon, params.maxPeriod);
+                    system = new wasmModule.BoundaryHenonSystemWasm(
+                        params.a,
+                        params.b,
+                        params.epsilon,
+                        params.maxPeriod,
+                        viewRange.xMin,
+                        viewRange.xMax,
+                        viewRange.yMin,
+                        viewRange.yMax
+                    );
                 }
                 if (cancelled) { system.free(); return; }
 
@@ -750,7 +808,7 @@ const SetValuedViz = () => {
         };
         initSystem();
         return () => { cancelled = true; };
-    }, [wasmModule, dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, params.maxPeriod, params.startX, params.startY, debouncedEquations]);
+    }, [wasmModule, dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, params.maxPeriod, params.startX, params.startY, debouncedEquations, viewRange]);
 
     useEffect(() => {
         if (manifoldDebounceRef.current) {
@@ -762,8 +820,8 @@ const SetValuedViz = () => {
         manifoldDebounceRef.current = setTimeout(() => {
             if (!wasmModule) return;
 
-            const manifoldsEnabled = manifoldState.showUnstableManifold || manifoldState.showStableManifold;
-            
+            const manifoldsEnabled = manifoldState.showUnstableManifold || manifoldState.showStableManifold || manifoldState.showRepellerManifold;
+
             if (!manifoldsEnabled && (dynamicSystem === 'henon' || dynamicSystem === 'duffing' || dynamicSystem === 'custom')) {
                 const orbits = periodicState.orbits || [];
                 const fixedPoints = orbits
@@ -838,9 +896,9 @@ const SetValuedViz = () => {
 
                     setManifoldState(prev => ({
                         ...prev,
-                        manifolds: [], 
+                        manifolds: [],
                         stableManifolds: [],
-                        fixedPoints: [], 
+                        fixedPoints: [],
                         isComputing: false,
                         isReady: true
                     }));
@@ -850,7 +908,11 @@ const SetValuedViz = () => {
                     const result = wasmModule.compute_duffing_manifold_simple(
                         params.a,
                         params.b,
-                        params.epsilon
+                        params.epsilon,
+                        viewRange.xMin,
+                        viewRange.xMax,
+                        viewRange.yMin,
+                        viewRange.yMax
                     );
 
                     setManifoldState(prev => ({
@@ -868,6 +930,10 @@ const SetValuedViz = () => {
                             const result = wasmModule.compute_stable_and_unstable_manifolds_user_defined(
                                 debouncedEquations.xEq, debouncedEquations.yEq,
                                 paramValidation.normalized, params.epsilon,
+                                viewRange.xMin,
+                                viewRange.xMax,
+                                viewRange.yMin,
+                                viewRange.yMax,
                                 periodicState.orbits,
                                 manifoldState.intersectionThreshold
                             );
@@ -886,6 +952,10 @@ const SetValuedViz = () => {
                             const result = wasmModule.compute_manifold_from_orbits_user_defined(
                                 debouncedEquations.xEq, debouncedEquations.yEq,
                                 paramValidation.normalized, params.epsilon,
+                                viewRange.xMin,
+                                viewRange.xMax,
+                                viewRange.yMin,
+                                viewRange.yMax,
                                 periodicState.orbits
                             );
 
@@ -903,7 +973,11 @@ const SetValuedViz = () => {
                         console.log('No periodic orbits, using simple user-defined manifold');
                         const result = wasmModule.compute_user_defined_manifold(
                             debouncedEquations.xEq, debouncedEquations.yEq,
-                            paramValidation.normalized, params.epsilon
+                            paramValidation.normalized, params.epsilon,
+                            viewRange.xMin,
+                            viewRange.xMax,
+                            viewRange.yMin,
+                            viewRange.yMax
                         );
 
                         setManifoldState(prev => ({
@@ -925,6 +999,10 @@ const SetValuedViz = () => {
                                 params.a,
                                 params.b,
                                 params.epsilon,
+                                viewRange.xMin,
+                                viewRange.xMax,
+                                viewRange.yMin,
+                                viewRange.yMax,
                                 periodicState.orbits,
                                 manifoldState.intersectionThreshold
                             );
@@ -944,6 +1022,10 @@ const SetValuedViz = () => {
                                 params.a,
                                 params.b,
                                 params.epsilon,
+                                viewRange.xMin,
+                                viewRange.xMax,
+                                viewRange.yMin,
+                                viewRange.yMax,
                                 periodicState.orbits
                             );
 
@@ -959,7 +1041,15 @@ const SetValuedViz = () => {
                         }
                     } else {
                         console.log('No periodic orbits available, using simple computation');
-                        const result = wasmModule.compute_manifold_simple(params.a, params.b, params.epsilon);
+                        const result = wasmModule.compute_manifold_simple(
+                            params.a,
+                            params.b,
+                            params.epsilon,
+                            viewRange.xMin,
+                            viewRange.xMax,
+                            viewRange.yMin,
+                            viewRange.yMax
+                        );
 
                         setManifoldState(prev => ({
                             ...prev,
@@ -983,7 +1073,7 @@ const SetValuedViz = () => {
                 clearTimeout(manifoldDebounceRef.current);
             }
         };
-    }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.intersectionThreshold, debouncedEquations, paramValidation, manifoldState.startPoint.x, manifoldState.startPoint.y]);
+    }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.showRepellerManifold, manifoldState.intersectionThreshold, debouncedEquations, paramValidation, manifoldState.startPoint.x, manifoldState.startPoint.y, viewRange]);
 
     useEffect(() => {
         if (!animationState.isAnimating) {
@@ -1306,14 +1396,32 @@ const SetValuedViz = () => {
             scene.remove(obj);
         });
 
-        if (manifoldState.showUnstableManifold && manifoldState.manifolds.length > 0) {
+        if ((manifoldState.showUnstableManifold || manifoldState.showRepellerManifold) && manifoldState.manifolds.length > 0) {
+            // Determine which saddle points are repellers vs saddles
+            const repellerPoints = new Set();
+            manifoldState.fixedPoints.forEach(fp => {
+                const stab = (fp.stability || '').toLowerCase();
+                if (stab === 'repeller' || stab === 'unstable') {
+                    repellerPoints.add(`${fp.x.toFixed(8)},${fp.y.toFixed(8)}`);
+                }
+            });
+
             manifoldState.manifolds.forEach(m => {
+                const spKey = `${m.saddle_point[0].toFixed(8)},${m.saddle_point[1].toFixed(8)}`;
+                const isRepellerManifold = repellerPoints.has(spKey);
+
+                // Skip if this manifold type isn't toggled on
+                if (isRepellerManifold && !manifoldState.showRepellerManifold) return;
+                if (!isRepellerManifold && !manifoldState.showUnstableManifold) return;
+
+                const color = isRepellerManifold ? ORBIT_COLORS.repellerManifold : ORBIT_COLORS.manifold;
+
                 [m.plus, m.minus].forEach(traj => {
                     if (traj && traj.points && traj.points.length > 1) {
                         traj.points.forEach(([x, y]) => {
                             const geom = new THREE.SphereGeometry(0.008, 6, 6);
                             const mat = new THREE.MeshBasicMaterial({
-                                color: new THREE.Color(ORBIT_COLORS.manifold)
+                                color: new THREE.Color(color)
                             });
                             const sphere = new THREE.Mesh(geom, mat);
                             sphere.position.set(x, y, 0.1);
@@ -1365,8 +1473,9 @@ const SetValuedViz = () => {
             const isRepeller = stabLower === 'repeller' || stabLower === 'unstable';
             const isSaddle = stabLower === 'saddle';
             const color = isAttractor ? ORBIT_COLORS.attractor :
-                (isRepeller || isSaddle) ? ORBIT_COLORS.saddlePoint : ORBIT_COLORS.periodicBlue;
-            const radius = isAttractor ? 0.03 : 0.025;
+                isRepeller ? ORBIT_COLORS.repeller :
+                isSaddle ? ORBIT_COLORS.saddlePoint : ORBIT_COLORS.periodicBlue;
+            const radius = isAttractor ? 0.03 : isRepeller ? 0.028 : 0.025;
             const geom = new THREE.SphereGeometry(radius, 12, 12);
             const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(color) });
             const sphere = new THREE.Mesh(geom, mat);
@@ -1749,7 +1858,11 @@ const SetValuedViz = () => {
                     paramValidation.normalized,
                     ulamState.subdivisions,
                     ulamState.pointsPerBox,
-                    ulamState.epsilon
+                    ulamState.epsilon,
+                    viewRange.xMin,
+                    viewRange.xMax,
+                    viewRange.yMin,
+                    viewRange.yMax
                 );
             } else if (dynamicSystem === 'custom_ode') {
                 const { UlamComputerContinuousUserDefined } = wasmModule;
@@ -1763,7 +1876,11 @@ const SetValuedViz = () => {
                     capitalT,
                     ulamState.subdivisions,
                     ulamState.pointsPerBox,
-                    ulamState.epsilon
+                    ulamState.epsilon,
+                    viewRange.xMin,
+                    viewRange.xMax,
+                    viewRange.yMin,
+                    viewRange.yMax
                 );
             } else if (dynamicSystem === 'duffing_ode') {
                 const { UlamComputerContinuous } = wasmModule;
@@ -1776,7 +1893,11 @@ const SetValuedViz = () => {
                     capitalT,
                     ulamState.subdivisions,
                     ulamState.pointsPerBox,
-                    ulamState.epsilon
+                    ulamState.epsilon,
+                    viewRange.xMin,
+                    viewRange.xMax,
+                    viewRange.yMin,
+                    viewRange.yMax
                 );
             } else {
                 const { UlamComputer } = wasmModule;
@@ -1789,7 +1910,11 @@ const SetValuedViz = () => {
                     params.b,
                     ulamState.subdivisions,
                     ulamState.pointsPerBox,
-                    ulamState.epsilon
+                    ulamState.epsilon,
+                    viewRange.xMin,
+                    viewRange.xMax,
+                    viewRange.yMin,
+                    viewRange.yMax
                 );
             }
 
@@ -1821,7 +1946,7 @@ const SetValuedViz = () => {
             console.error("Ulam computation failed:", err);
             setUlamState(prev => ({ ...prev, isComputing: false }));
         }
-    }, [wasmModule, params.a, params.b, params.delta, params.h, ulamState.subdivisions, ulamState.pointsPerBox, ulamState.epsilon, manifoldState.hasStarted, manifoldState.currentPoint, dynamicSystem, debouncedEquations, paramValidation]);
+    }, [wasmModule, params.a, params.b, params.delta, params.h, ulamState.subdivisions, ulamState.pointsPerBox, ulamState.epsilon, manifoldState.hasStarted, manifoldState.currentPoint, dynamicSystem, debouncedEquations, paramValidation, viewRange]);
 
     useEffect(() => {
         setUlamState(prev => ({ ...prev, epsilon: params.epsilon }));
@@ -1905,9 +2030,9 @@ const SetValuedViz = () => {
         const material = new THREE.MeshBasicMaterial({
             color: 0xffffff,
             transparent: true,
-            opacity: 0.5, 
+            opacity: 0.5,
             side: THREE.DoubleSide,
-            depthWrite: false 
+            depthWrite: false
         });
 
         const mesh = new THREE.InstancedMesh(geometry, material, count);
@@ -2039,6 +2164,10 @@ const SetValuedViz = () => {
                     }));
                 }}
                 paramErrors={paramValidation.errors}
+                viewRange={viewRange}
+                setViewRange={updateViewRange}
+                rangeLimit={RANGE_LIMIT}
+                resetViewRange={resetViewRange}
                 manifoldState={manifoldState}
                 setManifoldState={setManifoldState}
                 ORBIT_COLORS={ORBIT_COLORS}
@@ -2054,6 +2183,9 @@ const SetValuedViz = () => {
                 toggleRecording={toggleRecording}
                 ulamState={ulamState}
                 setUlamState={setUlamState}
+                bifurcationState={bifurcationState}
+                setBifurcationState={setBifurcationState}
+                wasmModule={wasmModule}
                 bdeState={bdeState}
                 stepForwardManifold={stepForwardManifold}
                 runToConvergenceManifold={runToConvergenceManifold}

@@ -8,6 +8,7 @@ import { StartingPoint } from '../sidebar/StartingPoint';
 import { PeriodicOrbitsPanel } from '../sidebar/PeriodicOrbitsPanel';
 import { UlamPanel } from '../sidebar/UlamPanel';
 import { AnimationPanel } from '../sidebar/AnimationPanel';
+import { BifurcationPanel } from '../sidebar/BifurcationPanel';
 import { InfoStrip } from './InfoStrip';
 import { ControlsBar } from './ControlsBar';
 
@@ -50,6 +51,15 @@ export const Sidebar = (props) => {
           paramErrors={props.paramErrors}
         />
 
+        <VisualizationPanel
+          manifoldState={props.manifoldState}
+          setManifoldState={props.setManifoldState}
+          viewRange={props.viewRange}
+          setViewRange={props.setViewRange}
+          rangeLimit={props.rangeLimit}
+          resetViewRange={props.resetViewRange}
+        />
+
         {props.type === 'discrete' && (
           <>
             <ManifoldsPanel
@@ -84,6 +94,15 @@ export const Sidebar = (props) => {
             startAnimation={props.startAnimation}
             stopAnimation={props.stopAnimation}
             toggleRecording={props.toggleRecording}
+          />
+        )}
+
+        {props.type === 'discrete' && (props.dynamicSystem === 'henon' || props.dynamicSystem === 'duffing') && (
+          <BifurcationPanel
+            params={props.params}
+            wasmModule={props.wasmModule}
+            bifurcationState={props.bifurcationState}
+            setBifurcationState={props.setBifurcationState}
           />
         )}
 

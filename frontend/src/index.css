@@ -596,6 +596,61 @@ body {
 .ctrl-btn.danger:hover:not(:disabled) { color: var(--red); border-color: var(--red); }
 .ctrl-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* ─── Axis Range ───────────────────────────────────── */
+.axis-range-grid {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+.axis-range-row {
+  display: grid;
+  grid-template-columns: 16px 1fr 1fr;
+  gap: 6px;
+  align-items: center;
+}
+.axis-range-label {
+  font-size: 10px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.axis-range-input {
+  width: 100%;
+  padding: 6px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 11px;
+}
+.axis-range-input:focus {
+  outline: none;
+  border-color: var(--line-hi);
+}
+.axis-range-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+}
+.axis-range-reset {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-2);
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.axis-range-reset:hover {
+  border-color: var(--text-3);
+  color: var(--text);
+}
+.axis-range-hint {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
 /* ─── Viewport ──────────────────────────────────────── */
 .viewport {
   flex: 1;

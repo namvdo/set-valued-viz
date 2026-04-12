@@ -4,9 +4,8 @@ use wasm_bindgen::prelude::*;
 
 use crate::duffing::DuffingParams;
 use crate::dynamical_systems::ExtendedState;
-use crate::unstable_manifold::{
-    ManifoldConfig, SaddlePoint, SaddleType, StopReason, Trajectory,
-};
+use crate::range::{clamp_pair, RANGE_LIMIT};
+use crate::unstable_manifold::{ManifoldConfig, SaddlePoint, SaddleType, StopReason, Trajectory};
 
 #[wasm_bindgen]
 extern "C" {
@@ -250,11 +249,6 @@ impl DuffingManifoldComputer {
 }
 
 /// Find fixed points of the Duffing map
-/// Fixed points satisfy: y = x and -bx + ay - y³ = y
-/// => y = x and -bx + ax - x³ = x
-/// => y = x and x(a - b - 1) = x³
-/// => y = x and x[(a - b - 1) - x²] = 0
-/// Solutions: x = 0 or x = ±√(a - b - 1) (if a - b - 1 > 0)
 fn find_duffing_fixed_points(params: &DuffingParams) -> Vec<(f64, f64)> {
     let mut fixed_points = Vec::new();
 
@@ -293,7 +287,17 @@ fn classify_duffing_stability(l1: f64, l2: f64) -> &'static str {
 }
 
 #[wasm_bindgen]
-pub fn compute_duffing_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<JsValue, JsValue> {
+pub fn compute_duffing_manifold_simple(
+    a: f64,
+    b: f64,
+    epsilon: f64,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+) -> Result<JsValue, JsValue> {
+    let (x_min, x_max) = clamp_pair(x_min, x_max, RANGE_LIMIT);
+    let (y_min, y_max) = clamp_pair(y_min, y_max, RANGE_LIMIT);
     console_log!(
         "Computing Duffing manifold with a={}, b={}, epsilon={}",
         a,
@@ -316,8 +320,8 @@ pub fn compute_duffing_manifold_simple(a: f64, b: f64, epsilon: f64) -> Result<J
     let mut unstable_points_indices = Vec::new();
 
     for (idx, &(x, y)) in fixed_points_raw.iter().enumerate() {
-        // Skip points outside reasonable display range
-        if x.abs() > 2.0 || y.abs() > 2.0 {
+        // Skip points outside display range
+        if x < x_min || x > x_max || y < y_min || y > y_max {
             continue;
         }
 

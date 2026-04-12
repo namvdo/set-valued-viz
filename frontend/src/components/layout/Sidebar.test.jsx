@@ -11,6 +11,7 @@ vi.mock('../sidebar/StartingPoint', () => ({ StartingPoint: () => <div data-test
 vi.mock('../sidebar/PeriodicOrbitsPanel', () => ({ PeriodicOrbitsPanel: () => <div data-testid="periodic-orbits" /> }));
 vi.mock('../sidebar/UlamPanel', () => ({ UlamPanel: () => <div data-testid="ulam-panel" /> }));
 vi.mock('../sidebar/AnimationPanel', () => ({ AnimationPanel: () => <div data-testid="animation-panel" /> }));
+vi.mock('../sidebar/BifurcationPanel', () => ({ BifurcationPanel: () => <div data-testid="bifurcation-panel" /> }));
 vi.mock('./InfoStrip', () => ({ InfoStrip: () => <div data-testid="info-strip" /> }));
 vi.mock('./ControlsBar', () => ({ ControlsBar: () => <div data-testid="controls-bar" /> }));
 
@@ -31,6 +32,10 @@ const baseProps = {
   customParams: [],
   setCustomParams: vi.fn(),
   paramErrors: [],
+  viewRange: { xMin: -2, xMax: 2, yMin: -1.5, yMax: 1.5 },
+  setViewRange: vi.fn(),
+  rangeLimit: 10,
+  resetViewRange: vi.fn(),
   manifoldState: {},
   setManifoldState: vi.fn(),
   ORBIT_COLORS: {},
@@ -46,6 +51,9 @@ const baseProps = {
   toggleRecording: vi.fn(),
   ulamState: {},
   setUlamState: vi.fn(),
+  bifurcationState: { data: [], isComputing: false, error: null, aMin: 0.1, aMax: 2.0, numSamples: 30, threshold: 0.2, intersectionCount: 0, criticalValues: [] },
+  setBifurcationState: vi.fn(),
+  wasmModule: null,
   bdeState: {},
   stepForwardManifold: vi.fn(),
   runToConvergenceManifold: vi.fn(),
