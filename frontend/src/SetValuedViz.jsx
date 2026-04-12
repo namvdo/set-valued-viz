@@ -196,7 +196,7 @@ const SetValuedViz = () => {
         isReady: false,
         showOrbits: true,
         showOrbitLines: false,
-        showUnstableManifold: true,
+        showUnstableManifold: false,
         showStableManifold: false,
         intersectionThreshold: 0.05,
         highlightedOrbitId: null,
@@ -755,6 +755,31 @@ const SetValuedViz = () => {
 
         manifoldDebounceRef.current = setTimeout(() => {
             if (!wasmModule) return;
+
+            const manifoldsEnabled = manifoldState.showUnstableManifold || manifoldState.showStableManifold;
+            
+            if (!manifoldsEnabled && (dynamicSystem === 'henon' || dynamicSystem === 'duffing' || dynamicSystem === 'custom')) {
+                const orbits = periodicState.orbits || [];
+                const fixedPoints = orbits
+                    .filter(o => o.period === 1)
+                    .map(o => ({
+                        x: o.points[0][0],
+                        y: o.points[0][1],
+                        stability: o.stability.toLowerCase(),
+                        eigenvalues: o.eigenvalues || [0, 0]
+                    }));
+
+                setManifoldState(prev => ({
+                    ...prev,
+                    manifolds: [],
+                    stableManifolds: [],
+                    fixedPoints: fixedPoints,
+                    intersections: [],
+                    isComputing: false,
+                    isReady: true
+                }));
+                return;
+            }
             if ((dynamicSystem === 'custom' || dynamicSystem === 'custom_ode') && !paramValidation.valid) {
                 setManifoldState(prev => ({
                     ...prev,
@@ -807,9 +832,9 @@ const SetValuedViz = () => {
 
                     setManifoldState(prev => ({
                         ...prev,
-                        manifolds: [], // Don't compute unstable manifold for continuous
+                        manifolds: [], 
                         stableManifolds: [],
-                        fixedPoints: [], // Skip fixed point computation to save performance completely
+                        fixedPoints: [], 
                         isComputing: false,
                         isReady: true
                     }));
