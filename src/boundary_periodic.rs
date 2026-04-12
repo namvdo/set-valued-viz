@@ -1,10 +1,10 @@
+use crate::dynamical_systems::{DynamicalSystem, ExtendedState, UserDefinedDynamicalSystem};
+use crate::parameters::parameter_set_from_js;
 use core::f64;
+use nalgebra::Vector2;
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 use wasm_bindgen::prelude::*;
-use crate::dynamical_systems::{DynamicalSystem, ExtendedState, UserDefinedDynamicalSystem};
-use crate::parameters::parameter_set_from_js;
-use nalgebra::Vector2;
 #[cfg(target_arch = "wasm32")]
 use web_sys::console;
 
@@ -671,7 +671,6 @@ pub fn find_boundary_periodic_point_davidchack_lai(
         // Davidchank-Lai stabilization
         let scaled_beta = beta_val * g_norm;
 
-
         let mut modified_jac = [[0.0; 4]; 4];
         for i in 0..4 {
             for j in 0..4 {
@@ -786,7 +785,7 @@ pub fn davidchack_lai_boundary_map(
                     let ny0 = theta.sin();
 
                     if let Some(fixed_point) = find_boundary_periodic_point_davidchack_lai(
-                        x0, y0, nx0, ny0, period, a, b, epsilon, None, 100, 1e-10,
+                        x0, y0, nx0, ny0, period, a, b, epsilon, None, 100, 1e-20,
                     ) {
                         if !fixed_point.is_bounded(100.0) {
                             continue;
@@ -1159,9 +1158,13 @@ impl BoundaryHenonSystemWasm {
     }
 }
 
-
-
-fn boundary_map_generic(system: &dyn DynamicalSystem, x: f64, y: f64, nx: f64, ny: f64) -> ExtendedPoint {
+fn boundary_map_generic(
+    system: &dyn DynamicalSystem,
+    x: f64,
+    y: f64,
+    nx: f64,
+    ny: f64,
+) -> ExtendedPoint {
     let state = ExtendedState {
         pos: Vector2::new(x, y),
         normal: Vector2::new(nx, ny),
@@ -1182,7 +1185,6 @@ fn boundary_map_generic(system: &dyn DynamicalSystem, x: f64, y: f64, nx: f64, n
     }
 }
 
-
 fn boundary_map_jacobian_generic(
     system: &dyn DynamicalSystem,
     x: f64,
@@ -1200,8 +1202,20 @@ fn boundary_map_jacobian_generic(
         vars_plus[j] += h;
         vars_minus[j] -= h;
 
-        let f_plus = boundary_map_generic(system, vars_plus[0], vars_plus[1], vars_plus[2], vars_plus[3]);
-        let f_minus = boundary_map_generic(system, vars_minus[0], vars_minus[1], vars_minus[2], vars_minus[3]);
+        let f_plus = boundary_map_generic(
+            system,
+            vars_plus[0],
+            vars_plus[1],
+            vars_plus[2],
+            vars_plus[3],
+        );
+        let f_minus = boundary_map_generic(
+            system,
+            vars_minus[0],
+            vars_minus[1],
+            vars_minus[2],
+            vars_minus[3],
+        );
 
         let f_plus_arr = [f_plus.x, f_plus.y, f_plus.nx, f_plus.ny];
         let f_minus_arr = [f_minus.x, f_minus.y, f_minus.nx, f_minus.ny];
@@ -1213,8 +1227,6 @@ fn boundary_map_jacobian_generic(
 
     Jacobian4x4 { data }
 }
-
-
 
 fn compose_boundary_map_n_times_generic(
     system: &dyn DynamicalSystem,
@@ -1236,14 +1248,14 @@ fn compose_boundary_map_n_times_generic(
             );
         }
 
-        let jac_current = boundary_map_jacobian_generic(system, current.x, current.y, current.nx, current.ny);
+        let jac_current =
+            boundary_map_jacobian_generic(system, current.x, current.y, current.nx, current.ny);
         accumulated_jacobian = jac_current.multiply(&accumulated_jacobian);
         current = boundary_map_generic(system, current.x, current.y, current.nx, current.ny);
     }
 
     (current, accumulated_jacobian)
 }
-
 
 fn find_boundary_periodic_point_davidchack_lai_generic(
     system: &dyn DynamicalSystem,
@@ -1264,8 +1276,12 @@ fn find_boundary_periodic_point_davidchack_lai_generic(
     let beta_val = beta.unwrap_or_else(|| 15.0 * 1.3_f64.powi(period as i32));
 
     for _ in 0..max_iter {
-        if !x.is_finite() || !y.is_finite() || !nx.is_finite() || !ny.is_finite()
-            || x.abs() > 100.0 || y.abs() > 100.0
+        if !x.is_finite()
+            || !y.is_finite()
+            || !nx.is_finite()
+            || !ny.is_finite()
+            || x.abs() > 100.0
+            || y.abs() > 100.0
         {
             return None;
         }
@@ -1304,10 +1320,22 @@ fn find_boundary_periodic_point_davidchack_lai_generic(
             None => return None,
         };
 
-        let dx = jac_inv.data[0][0] * gx + jac_inv.data[0][1] * gy + jac_inv.data[0][2] * gnx + jac_inv.data[0][3] * gny;
-        let dy = jac_inv.data[1][0] * gx + jac_inv.data[1][1] * gy + jac_inv.data[1][2] * gnx + jac_inv.data[1][3] * gny;
-        let dnx = jac_inv.data[2][0] * gx + jac_inv.data[2][1] * gy + jac_inv.data[2][2] * gnx + jac_inv.data[2][3] * gny;
-        let dny = jac_inv.data[3][0] * gx + jac_inv.data[3][1] * gy + jac_inv.data[3][2] * gnx + jac_inv.data[3][3] * gny;
+        let dx = jac_inv.data[0][0] * gx
+            + jac_inv.data[0][1] * gy
+            + jac_inv.data[0][2] * gnx
+            + jac_inv.data[0][3] * gny;
+        let dy = jac_inv.data[1][0] * gx
+            + jac_inv.data[1][1] * gy
+            + jac_inv.data[1][2] * gnx
+            + jac_inv.data[1][3] * gny;
+        let dnx = jac_inv.data[2][0] * gx
+            + jac_inv.data[2][1] * gy
+            + jac_inv.data[2][2] * gnx
+            + jac_inv.data[2][3] * gny;
+        let dny = jac_inv.data[3][0] * gx
+            + jac_inv.data[3][1] * gy
+            + jac_inv.data[3][2] * gnx
+            + jac_inv.data[3][3] * gny;
 
         if !dx.is_finite() || !dy.is_finite() || !dnx.is_finite() || !dny.is_finite() {
             return None;
@@ -1343,7 +1371,6 @@ fn find_boundary_periodic_point_davidchack_lai_generic(
     }
 }
 
-
 fn davidchack_lai_boundary_map_generic(
     system: &dyn DynamicalSystem,
     max_period: usize,
@@ -1364,9 +1391,13 @@ fn davidchack_lai_boundary_map_generic(
         for i in 0..grid_size {
             for j in 0..grid_size {
                 for k in 0..theta_grid_size {
-                    let x0 = x_range.0 + (x_range.1 - x_range.0) * (i as f64 + 0.5) / (grid_size as f64);
-                    let y0 = y_range.0 + (y_range.1 - y_range.0) * (j as f64 + 0.5) / (grid_size as f64);
-                    let theta = theta_range.0 + (theta_range.1 - theta_range.0) * (k as f64 + 0.5) / (theta_grid_size as f64);
+                    let x0 =
+                        x_range.0 + (x_range.1 - x_range.0) * (i as f64 + 0.5) / (grid_size as f64);
+                    let y0 =
+                        y_range.0 + (y_range.1 - y_range.0) * (j as f64 + 0.5) / (grid_size as f64);
+                    let theta = theta_range.0
+                        + (theta_range.1 - theta_range.0) * (k as f64 + 0.5)
+                            / (theta_grid_size as f64);
                     let nx0 = theta.cos();
                     let ny0 = theta.sin();
 
@@ -1381,17 +1412,26 @@ fn davidchack_lai_boundary_map_generic(
                             continue;
                         }
 
-                        let mut orbit_points = vec![BoundaryPoint { x: fixed_point.x, y: fixed_point.y }];
+                        let mut orbit_points = vec![BoundaryPoint {
+                            x: fixed_point.x,
+                            y: fixed_point.y,
+                        }];
                         let mut extended_orbit_points = vec![fixed_point];
                         let mut current = fixed_point;
 
                         for _ in 1..period {
-                            current = boundary_map_generic(system, current.x, current.y, current.nx, current.ny);
-                            orbit_points.push(BoundaryPoint { x: current.x, y: current.y });
+                            current = boundary_map_generic(
+                                system, current.x, current.y, current.nx, current.ny,
+                            );
+                            orbit_points.push(BoundaryPoint {
+                                x: current.x,
+                                y: current.y,
+                            });
                             extended_orbit_points.push(current);
                         }
 
-                        let (_, jac_fn) = compose_boundary_map_n_times_generic(system, fixed_point, period);
+                        let (_, jac_fn) =
+                            compose_boundary_map_n_times_generic(system, fixed_point, period);
                         let (stability, eigenvalues) = classify_stability_4d(&jac_fn);
 
                         database.add_orbit(PeriodicOrbit {
@@ -1406,7 +1446,10 @@ fn davidchack_lai_boundary_map_generic(
                 }
             }
         }
-        log_message(&format!("Found {} orbits of period: {}", found_count, period));
+        log_message(&format!(
+            "Found {} orbits of period: {}",
+            found_count, period
+        ));
     }
     database
 }
@@ -1431,16 +1474,14 @@ impl BoundaryUserDefinedSystemWasm {
     ) -> Result<BoundaryUserDefinedSystemWasm, JsValue> {
         console_error_panic_hook::set_once();
 
-        let param_set =
-            parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+        let param_set = parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
         let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set)
             .map_err(|e| JsValue::from_str(&format!("Error parsing equations: {}", e)))?;
 
         let grid_size = 10;
         let theta_grid_size = 10;
-        let orbit_database = davidchack_lai_boundary_map_generic(
-            &system, max_period, grid_size, theta_grid_size,
-        );
+        let orbit_database =
+            davidchack_lai_boundary_map_generic(&system, max_period, grid_size, theta_grid_size);
 
         log_message(&format!(
             "Total orbits found (user-defined boundary map): {}",
@@ -1502,8 +1543,7 @@ pub fn boundary_map_user_defined(
     use crate::dynamical_systems::{DynamicalSystem, ExtendedState, UserDefinedDynamicalSystem};
     use nalgebra::Vector2;
 
-    let param_set =
-        parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+    let param_set = parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
     let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set)
         .map_err(|e| JsValue::from_str(&format!("Error parsing equations: {}", e)))?;
 

@@ -132,6 +132,16 @@ const ORBIT_COLORS = {
     periodicBlue: '#3498db'
 };
 
+export const applyStartPointUpdate = (prev, newStart) => ({
+    ...prev,
+    startPoint: newStart,
+    currentPoint: newStart,
+    trajectoryPoints: [],
+    iteration: 0,
+    hasStarted: false,
+    isRunning: false
+});
+
 const SetValuedViz = () => {
     const canvasRef = useRef(null);
     const rendererRef = useRef(null);
@@ -687,11 +697,7 @@ const SetValuedViz = () => {
             if (target) {
                 setManifoldState(prev => {
                     const newStart = { ...prev.startPoint, x: target.x, y: target.y };
-                    return {
-                        ...prev,
-                        startPoint: newStart,
-                        currentPoint: prev.hasStarted ? prev.currentPoint : newStart
-                    };
+                    return applyStartPointUpdate(prev, newStart);
                 });
             }
         };
@@ -801,7 +807,7 @@ const SetValuedViz = () => {
                     debouncedEquations.xEq, debouncedEquations.yEq,
                     paramValidation.normalized,
                     params.epsilon,
-                    0.0, 0.0, 0.05, 1000
+                    manifoldState.startPoint.x, manifoldState.startPoint.y, 0.05, 1000
                 );
                 setBdeState(prev => ({ ...prev, points: bdeSimRef.current.get_points(), isRunning: false }));
                 if (bdeAnimRef.current) cancelAnimationFrame(bdeAnimRef.current);
@@ -825,7 +831,7 @@ const SetValuedViz = () => {
                     bdeSimRef.current = new wasmModule.BdeSimulatorWasm(
                         params.delta,
                         params.epsilon,
-                        0.0, 0.0, 0.05, 1000 // 1000 points circle around origin
+                        manifoldState.startPoint.x, manifoldState.startPoint.y, 0.05, 1000 // use specified start point
                     );
                     setBdeState(prev => ({ ...prev, points: bdeSimRef.current.get_points(), isRunning: false }));
                     if (bdeAnimRef.current) cancelAnimationFrame(bdeAnimRef.current);
@@ -977,7 +983,7 @@ const SetValuedViz = () => {
                 clearTimeout(manifoldDebounceRef.current);
             }
         };
-    }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.intersectionThreshold, debouncedEquations, paramValidation]);
+    }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.intersectionThreshold, debouncedEquations, paramValidation, manifoldState.startPoint.x, manifoldState.startPoint.y]);
 
     useEffect(() => {
         if (!animationState.isAnimating) {
@@ -1997,11 +2003,7 @@ const SetValuedViz = () => {
     const updateStartPoint = (key, value) => {
         setManifoldState(prev => {
             const newStart = { ...prev.startPoint, [key]: value };
-            return {
-                ...prev,
-                startPoint: newStart,
-                currentPoint: prev.hasStarted ? prev.currentPoint : newStart
-            };
+            return applyStartPointUpdate(prev, newStart);
         });
         if (typeof window.update_start_point === 'function') {
             window.update_start_point(
