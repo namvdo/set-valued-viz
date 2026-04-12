@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
 use wasm_bindgen::prelude::*;
 use crate::dynamical_systems::{DynamicalSystem, ExtendedState, UserDefinedDynamicalSystem};
+use crate::parameters::parameter_set_from_js;
 use nalgebra::Vector2;
 #[cfg(target_arch = "wasm32")]
 use web_sys::console;
@@ -1424,14 +1425,15 @@ impl BoundaryUserDefinedSystemWasm {
     pub fn new(
         x_eq: &str,
         y_eq: &str,
-        a: f64,
-        b: f64,
+        params: JsValue,
         epsilon: f64,
         max_period: usize,
     ) -> Result<BoundaryUserDefinedSystemWasm, JsValue> {
         console_error_panic_hook::set_once();
 
-        let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, a, b)
+        let param_set =
+            parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+        let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set)
             .map_err(|e| JsValue::from_str(&format!("Error parsing equations: {}", e)))?;
 
         let grid_size = 10;
@@ -1494,14 +1496,15 @@ pub fn boundary_map_user_defined(
     ny: f64,
     x_eq: &str,
     y_eq: &str,
+    params: JsValue,
     epsilon: f64,
-    a: f64,
-    b: f64,
 ) -> Result<JsValue, JsValue> {
     use crate::dynamical_systems::{DynamicalSystem, ExtendedState, UserDefinedDynamicalSystem};
     use nalgebra::Vector2;
 
-    let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, a, b)
+    let param_set =
+        parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+    let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set)
         .map_err(|e| JsValue::from_str(&format!("Error parsing equations: {}", e)))?;
 
     let pos = Vector2::new(x, y);

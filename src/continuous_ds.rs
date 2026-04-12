@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use crate::dynamical_systems::{DynamicalSystem, ExtendedState};
+use crate::parameters::{parameter_set_from_js, ParameterSet};
+use crate::user_defined::ParsedEquations;
 use crate::unstable_manifold::{
     ManifoldConfig, SaddlePoint, SaddleType, StopReason, Trajectory, UnstableManifoldComputer,
 };
@@ -84,6 +86,75 @@ impl DuffingODE {
     }
 }
 
+pub trait OdeSystem {
+    fn vector_field(&self, pos: Vector2<f64>) -> Result<Vector2<f64>, String>;
+    fn jacobian(&self, pos: Vector2<f64>) -> Matrix2<f64>;
+
+    fn rk4_step(&self, pos: Vector2<f64>, h: f64) -> Result<Vector2<f64>, String> {
+        let k1 = self.vector_field(pos)?;
+        let k2 = self.vector_field(pos + k1 * (h / 2.0))?;
+        let k3 = self.vector_field(pos + k2 * (h / 2.0))?;
+        let k4 = self.vector_field(pos + k3 * h)?;
+        let next_pos = pos + (k1 + 2.0 * k2 + 2.0 * k3 + k4) * (h / 6.0);
+        if !next_pos.x.is_finite() || !next_pos.y.is_finite() {
+            return Err("RK4 step produced non-finite values".to_string());
+        }
+        Ok(next_pos)
+    }
+}
+
+impl OdeSystem for DuffingODE {
+    fn vector_field(&self, pos: Vector2<f64>) -> Result<Vector2<f64>, String> {
+        DuffingODE::vector_field(self, pos)
+    }
+
+    fn jacobian(&self, pos: Vector2<f64>) -> Matrix2<f64> {
+        DuffingODE::jacobian(self, pos)
+    }
+
+    fn rk4_step(&self, pos: Vector2<f64>, h: f64) -> Result<Vector2<f64>, String> {
+        DuffingODE::rk4_step(self, pos, h)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct UserDefinedOdeSystem {
+    equations: ParsedEquations,
+}
+
+impl UserDefinedOdeSystem {
+    pub fn new(x_str: &str, y_str: &str, params: ParameterSet) -> Result<Self, String> {
+        let equations = ParsedEquations::new(x_str, y_str, params)?;
+        Ok(Self { equations })
+    }
+}
+
+impl OdeSystem for UserDefinedOdeSystem {
+    fn vector_field(&self, pos: Vector2<f64>) -> Result<Vector2<f64>, String> {
+        let (dx, dy) = self.equations.eval(pos.x, pos.y)?;
+        Ok(Vector2::new(dx, dy))
+    }
+
+    fn jacobian(&self, pos: Vector2<f64>) -> Matrix2<f64> {
+        let h = 1e-5;
+        let eval = |x: f64, y: f64| -> (f64, f64) {
+            self.equations.eval(x, y).unwrap_or((0.0, 0.0))
+        };
+
+        let (fx1, fy1) = eval(pos.x + h, pos.y);
+        let (fx2, fy2) = eval(pos.x - h, pos.y);
+        let (fx3, fy3) = eval(pos.x, pos.y + h);
+        let (fx4, fy4) = eval(pos.x, pos.y - h);
+
+        let dfx_dx = (fx1 - fx2) / (2.0 * h);
+        let dfx_dy = (fx3 - fx4) / (2.0 * h);
+        let dfy_dx = (fy1 - fy2) / (2.0 * h);
+        let dfy_dy = (fy3 - fy4) / (2.0 * h);
+
+        Matrix2::new(dfx_dx, dfx_dy, dfy_dx, dfy_dy)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct EulerMap {
     pub ode: DuffingODE,
@@ -156,8 +227,8 @@ impl DynamicalSystem for EulerMap {
     }
 }
 
-pub fn bde_rhs(
-    ode: &DuffingODE,
+pub fn bde_rhs<S: OdeSystem>(
+    ode: &S,
     eps: f64,
     x: Vector2<f64>,
     nhat: Vector2<f64>,
@@ -184,8 +255,8 @@ pub fn bde_rhs(
 }
 
 // Approximate the next point using RK4 method
-pub fn rk4_bde_step(
-    ode: &DuffingODE,
+pub fn rk4_bde_step<S: OdeSystem>(
+    ode: &S,
     eps: f64,
     h: f64,
     x: Vector2<f64>,
@@ -332,26 +403,14 @@ impl EulerMapSystemWasm {
 use crate::boundary_periodic::ExtendedPoint;
 use core::f64;
 
-#[wasm_bindgen]
-pub struct BdeSimulatorWasm {
-    ode: DuffingODE,
+struct BdeSimulator<S: OdeSystem> {
+    ode: S,
     epsilon: f64,
     points: Vec<ExtendedPoint>,
 }
 
-#[wasm_bindgen]
-impl BdeSimulatorWasm {
-    #[wasm_bindgen(constructor)]
-    pub fn new(
-        delta: f64,
-        epsilon: f64,
-        cx: f64,
-        cy: f64,
-        r: f64,
-        num_points: usize,
-    ) -> Result<BdeSimulatorWasm, JsValue> {
-        let ode = DuffingODE::new(delta).map_err(|e| JsValue::from_str(&e))?;
-
+impl<S: OdeSystem> BdeSimulator<S> {
+    fn new(ode: S, epsilon: f64, cx: f64, cy: f64, r: f64, num_points: usize) -> Self {
         let mut points = Vec::with_capacity(num_points);
         for i in 0..num_points {
             let theta = 2.0 * f64::consts::PI * (i as f64) / (num_points as f64);
@@ -362,14 +421,14 @@ impl BdeSimulatorWasm {
             points.push(ExtendedPoint::new(x, y, nx, ny));
         }
 
-        Ok(BdeSimulatorWasm {
+        Self {
             ode,
             epsilon,
             points,
-        })
+        }
     }
 
-    pub fn step(&mut self, h: f64) -> JsValue {
+    fn step(&mut self, h: f64) {
         let mut next_points = Vec::with_capacity(self.points.len());
         for p in &self.points {
             let x_vec = Vector2::new(p.x, p.y);
@@ -384,15 +443,13 @@ impl BdeSimulatorWasm {
             }
         }
         self.points = next_points;
-        serde_wasm_bindgen::to_value(&self.points).unwrap()
     }
 
-    pub fn get_points(&self) -> JsValue {
-        serde_wasm_bindgen::to_value(&self.points).unwrap()
+    fn get_points(&self) -> &Vec<ExtendedPoint> {
+        &self.points
     }
 
-    /// arc-length reparameterize: redistribute points evenly along the curve.
-    pub fn reparameterize(&mut self) {
+    fn reparameterize(&mut self) {
         let n = self.points.len();
         if n < 3 {
             return;
@@ -437,7 +494,7 @@ impl BdeSimulatorWasm {
         self.points = new_pts;
     }
 
-    pub fn has_self_intersection(&self, gap: usize) -> u8 {
+    fn has_self_intersection(&self, gap: usize) -> u8 {
         let n = self.points.len();
         if n < 4 {
             return 0;
@@ -470,7 +527,7 @@ impl BdeSimulatorWasm {
         0
     }
 
-    pub fn get_fold_indices(&self, speed_threshold: f64) -> JsValue {
+    fn get_fold_indices(&self, speed_threshold: f64) -> Vec<usize> {
         let mut indices: Vec<usize> = Vec::new();
         for (i, p) in self.points.iter().enumerate() {
             let x = Vector2::new(p.x, p.y);
@@ -482,6 +539,103 @@ impl BdeSimulatorWasm {
                 }
             }
         }
+        indices
+    }
+}
+
+#[wasm_bindgen]
+pub struct BdeSimulatorWasm {
+    sim: BdeSimulator<DuffingODE>,
+}
+
+#[wasm_bindgen]
+impl BdeSimulatorWasm {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        delta: f64,
+        epsilon: f64,
+        cx: f64,
+        cy: f64,
+        r: f64,
+        num_points: usize,
+    ) -> Result<BdeSimulatorWasm, JsValue> {
+        let ode = DuffingODE::new(delta).map_err(|e| JsValue::from_str(&e))?;
+        Ok(BdeSimulatorWasm {
+            sim: BdeSimulator::new(ode, epsilon, cx, cy, r, num_points),
+        })
+    }
+
+    pub fn step(&mut self, h: f64) -> JsValue {
+        self.sim.step(h);
+        serde_wasm_bindgen::to_value(self.sim.get_points()).unwrap()
+    }
+
+    pub fn get_points(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(self.sim.get_points()).unwrap()
+    }
+
+    /// arc-length reparameterize: redistribute points evenly along the curve.
+    pub fn reparameterize(&mut self) {
+        self.sim.reparameterize();
+    }
+
+    pub fn has_self_intersection(&self, gap: usize) -> u8 {
+        self.sim.has_self_intersection(gap)
+    }
+
+    pub fn get_fold_indices(&self, speed_threshold: f64) -> JsValue {
+        let indices = self.sim.get_fold_indices(speed_threshold);
+        serde_wasm_bindgen::to_value(&indices).unwrap_or(JsValue::NULL)
+    }
+}
+
+#[wasm_bindgen]
+pub struct BdeSimulatorUserDefinedWasm {
+    sim: BdeSimulator<UserDefinedOdeSystem>,
+}
+
+#[wasm_bindgen]
+impl BdeSimulatorUserDefinedWasm {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        x_eq: &str,
+        y_eq: &str,
+        params: JsValue,
+        epsilon: f64,
+        cx: f64,
+        cy: f64,
+        r: f64,
+        num_points: usize,
+    ) -> Result<BdeSimulatorUserDefinedWasm, JsValue> {
+        let param_set =
+            parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+        let ode = UserDefinedOdeSystem::new(x_eq, y_eq, param_set)
+            .map_err(|e| JsValue::from_str(&e))?;
+
+        Ok(BdeSimulatorUserDefinedWasm {
+            sim: BdeSimulator::new(ode, epsilon, cx, cy, r, num_points),
+        })
+    }
+
+    pub fn step(&mut self, h: f64) -> JsValue {
+        self.sim.step(h);
+        serde_wasm_bindgen::to_value(self.sim.get_points()).unwrap()
+    }
+
+    pub fn get_points(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(self.sim.get_points()).unwrap()
+    }
+
+    pub fn reparameterize(&mut self) {
+        self.sim.reparameterize();
+    }
+
+    pub fn has_self_intersection(&self, gap: usize) -> u8 {
+        self.sim.has_self_intersection(gap)
+    }
+
+    pub fn get_fold_indices(&self, speed_threshold: f64) -> JsValue {
+        let indices = self.sim.get_fold_indices(speed_threshold);
         serde_wasm_bindgen::to_value(&indices).unwrap_or(JsValue::NULL)
     }
 }
@@ -489,6 +643,7 @@ impl BdeSimulatorWasm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parameters::ParameterEntry;
     use nalgebra::{Matrix2, Vector2};
 
     #[test]
@@ -500,6 +655,115 @@ mod tests {
         let val = ode.vector_field(pos).unwrap();
         assert!((val.x - 2.0).abs() < 1e-10);
         assert!((val.y - -1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_user_defined_ode_vector_field() {
+        let params = ParameterSet::new(vec![
+            ParameterEntry {
+                name: "a".to_string(),
+                value: 2.0,
+            },
+            ParameterEntry {
+                name: "b".to_string(),
+                value: -1.5,
+            },
+        ])
+        .unwrap();
+        let ode = UserDefinedOdeSystem::new("a * x + y", "b * y", params).unwrap();
+
+        let pos = Vector2::new(0.5, -2.0);
+        let val = ode.vector_field(pos).unwrap();
+
+        assert!((val.x - (2.0 * 0.5 - 2.0)).abs() < 1e-12);
+        assert!((val.y - (-1.5 * -2.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_user_defined_ode_jacobian() {
+        let params = ParameterSet::new(vec![
+            ParameterEntry {
+                name: "a".to_string(),
+                value: 1.2,
+            },
+            ParameterEntry {
+                name: "b".to_string(),
+                value: -0.4,
+            },
+            ParameterEntry {
+                name: "c".to_string(),
+                value: 0.7,
+            },
+        ])
+        .unwrap();
+        let ode = UserDefinedOdeSystem::new("a * x + b * y", "c * x - y", params).unwrap();
+
+        let pos = Vector2::new(1.0, -0.5);
+        let jac = ode.jacobian(pos);
+
+        assert!((jac.m11 - 1.2).abs() < 1e-6);
+        assert!((jac.m12 - -0.4).abs() < 1e-6);
+        assert!((jac.m21 - 0.7).abs() < 1e-6);
+        assert!((jac.m22 - -1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_user_defined_ode_rk4_constant_field() {
+        let params = ParameterSet::new(vec![
+            ParameterEntry {
+                name: "a".to_string(),
+                value: 0.3,
+            },
+            ParameterEntry {
+                name: "b".to_string(),
+                value: -0.2,
+            },
+        ])
+        .unwrap();
+        let ode = UserDefinedOdeSystem::new("a", "b", params).unwrap();
+
+        let pos = Vector2::new(-1.0, 2.0);
+        let h = 0.5;
+        let next = ode.rk4_step(pos, h).unwrap();
+
+        assert!((next.x - (-1.0 + 0.3 * 0.5)).abs() < 1e-12);
+        assert!((next.y - (2.0 - 0.2 * 0.5)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_user_defined_ode_many_parameters() {
+        let params = ParameterSet::new(vec![
+            ParameterEntry {
+                name: "a".to_string(),
+                value: 1.1,
+            },
+            ParameterEntry {
+                name: "b".to_string(),
+                value: -0.3,
+            },
+            ParameterEntry {
+                name: "c".to_string(),
+                value: 0.7,
+            },
+            ParameterEntry {
+                name: "d".to_string(),
+                value: 2.0,
+            },
+            ParameterEntry {
+                name: "e".to_string(),
+                value: -1.5,
+            },
+        ])
+        .unwrap();
+
+        let ode =
+            UserDefinedOdeSystem::new("a * x + b * y + c", "d * x + e * y", params).unwrap();
+
+        let pos = Vector2::new(2.0, -1.0);
+        let val = ode.vector_field(pos).unwrap();
+
+        assert!((val.x - (1.1 * 2.0 + -0.3 * -1.0 + 0.7)).abs() < 1e-12);
+        assert!((val.y - (2.0 * 2.0 + -1.5 * -1.0)).abs() < 1e-12);
     }
 
     #[test]
@@ -630,6 +894,30 @@ mod tests {
     }
 
     #[test]
+    fn test_rk4_bde_step_user_defined_matches_ode_when_epsilon_zero() {
+        let params = ParameterSet::new(vec![
+            ParameterEntry {
+                name: "a".to_string(),
+                value: 1.0,
+            },
+            ParameterEntry {
+                name: "b".to_string(),
+                value: -0.5,
+            },
+        ])
+        .unwrap();
+        let ode = UserDefinedOdeSystem::new("a * x", "b * y", params).unwrap();
+        let x = Vector2::new(0.4, -0.7);
+        let n = Vector2::new(0.3, 0.9539392014169457);
+        let h = 0.05;
+
+        let (xp, _np) = rk4_bde_step(&ode, 0.0, h, x, n).unwrap();
+        let x_ode = ode.rk4_step(x, h).unwrap();
+
+        assert!((xp - x_ode).norm() < 1e-12);
+    }
+
+    #[test]
     fn test_rk4_bde_step_normal_is_unit() {
         let delta = 0.15;
         let ode = DuffingODE::new(delta).unwrap();
@@ -663,4 +951,66 @@ pub fn boundary_map_duffing_ode(
         }
         Err(_) => JsValue::NULL,
     }
+}
+
+#[derive(Serialize)]
+struct PointResult {
+    x: f64,
+    y: f64,
+}
+
+#[wasm_bindgen]
+pub fn evaluate_user_defined_ode(
+    x: f64,
+    y: f64,
+    x_eq: &str,
+    y_eq: &str,
+    params: JsValue,
+) -> Result<JsValue, JsValue> {
+    let param_set =
+        parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+    let ode = UserDefinedOdeSystem::new(x_eq, y_eq, param_set)
+        .map_err(|e| JsValue::from_str(&format!("Error parsing equations: {}", e)))?;
+
+    let pos = Vector2::new(x, y);
+    let vel = ode
+        .vector_field(pos)
+        .map_err(|e| JsValue::from_str(&format!("Error evaluating vector field: {}", e)))?;
+
+    let result = PointResult { x: vel.x, y: vel.y };
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    result.serialize(&serializer).map_err(|e| {
+        console_error!("Serialization error: {:?}", e);
+        JsValue::from_str("Failed to serialize result")
+    })
+}
+
+#[wasm_bindgen]
+pub fn boundary_map_user_defined_ode(
+    x: f64,
+    y: f64,
+    nx: f64,
+    ny: f64,
+    x_eq: &str,
+    y_eq: &str,
+    params: JsValue,
+    h: f64,
+    epsilon: f64,
+) -> Result<JsValue, JsValue> {
+    let param_set =
+        parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+    let ode = UserDefinedOdeSystem::new(x_eq, y_eq, param_set)
+        .map_err(|e| JsValue::from_str(&format!("Error parsing equations: {}", e)))?;
+
+    let pos = Vector2::new(x, y);
+    let normal = Vector2::new(nx, ny);
+    let (next_x, next_n) = rk4_bde_step(&ode, epsilon, h, pos, normal)
+        .map_err(|e| JsValue::from_str(&format!("Error evaluating BDE: {}", e)))?;
+
+    let p = ExtendedPoint::new(next_x.x, next_x.y, next_n.x, next_n.y);
+    let serializer = serde_wasm_bindgen::Serializer::new().serialize_maps_as_objects(true);
+    p.serialize(&serializer).map_err(|e| {
+        console_error!("Serialization error: {:?}", e);
+        JsValue::from_str("Failed to serialize result")
+    })
 }

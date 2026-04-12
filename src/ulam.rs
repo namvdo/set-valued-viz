@@ -452,6 +452,7 @@ impl UlamComputer {
 }
 
 use crate::dynamical_systems::{DynamicalSystem, UserDefinedDynamicalSystem};
+use crate::parameters::parameter_set_from_js;
 
 #[wasm_bindgen]
 pub struct UlamComputerUserDefined {
@@ -468,13 +469,13 @@ impl UlamComputerUserDefined {
     pub fn new(
         x_eq: &str,
         y_eq: &str,
-        a: f64,
-        b: f64,
+        params: JsValue,
         subdivisions: usize,
         points_per_box: usize,
         epsilon: f64,
     ) -> Result<UlamComputerUserDefined, String> {
-        let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, 0.001, a, b)?;
+        let param_set = parameter_set_from_js(params).map_err(|e| e.to_string())?;
+        let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, 0.001, param_set)?;
 
         let min = Vector2::new(-2.0, -1.5);
         let max = Vector2::new(2.0, 1.5);
@@ -615,7 +616,7 @@ impl UlamComputerUserDefined {
     }
 }
 
-use crate::continuous_ds::DuffingODE;
+use crate::continuous_ds::{DuffingODE, OdeSystem, UserDefinedOdeSystem};
 
 #[wasm_bindgen]
 pub struct UlamComputerContinuous {
@@ -742,6 +743,195 @@ impl UlamComputerContinuous {
         );
 
         Ok(UlamComputerContinuous {
+            grid,
+            transitions,
+            right_eigenvector,
+            left_eigenvector,
+            epsilon,
+        })
+    }
+
+    pub fn get_grid_boxes(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.grid.boxes).unwrap()
+    }
+
+    pub fn get_transitions(&self, from_box_idx: usize) -> JsValue {
+        #[derive(Serialize)]
+        struct Transition {
+            index: usize,
+            probability: f64,
+        }
+
+        if let Some(probs) = self.transitions.get(&from_box_idx) {
+            let result: Vec<Transition> = probs
+                .iter()
+                .map(|(idx, p)| Transition {
+                    index: *idx,
+                    probability: *p,
+                })
+                .collect();
+            serde_wasm_bindgen::to_value(&result).unwrap()
+        } else {
+            JsValue::NULL
+        }
+    }
+
+    pub fn get_invariant_measure(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.right_eigenvector).unwrap()
+    }
+
+    pub fn get_left_eigenvector(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.left_eigenvector).unwrap()
+    }
+
+    pub fn get_epsilon(&self) -> f64 {
+        self.epsilon
+    }
+
+    pub fn get_grid_step(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&(self.grid.step.x, self.grid.step.y)).unwrap()
+    }
+
+    pub fn get_dimensions(&self) -> JsValue {
+        serde_wasm_bindgen::to_value(&self.grid.dims).unwrap()
+    }
+
+    pub fn get_box_index(&self, x: f64, y: f64) -> isize {
+        match self.grid.search(&Vector2::new(x, y)) {
+            Some(idx) => idx as isize,
+            None => -1,
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub struct UlamComputerContinuousUserDefined {
+    grid: Grid,
+    transitions: HashMap<usize, Vec<(usize, f64)>>,
+    right_eigenvector: Vec<f64>,
+    left_eigenvector: Vec<f64>,
+    epsilon: f64,
+}
+
+#[wasm_bindgen]
+impl UlamComputerContinuousUserDefined {
+    /// Build the Ulam matrix for a user-defined ODE using the time-T flow map.
+    ///
+    /// Arguments
+    /// * `x_eq`, `y_eq` – vector field components ẋ, ẏ
+    /// * `params`      – parameter list (name/value)
+    /// * `capital_t`   – integration time T per discrete step
+    /// * `subdivisions` – grid cells per axis
+    /// * `points_per_box` – sample density
+    /// * `epsilon`     – epsilon ball inflation for set-valued images
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        x_eq: &str,
+        y_eq: &str,
+        params: JsValue,
+        capital_t: f64,
+        subdivisions: usize,
+        points_per_box: usize,
+        epsilon: f64,
+    ) -> Result<UlamComputerContinuousUserDefined, String> {
+        if !capital_t.is_finite() || capital_t <= 0.0 {
+            return Err("integration time T must be finite and positive".to_string());
+        }
+
+        let param_set = parameter_set_from_js(params).map_err(|e| e.to_string())?;
+        let ode = UserDefinedOdeSystem::new(x_eq, y_eq, param_set)?;
+
+        let min = Vector2::new(-2.0, -1.5);
+        let max = Vector2::new(2.0, 1.5);
+        let grid = Grid::new(min, max, subdivisions);
+        let n_boxes = grid.boxes.len();
+        let samples_per_dim = (points_per_box as f64).sqrt().ceil() as usize;
+
+        // choose sub-step h <= 0.01 so RK4 is accurate over [0, T]
+        let n_substeps = ((capital_t / 0.01).ceil() as usize).max(1);
+        let h = capital_t / (n_substeps as f64);
+
+        console_log!(
+            "UlamContinuousUserDefined: {} boxes, {}×{} samples, T={:.4}, h={:.5}, ε={:.4}",
+            n_boxes,
+            samples_per_dim,
+            samples_per_dim,
+            capital_t,
+            h,
+            epsilon
+        );
+
+        let mut transitions: HashMap<usize, Vec<(usize, f64)>> = HashMap::new();
+
+        for i in 0..n_boxes {
+            let rect = &grid.boxes[i];
+            let center = Vector2::new(rect.center.0, rect.center.1);
+            let radius = Vector2::new(rect.radius.0, rect.radius.1);
+            let mut counts: HashMap<usize, usize> = HashMap::new();
+            let mut total_valid = 0usize;
+
+            for sy in 0..samples_per_dim {
+                for sx in 0..samples_per_dim {
+                    let tx = if samples_per_dim > 1 {
+                        -1.0 + 2.0 * (sx as f64) / ((samples_per_dim - 1) as f64)
+                    } else {
+                        0.0
+                    };
+                    let ty = if samples_per_dim > 1 {
+                        -1.0 + 2.0 * (sy as f64) / ((samples_per_dim - 1) as f64)
+                    } else {
+                        0.0
+                    };
+
+                    let mut pt = Vector2::new(center.x + tx * radius.x, center.y + ty * radius.y);
+
+                    let mut ok = true;
+                    for _ in 0..n_substeps {
+                        match ode.rk4_step(pt, h) {
+                            Ok(next) => {
+                                pt = next;
+                            }
+                            Err(_) => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if ok && pt.x.is_finite() && pt.y.is_finite() {
+                        let intersecting = grid.find_intersecting_boxes(&pt, epsilon);
+                        if !intersecting.is_empty() {
+                            total_valid += 1;
+                            for t in intersecting {
+                                *counts.entry(t).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if total_valid > 0 {
+                let total = counts.values().sum::<usize>() as f64;
+                transitions.insert(
+                    i,
+                    counts
+                        .into_iter()
+                        .map(|(t, c)| (t, c as f64 / total))
+                        .collect(),
+                );
+            }
+        }
+
+        let right_eigenvector = UlamComputer::compute_right_eigenvector(&transitions, n_boxes, 100);
+        let left_eigenvector = UlamComputer::compute_left_eigenvector(&transitions, n_boxes, 100);
+
+        console_log!(
+            "UlamContinuousUserDefined done. Right EV sum: {:.6}, Left EV sum: {:.6}",
+            right_eigenvector.iter().sum::<f64>(),
+            left_eigenvector.iter().sum::<f64>()
+        );
+
+        Ok(UlamComputerContinuousUserDefined {
             grid,
             transitions,
             right_eigenvector,

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
+use crate::parameters::parameter_set_from_js;
 
 static MANIFOLD_CACHE: std::sync::OnceLock<Mutex<HashMap<(i32, i32), CachedManifoldResult>>> =
     std::sync::OnceLock::new();
@@ -1248,8 +1249,7 @@ pub fn compute_manifold_js(
 pub fn compute_user_defined_manifold(
     x_eq: &str,
     y_eq: &str,
-    a: f64,
-    b: f64,
+    params: JsValue,
     epsilon: f64,
 ) -> Result<JsValue, JsValue> {
     console_log!(
@@ -1259,7 +1259,9 @@ pub fn compute_user_defined_manifold(
         epsilon
     );
 
-    let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, a, b) {
+    let param_set =
+        parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+    let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set) {
         Ok(s) => s,
         Err(e) => return Err(JsValue::from_str(&format!("Failed to parse system: {}", e))),
     };
@@ -1866,11 +1868,12 @@ pub fn evaluate_user_defined_map(
     y: f64,
     x_eq: &str,
     y_eq: &str,
-    a: f64,
-    b: f64,
+    params: JsValue,
     epsilon: f64,
 ) -> Result<JsValue, JsValue> {
-    let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, a, b)
+    let param_set =
+        parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+    let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set)
         .map_err(|e| JsValue::from_str(&format!("Error parsing equations: {}", e)))?;
 
     let pos = Vector2::new(x, y);
@@ -2381,8 +2384,7 @@ fn eigen_analysis_2x2(jac_accum: &Matrix2<f64>) -> (f64, f64, f64, Vector2<f64>)
 pub fn compute_manifold_from_orbits_user_defined(
     x_eq: &str,
     y_eq: &str,
-    a: f64,
-    b: f64,
+    params: JsValue,
     epsilon: f64,
     orbits_js: JsValue,
 ) -> Result<JsValue, JsValue> {
@@ -2391,7 +2393,9 @@ pub fn compute_manifold_from_orbits_user_defined(
         x_eq, y_eq, epsilon
     );
 
-    let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, a, b) {
+    let param_set =
+        parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+    let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set) {
         Ok(s) => s,
         Err(e) => return Err(JsValue::from_str(&format!("Failed to parse system: {}", e))),
     };
@@ -2527,8 +2531,7 @@ pub fn compute_manifold_from_orbits_user_defined(
 pub fn compute_stable_and_unstable_manifolds_user_defined(
     x_eq: &str,
     y_eq: &str,
-    a: f64,
-    b: f64,
+    params: JsValue,
     epsilon: f64,
     orbits_js: JsValue,
     intersection_threshold: f64,
@@ -2538,7 +2541,9 @@ pub fn compute_stable_and_unstable_manifolds_user_defined(
         x_eq, y_eq, epsilon
     );
 
-    let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, a, b) {
+    let param_set =
+        parameter_set_from_js(params).map_err(|e| JsValue::from_str(&e))?;
+    let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set) {
         Ok(s) => s,
         Err(e) => return Err(JsValue::from_str(&format!("Failed to parse system: {}", e))),
     };

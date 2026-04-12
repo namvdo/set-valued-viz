@@ -1,32 +1,34 @@
 import React from 'react';
 
 export const EquationDisplay = ({ systemId, customEquations, setCustomEquations, equationError, disabled }) => {
-  if (systemId === 'custom') {
+  if (systemId === 'custom' || systemId === 'custom_ode') {
+    const isContinuous = systemId === 'custom_ode';
+    const equations = customEquations[systemId] || { xEq: '', yEq: '' };
     return (
       <div className="eq-display">
         <div className="eq-display-label">Equation</div>
         <div className="eq-lines">
           <div className="eq-custom-inputs">
             <div className="eq-custom-row">
-              <span className="eq-custom-label">x′ =</span>
+              <span className="eq-custom-label">{isContinuous ? 'ẋ =' : 'x′ ='}</span>
               <input
                 className="eq-custom-input"
-                value={customEquations.xEq}
-                onChange={(e) => setCustomEquations(prev => ({ ...prev, xEq: e.target.value }))}
+                value={equations.xEq}
+                onChange={(e) => setCustomEquations(prev => ({ ...prev, [systemId]: { ...prev[systemId], xEq: e.target.value } }))}
                 disabled={disabled}
               />
             </div>
             <div className="eq-custom-row">
-              <span className="eq-custom-label">y′ =</span>
+              <span className="eq-custom-label">{isContinuous ? 'ẏ =' : 'y′ ='}</span>
               <input
                 className="eq-custom-input"
-                value={customEquations.yEq}
-                onChange={(e) => setCustomEquations(prev => ({ ...prev, yEq: e.target.value }))}
+                value={equations.yEq}
+                onChange={(e) => setCustomEquations(prev => ({ ...prev, [systemId]: { ...prev[systemId], yEq: e.target.value } }))}
                 disabled={disabled}
               />
             </div>
           </div>
-          <div className="eq-hint">Variables: x, y, a, b. Functions: sin, cos, exp, sqrt, abs. Power: ^.</div>
+          <div className="eq-hint">Variables: x, y. Parameters: use names from the list below. Functions: sin, cos, exp, sqrt, abs, tan, ln. Power: ^.</div>
           {equationError && (
             <div style={{ fontSize: '11px', color: '#e74c3c', marginTop: '4px', padding: '4px 6px', backgroundColor: '#2a1a1a', borderRadius: '3px' }}>
               {equationError}

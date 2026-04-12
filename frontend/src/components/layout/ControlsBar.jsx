@@ -8,7 +8,7 @@ export const ControlsBar = ({ dynamicSystem, manifoldState, bdeState, stepForwar
           <button 
             className="ctrl-btn primary" 
             onClick={runToConvergenceManifold} 
-            disabled={!manifoldState.isReady || bdeState.isRunning}
+            disabled={bdeState.isRunning}
           >
             {manifoldState.isRunning ? '⏹ Stop' : '▶ Play'}
           </button>
@@ -19,7 +19,7 @@ export const ControlsBar = ({ dynamicSystem, manifoldState, bdeState, stepForwar
             <button 
               className="ctrl-btn primary" 
               onClick={runToConvergenceManifold} 
-              disabled={!manifoldState.isReady || manifoldState.isRunning || bdeState.isRunning}
+              disabled={bdeState.isRunning}
             >
               {manifoldState.isRunning ? '⏹ Stop' : '▶ Play trajectory'}
             </button>

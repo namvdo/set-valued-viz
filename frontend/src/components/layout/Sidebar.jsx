@@ -45,6 +45,9 @@ export const Sidebar = (props) => {
           disabled={props.manifoldState.isRunning}
           systems={props.SYSTEMS}
           applyPreset={props.applyPreset}
+          customParams={props.customParams}
+          setCustomParams={props.setCustomParams}
+          paramErrors={props.paramErrors}
         />
 
         {props.type === 'discrete' && (
@@ -72,7 +75,7 @@ export const Sidebar = (props) => {
           />
         )}
 
-        {props.type === 'discrete' && (
+        {props.type === 'discrete' && props.dynamicSystem !== 'custom' && (
           <AnimationPanel
             animationState={props.animationState}
             setAnimationState={props.setAnimationState}

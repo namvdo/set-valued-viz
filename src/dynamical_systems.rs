@@ -1,6 +1,7 @@
-use evalexpr::*;
 use nalgebra::{Matrix2, Vector2};
-use std::cell::RefCell;
+
+use crate::parameters::ParameterSet;
+use crate::user_defined::ParsedEquations;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExtendedState {
@@ -133,132 +134,25 @@ pub trait DynamicalSystem: Send + Sync {
 
 #[derive(Clone)]
 pub struct UserDefinedDynamicalSystem {
-    x_node: Node,
-    y_node: Node,
     epsilon: f64,
-    a: f64,
-    b: f64,
-}
-
-/// preprocess equation string: convert `|expr|` notation to `abs(expr)`.
-/// handles nested absolute values by processing innermost pairs first.
-fn preprocess_abs(input: &str) -> String {
-    let mut s = input.to_string();
-    // repeatedly find the innermost |...| pair (no | inside) and replace with abs(...)
-    loop {
-        let bytes = s.as_bytes();
-        let mut found = false;
-        // find the rightmost opening | that forms an innermost pair
-        // i.e., find a | at position i such that the next | at position j has no | between them
-        let positions: Vec<usize> = bytes
-            .iter()
-            .enumerate()
-            .filter(|(_, &b)| b == b'|')
-            .map(|(i, _)| i)
-            .collect();
-        // find the smallest-span consecutive pair (true innermost)
-        let mut best: Option<(usize, usize, usize)> = None; // (start, end, span)
-        for pair in positions.windows(2) {
-            let start = pair[0];
-            let end = pair[1];
-            let span = end - start;
-            let inner = &s[start + 1..end];
-            if !inner.is_empty() {
-                if best.is_none() || span < best.unwrap().2 {
-                    best = Some((start, end, span));
-                }
-            }
-        }
-        if let Some((start, end, _)) = best {
-            let inner = &s[start + 1..end];
-            s = format!("{}abs({}){}", &s[..start], inner, &s[end + 1..]);
-            found = true;
-        }
-        if !found {
-            break;
-        }
-    }
-    s
+    equations: ParsedEquations,
 }
 
 impl UserDefinedDynamicalSystem {
-    pub fn new(x_str: &str, y_str: &str, epsilon: f64, a: f64, b: f64) -> Result<Self, String> {
-        let x_expr = if x_str.trim().is_empty() { "0" } else { x_str };
-        let y_expr = if y_str.trim().is_empty() { "0" } else { y_str };
-
-        let x_expr = preprocess_abs(x_expr);
-        let y_expr = preprocess_abs(y_expr);
-
-        let x_node = build_operator_tree(&x_expr).map_err(|e| e.to_string())?;
-        let y_node = build_operator_tree(&y_expr).map_err(|e| e.to_string())?;
-        Ok(Self {
-            x_node,
-            y_node,
-            epsilon,
-            a,
-            b,
-        })
+    pub fn new(
+        x_str: &str,
+        y_str: &str,
+        epsilon: f64,
+        params: ParameterSet,
+    ) -> Result<Self, String> {
+        let equations = ParsedEquations::new(x_str, y_str, params)?;
+        Ok(Self { epsilon, equations })
     }
-}
-
-fn create_math_context() -> Result<HashMapContext, String> {
-    let mut context = HashMapContext::new();
-
-    macro_rules! register_math {
-        ($name:expr, $func:ident) => {
-            context
-                .set_function(
-                    $name.into(),
-                    Function::new(|args| {
-                        let num = args.as_float()?;
-                        Ok(Value::Float(num.$func()))
-                    }),
-                )
-                .map_err(|e| e.to_string())?;
-        };
-    }
-
-    register_math!("sin", sin);
-    register_math!("cos", cos);
-    register_math!("tan", tan);
-    register_math!("abs", abs);
-    register_math!("sqrt", sqrt);
-    register_math!("exp", exp);
-    register_math!("ln", ln);
-
-    Ok(context)
-}
-
-
-thread_local! {
-    static MATH_CONTEXT: RefCell<HashMapContext> = RefCell::new(
-        create_math_context().expect("Failed to create math context")
-    );
-}
-
-fn eval_node(node: &Node, x: f64, y: f64, a: f64, b: f64) -> Result<f64, String> {
-    MATH_CONTEXT.with(|ctx_cell| {
-        let mut context = ctx_cell.borrow_mut();
-        context.set_value("x".into(), Value::Float(x)).ok();
-        context.set_value("y".into(), Value::Float(y)).ok();
-        context.set_value("a".into(), Value::Float(a)).ok();
-        context.set_value("b".into(), Value::Float(b)).ok();
-
-        match node.eval_with_context(&*context) {
-            Ok(val) => match val {
-                Value::Float(v) => Ok(v),
-                Value::Int(v) => Ok(v as f64),
-                _ => Err("Expression result is not a number".to_string()),
-            },
-            Err(e) => Err(e.to_string()),
-        }
-    })
 }
 
 impl DynamicalSystem for UserDefinedDynamicalSystem {
     fn map(&self, pos: Vector2<f64>) -> Result<Vector2<f64>, String> {
-        let x_new = eval_node(&self.x_node, pos.x, pos.y, self.a, self.b)?;
-        let y_new = eval_node(&self.y_node, pos.x, pos.y, self.a, self.b)?;
+        let (x_new, y_new) = self.equations.eval(pos.x, pos.y)?;
         Ok(Vector2::new(x_new, y_new))
     }
 
@@ -266,11 +160,11 @@ impl DynamicalSystem for UserDefinedDynamicalSystem {
         let h = 1e-5;
 
         let fx = |x: f64, y: f64| -> f64 {
-            eval_node(&self.x_node, x, y, self.a, self.b).unwrap_or(0.0)
+            self.equations.eval(x, y).map(|v| v.0).unwrap_or(0.0)
         };
 
         let fy = |x: f64, y: f64| -> f64 {
-            eval_node(&self.y_node, x, y, self.a, self.b).unwrap_or(0.0)
+            self.equations.eval(x, y).map(|v| v.1).unwrap_or(0.0)
         };
 
         let dfx_dx = (fx(pos.x + h, pos.y) - fx(pos.x - h, pos.y)) / (2.0 * h);
@@ -289,13 +183,25 @@ impl DynamicalSystem for UserDefinedDynamicalSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parameters::ParameterEntry;
 
     #[test]
     fn test_user_defined_system_basic() {
         // x_n+1 = y_n
         // y_n+1 = -0.1 * x_n + y_n^2
-        let system =
-            UserDefinedDynamicalSystem::new("y", "-0.1 * x + y^2", 0.001, 1.4, 0.3).unwrap();
+        let params = ParameterSet::new(vec![
+            ParameterEntry {
+                name: "a".to_string(),
+                value: 1.4,
+            },
+            ParameterEntry {
+                name: "b".to_string(),
+                value: 0.3,
+            },
+        ])
+        .unwrap();
+        let system = UserDefinedDynamicalSystem::new("y", "-0.1 * x + y^2", 0.001, params)
+            .unwrap();
 
         let pos = Vector2::new(1.0, 0.5);
         let result = system.map(pos).unwrap();
@@ -306,10 +212,91 @@ mod tests {
     }
 
     #[test]
+    fn test_user_defined_system_many_parameters() {
+        let params = ParameterSet::new(vec![
+            ParameterEntry {
+                name: "a".to_string(),
+                value: 1.5,
+            },
+            ParameterEntry {
+                name: "b".to_string(),
+                value: -0.25,
+            },
+            ParameterEntry {
+                name: "c".to_string(),
+                value: 0.75,
+            },
+            ParameterEntry {
+                name: "d".to_string(),
+                value: -2.0,
+            },
+            ParameterEntry {
+                name: "e".to_string(),
+                value: 3.0,
+            },
+        ])
+        .unwrap();
+
+        let system = UserDefinedDynamicalSystem::new(
+            "a * x + b * y + c",
+            "d * x + e * y",
+            0.0,
+            params,
+        )
+        .unwrap();
+
+        let pos = Vector2::new(2.0, -1.0);
+        let result = system.map(pos).unwrap();
+
+        assert!((result.x - (1.5 * 2.0 + -0.25 * -1.0 + 0.75)).abs() < 1e-12);
+        assert!((result.y - (-2.0 * 2.0 + 3.0 * -1.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_user_defined_extended_map_uses_parameters() {
+        let params = ParameterSet::new(vec![
+            ParameterEntry {
+                name: "a".to_string(),
+                value: 2.0,
+            },
+            ParameterEntry {
+                name: "b".to_string(),
+                value: 3.0,
+            },
+        ])
+        .unwrap();
+
+        let epsilon = 0.1;
+        let system = UserDefinedDynamicalSystem::new("a * x", "b * y", epsilon, params).unwrap();
+
+        let state = ExtendedState {
+            pos: Vector2::new(1.0, -2.0),
+            normal: Vector2::new(1.0, 0.0),
+        };
+        let next = system.extended_map(state, 1).unwrap();
+
+        assert!((next.pos.x - 2.1).abs() < 1e-12);
+        assert!((next.pos.y - -6.0).abs() < 1e-12);
+        assert!((next.normal.x - 1.0).abs() < 1e-12);
+        assert!((next.normal.y - 0.0).abs() < 1e-12);
+    }
+
+    #[test]
     fn test_user_defined_jacobian() {
         // x = x^2 + y
         // y = sin(x)
-        let system = UserDefinedDynamicalSystem::new("x^2 + y", "sin(x)", 0.001, 1.4, 0.3).unwrap();
+        let params = ParameterSet::new(vec![
+            ParameterEntry {
+                name: "a".to_string(),
+                value: 1.4,
+            },
+            ParameterEntry {
+                name: "b".to_string(),
+                value: 0.3,
+            },
+        ])
+        .unwrap();
+        let system = UserDefinedDynamicalSystem::new("x^2 + y", "sin(x)", 0.001, params).unwrap();
         let pos = Vector2::new(1.0, 0.5);
 
         let jac = system.jacobian(pos);
@@ -344,18 +331,21 @@ mod tests {
     }
 
     #[test]
-    fn test_preprocess_abs() {
-        assert_eq!(preprocess_abs("|x|"), "abs(x)");
-        assert_eq!(preprocess_abs("1 - a * |x| + y"), "1 - a * abs(x) + y");
-        assert_eq!(preprocess_abs("||x| - |y||"), "abs(abs(x) - abs(y))");
-        assert_eq!(preprocess_abs("no pipes here"), "no pipes here");
-    }
-
-    #[test]
     fn test_lozi_map() {
         // Lozi map: x' = 1 - a*|x| + y, y' = b*x
+        let params = ParameterSet::new(vec![
+            ParameterEntry {
+                name: "a".to_string(),
+                value: 1.7,
+            },
+            ParameterEntry {
+                name: "b".to_string(),
+                value: 0.5,
+            },
+        ])
+        .unwrap();
         let system =
-            UserDefinedDynamicalSystem::new("1 - a * |x| + y", "b * x", 0.01, 1.7, 0.5).unwrap();
+            UserDefinedDynamicalSystem::new("1 - a * |x| + y", "b * x", 0.01, params).unwrap();
 
         let pos = Vector2::new(0.5, 0.3);
         let result = system.map(pos).unwrap();

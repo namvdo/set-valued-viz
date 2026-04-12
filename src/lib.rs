@@ -23,6 +23,9 @@ pub use duffing_periodic::*;
 mod hausdorff;
 pub use hausdorff::*;
 
+mod parameters;
+mod user_defined;
+
 mod dynamical_systems;
 pub use dynamical_systems::*;
 

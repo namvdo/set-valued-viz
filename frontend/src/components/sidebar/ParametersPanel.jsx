@@ -1,11 +1,24 @@
 import React from 'react';
 import { Collapsible } from '../ui/Collapsible';
 import { Slider } from '../ui/Slider';
+import { ParameterEditor } from './ParameterEditor';
 
-export const ParametersPanel = ({ systemId, params, setParams, disabled, systems, applyPreset }) => {
+export const ParametersPanel = ({
+  systemId,
+  params,
+  setParams,
+  disabled,
+  systems,
+  applyPreset,
+  customParams,
+  setCustomParams,
+  paramErrors
+}) => {
 
   const sys = Object.values(systems).flat().find(s => s.id === systemId);
   const presets = sys?.presets || [];
+  const isCustom = systemId === 'custom' || systemId === 'custom_ode';
+  const isContinuous = systemId === 'duffing_ode' || systemId === 'custom_ode';
 
   return (
     <Collapsible title="Parameters" defaultOpen={true}>
@@ -23,7 +36,7 @@ export const ParametersPanel = ({ systemId, params, setParams, disabled, systems
         </div>
       )}
 
-      {systemId !== 'duffing_ode' && (
+      {!isCustom && !isContinuous && (
         <>
           <Slider label="a" hint="nonlinearity" min={0.1} max={systemId === 'duffing' ? 3.0 : 2.0} step={0.01} value={params.a} onChange={v => setParams(prev => ({ ...prev, a: v }))} disabled={disabled} />
           <Slider label="b" hint="contraction" min={0.1} max={systemId === 'duffing' ? 1.0 : 0.5} step={0.01} value={params.b} onChange={v => setParams(prev => ({ ...prev, b: v }))} disabled={disabled} />
@@ -37,10 +50,28 @@ export const ParametersPanel = ({ systemId, params, setParams, disabled, systems
         </>
       )}
 
-      <Slider label="ε" hint="ball radius" min={0.000} max={systemId === 'duffing_ode' ? 0.5 : 0.2} step={0.001} value={params.epsilon} onChange={v => setParams(prev => ({ ...prev, epsilon: v }))} disabled={disabled} />
+      {systemId === 'custom_ode' && (
+        <>
+          <Slider label="h" hint="step size" min={0.001} max={0.5} step={0.001} value={params.h} onChange={v => setParams(prev => ({ ...prev, h: v }))} disabled={disabled} />
+        </>
+      )}
+
+      {isCustom && (
+        <div style={{ marginTop: '6px' }}>
+          <div className="small-label">Custom parameters</div>
+          <ParameterEditor
+            params={customParams}
+            setParams={setCustomParams}
+            errors={paramErrors}
+            disabled={disabled}
+          />
+        </div>
+      )}
+
+      <Slider label="ε" hint="ball radius" min={0.000} max={(systemId === 'duffing_ode' || systemId === 'custom_ode') ? 0.5 : 0.2} step={0.001} value={params.epsilon} onChange={v => setParams(prev => ({ ...prev, epsilon: v }))} disabled={disabled} />
 
 
-      {systemId !== 'duffing_ode' && (
+      {!isContinuous && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '2px' }}>
           <div>
             <input
