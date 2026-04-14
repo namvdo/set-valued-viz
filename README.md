@@ -1,8 +1,11 @@
 # Visualization of Set-valued Dynamical System
+
 Iteractive web-based visualization tool for exploring set-valued dynamical systems with additive bounded noise, developed as part of the Advanced Computing Project (ACP2) research course at the University of Oulu.
+
 #### Live demo: [https://namvdo.github.io/set-valued-viz](https://namvdo.github.io/set-valued-viz)
 
 ## Mathematical Background
+
 In classical analysis, a **single-valued function** (or simply a function) $f: X \to Y$ assigns each point $x \in X$ to exactly one point $y \in Y$, written $y = f(x)$. Traditional dynamical systems using single-valued maps to describe deterministic evolution: given initial state $x_0$, the trajectory is uniquuely determined as $x_1 = f(x_0), x_2 = f(x_1), x_3= f(x_2)$ and so forth.
 
 In contrast, a **set-valued function** (or **multivalued map**) $F: X \to \mathcal{(Y)}$ assigns to each point $x \in X$ a **subset** $F(x) \subseteq Y$ where $\mathcal{P}(Y)$ denotes the power set of $Y$. Rather than producing a single output, set-valued functions produce **a set of possible outputs**:
@@ -13,13 +16,28 @@ $F(x) = B_\epsilon(f(x)) = \{f(x) + \xi : \|\xi\| \leq \epsilon\}$ where $f: \ma
 
 Rather than tracking every possible point within the noise ball $B_\epsilon(f(x))$ which would be computationally expensive to compute as the noise balls grow, we instead track the boundary evolution through an extended boundary map $F(x,y,nx,ny)=\bigl(f(x,y)+\varepsilon\,\mathbf{nx}',\mathbf{ny}'\bigr)$. Since the maximum uncertainty occurs at the boundary $\partial B_\epsilon(f(x))$ (points at distance exactly $\epsilon$ from the deterministic image), we focus exclusively on tracking how these boundary points evolve.
 
-
 ### Unstable manifold visualization for boundary map evolution with a=0.4, b=0.3 and epsilon=0.0625
-![Set-valued dynamical system with additive bounded noise Visualization](./images/sdsv_oulu_demo.png)
+
+![Set-valued dynamical system with additive bounded noise Visualization](./images/unstable_manifold_for_boundary_map.png)
 
 ### An example of a 4-periodic point found for the boundary map with A = 1.4 and B = 0.3, epsilon=0.0625
-![4-periodic point](./images/sdsv_oulu_periodic_point_demo.png)
+
+![4-periodic point](./images/periodic_orbit_visualization.png)
+
+### ULAM method integration for stationary measure in continuous dynamical systems
+
+![ULAM method integration for stationary measure in continuous dynamical systems](./images/ulam_integration_for_continuous_ds.png)
+
+### Continuous boundary differential equation simulation
+
+![Continuous boundary differential equation simulation](./images/boundary_differential_equation_visualization.png)
+
+### Parameter sweeping for finding fixed and periodic orbits for boundary map of the discrete dynamical systems
+
+![Parameter sweeping for finding fixed and periodic orbits for boundary map of the discrete dynamical systems](./images/parameter_sweep.png)
+
 ## **Getting Started**
+
 ### **1. Clone the Repository**
 
 ```bash
@@ -51,6 +69,7 @@ npm run build-wasm
 ```
 
 **Alternative:** Manual copy if the npm script doesn't work:
+
 ```bash
 cp -r ../pkg/* src/pkg/
 ```
