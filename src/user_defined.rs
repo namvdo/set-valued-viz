@@ -40,23 +40,17 @@ impl ParsedEquations {
     }
 }
 
-/// preprocess equation string: convert `|expr|` notation to `abs(expr)`.
-/// handles nested absolute values by processing innermost pairs first.
 fn preprocess_abs(input: &str) -> String {
     let mut s = input.to_string();
-    // repeatedly find the innermost |...| pair (no | inside) and replace with abs(...)
     loop {
         let bytes = s.as_bytes();
         let mut found = false;
-        // find the rightmost opening | that forms an innermost pair
-        // i.e., find a | at position i such that the next | at position j has no | between them
         let positions: Vec<usize> = bytes
             .iter()
             .enumerate()
             .filter(|(_, &b)| b == b'|')
             .map(|(i, _)| i)
             .collect();
-        // find the smallest-span consecutive pair (true innermost)
         let mut best: Option<(usize, usize, usize)> = None; // (start, end, span)
         for pair in positions.windows(2) {
             let start = pair[0];
@@ -134,8 +128,12 @@ fn eval_pair(
                 .map_err(|e| e.to_string())?;
         }
 
-        let x_val = x_node.eval_with_context(&*context).map_err(|e| e.to_string())?;
-        let y_val = y_node.eval_with_context(&*context).map_err(|e| e.to_string())?;
+        let x_val = x_node
+            .eval_with_context(&*context)
+            .map_err(|e| e.to_string())?;
+        let y_val = y_node
+            .eval_with_context(&*context)
+            .map_err(|e| e.to_string())?;
 
         let x_out = match x_val {
             Value::Float(v) => v,

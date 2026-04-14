@@ -8,7 +8,7 @@ import { StartingPoint } from '../sidebar/StartingPoint';
 import { PeriodicOrbitsPanel } from '../sidebar/PeriodicOrbitsPanel';
 import { UlamPanel } from '../sidebar/UlamPanel';
 import { AnimationPanel } from '../sidebar/AnimationPanel';
-import { BifurcationPanel } from '../sidebar/BifurcationPanel';
+import { ParameterSweepPanel } from '../sidebar/ParameterSweepPanel';
 import { InfoStrip } from './InfoStrip';
 import { ControlsBar } from './ControlsBar';
 
@@ -97,12 +97,16 @@ export const Sidebar = (props) => {
           />
         )}
 
-        {props.type === 'discrete' && (props.dynamicSystem === 'henon' || props.dynamicSystem === 'duffing') && (
-          <BifurcationPanel
-            params={props.params}
+        {props.type === 'discrete' && (
+          <ParameterSweepPanel
             wasmModule={props.wasmModule}
-            bifurcationState={props.bifurcationState}
-            setBifurcationState={props.setBifurcationState}
+            params={props.params}
+            viewRange={props.viewRange}
+            sweepState={props.sweepState}
+            setSweepState={props.setSweepState}
+            dynamicSystem={props.dynamicSystem}
+            customEquations={props.customEquations}
+            customParams={props.customParams}
           />
         )}
 

@@ -235,17 +235,16 @@ const SetValuedViz = () => {
         return normalizeParams(activeCustomParams);
     }, [isCustomSystem, activeCustomParams]);
 
-    // Bifurcation analysis state
-    const [bifurcationState, setBifurcationState] = useState({
-        data: [],
+    // Parameter sweep state
+    const [sweepState, setSweepState] = useState({
+        results: null,
         isComputing: false,
         error: null,
-        aMin: 0.1,
-        aMax: 2.0,
-        numSamples: 30,
-        threshold: 0.2,
-        intersectionCount: 0,
-        criticalValues: []
+        sweepParam: 'a',
+        sweepMin: 0.1,
+        sweepMax: 2.0,
+        numSamples: 10,
+        maxPeriod: 3,
     });
 
     // BDE Simulator
@@ -477,6 +476,42 @@ const SetValuedViz = () => {
         };
     }, [activeCustomEquations, dynamicSystem, isCustomSystem, paramValidation, params.epsilon, wasmModule]);
 
+    const systemLabel = useMemo(() => {
+        const labels = { henon: 'Hénon', duffing: 'Duffing Map', duffing_ode: 'Duffing ODE', custom: 'Custom', custom_ode: 'Custom ODE' };
+        return labels[dynamicSystem] || dynamicSystem;
+    }, [dynamicSystem]);
+
+    const paramOverlayText = useMemo(() => {
+        if (dynamicSystem === 'duffing_ode') {
+            return `δ = ${(params.delta || 0).toFixed(4)}  h = ${(params.h || 0).toFixed(4)}  ε = ${(params.epsilon || 0).toFixed(4)}`;
+        } else if (dynamicSystem === 'custom_ode') {
+            const cp = (customParams.custom_ode || []).map(p => `${p.name} = ${p.value.toFixed(4)}`).join('  ');
+            return cp || `h = ${(params.h || 0).toFixed(4)}  ε = ${(params.epsilon || 0).toFixed(4)}`;
+        } else if (dynamicSystem === 'custom') {
+            const cp = (customParams.custom || []).map(p => `${p.name} = ${p.value.toFixed(4)}`).join('  ');
+            return cp || `ε = ${(params.epsilon || 0).toFixed(4)}`;
+        }
+        return `a = ${(params.a || 0).toFixed(4)}  b = ${(params.b || 0).toFixed(4)}  ε = ${(params.epsilon || 0).toFixed(4)}`;
+    }, [dynamicSystem, params, customParams]);
+
+    const systemFilePrefix = useMemo(() => {
+        const prefixes = { henon: 'henon', duffing: 'duffing_map', duffing_ode: 'duffing_ode', custom: 'custom', custom_ode: 'custom_ode' };
+        return prefixes[dynamicSystem] || 'system';
+    }, [dynamicSystem]);
+
+    const paramFileString = useMemo(() => {
+        if (dynamicSystem === 'duffing_ode') {
+            const dStr = (params.delta || 0).toFixed(3).replace('.', 'p').replace('-', 'm');
+            const hStr = (params.h || 0).toFixed(3).replace('.', 'p').replace('-', 'm');
+            const epsStr = (params.epsilon || 0).toFixed(4).replace('.', 'p').replace('-', 'm');
+            return `d${dStr}_h${hStr}_eps${epsStr}`;
+        }
+        const aStr = (params.a || 0).toFixed(3).replace('.', 'p').replace('-', 'm');
+        const bStr = (params.b || 0).toFixed(3).replace('.', 'p').replace('-', 'm');
+        const epsStr = (params.epsilon || 0).toFixed(4).replace('.', 'p').replace('-', 'm');
+        return `a${aStr}_b${bStr}_eps${epsStr}`;
+    }, [dynamicSystem, params]);
+
     useEffect(() => {
         if (dynamicSystem === 'duffing') {
             setParams(prev => ({ ...prev, a: 2.75, b: 0.2 }));
@@ -499,7 +534,12 @@ const SetValuedViz = () => {
             manifolds: [],
             stableManifolds: [],
             fixedPoints: [],
-            intersections: []
+            intersections: [],
+            showUnstableManifold: false,
+            showStableManifold: false,
+            showOrbits: true,
+            showOrbitLines: false,
+            showTrail: true,
         }));
         setBdeState(prev => ({
             ...prev,
@@ -508,7 +548,22 @@ const SetValuedViz = () => {
         }));
         setPeriodicState(prev => ({
             ...prev,
-            orbits: []
+            orbits: [],
+            showOrbits: false,
+        }));
+        setUlamState(prev => ({
+            ...prev,
+            showUlamOverlay: false,
+            gridBoxes: [],
+            invariantMeasure: null,
+            transitions: null,
+            currentBoxIndex: -1,
+            selectedBoxIndex: null,
+        }));
+        setSweepState(prev => ({
+            ...prev,
+            results: null,
+            error: null,
         }));
     }, [dynamicSystem]);
 
@@ -737,7 +792,6 @@ const SetValuedViz = () => {
                 }
             }
 
-            // Click bare canvas to set startPoint
             raycasterRef.current.setFromCamera(new THREE.Vector2(x, y), cameraRef.current);
             const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
             const target = new THREE.Vector3();
@@ -759,7 +813,6 @@ const SetValuedViz = () => {
         };
     }, [handleMouseMove, ulamState.showUlamOverlay, ulamState.gridBoxes.length, handleUlamClick]);
 
-    // Compute periodic orbits when params change and WASM is ready
     useEffect(() => {
         if (!wasmModule) return;
 
@@ -924,7 +977,7 @@ const SetValuedViz = () => {
                 } else if (dynamicSystem === 'custom') {
                     // Use user-defined system manifold computation
                     if (periodicState.orbits && periodicState.orbits.length > 0) {
-                        if (manifoldState.showStableManifold) {
+                        if (manifoldState.showStableManifold || manifoldState.showUnstableManifold) {
                             console.log('Computing custom stable AND unstable manifolds:', periodicState.orbits.length, 'orbits');
                             const result = wasmModule.compute_stable_and_unstable_manifolds_user_defined(
                                 debouncedEquations.xEq, debouncedEquations.yEq,
@@ -947,22 +1000,11 @@ const SetValuedViz = () => {
                                 isReady: true
                             }));
                         } else {
-                            console.log('Computing custom manifold from orbits:', periodicState.orbits.length, 'orbits');
-                            const result = wasmModule.compute_manifold_from_orbits_user_defined(
-                                debouncedEquations.xEq, debouncedEquations.yEq,
-                                paramValidation.normalized, params.epsilon,
-                                viewRange.xMin,
-                                viewRange.xMax,
-                                viewRange.yMin,
-                                viewRange.yMax,
-                                periodicState.orbits
-                            );
-
                             setManifoldState(prev => ({
                                 ...prev,
-                                manifolds: result.manifolds || [],
+                                manifolds: [],
                                 stableManifolds: [],
-                                fixedPoints: result.fixed_points || [],
+                                fixedPoints: [],
                                 intersections: [],
                                 isComputing: false,
                                 isReady: true
@@ -992,7 +1034,7 @@ const SetValuedViz = () => {
                 } else {
                     // Use Henon manifold computation
                     if (periodicState.orbits && periodicState.orbits.length > 0) {
-                        if (manifoldState.showStableManifold) {
+                        if (manifoldState.showStableManifold || manifoldState.showUnstableManifold) {
                             console.log('Computing stable AND unstable manifolds:', periodicState.orbits.length, 'orbits');
                             const result = wasmModule.compute_stable_and_unstable_manifolds(
                                 params.a,
@@ -1016,23 +1058,11 @@ const SetValuedViz = () => {
                                 isReady: true
                             }));
                         } else {
-                            console.log('Using periodic orbits for manifold:', periodicState.orbits.length, 'orbits');
-                            const result = wasmModule.compute_manifold_from_orbits(
-                                params.a,
-                                params.b,
-                                params.epsilon,
-                                viewRange.xMin,
-                                viewRange.xMax,
-                                viewRange.yMin,
-                                viewRange.yMax,
-                                periodicState.orbits
-                            );
-
                             setManifoldState(prev => ({
                                 ...prev,
-                                manifolds: result.manifolds || [],
+                                manifolds: [],
                                 stableManifolds: [],
-                                fixedPoints: result.fixed_points || [],
+                                fixedPoints: [],
                                 intersections: [],
                                 isComputing: false,
                                 isReady: true
@@ -1072,7 +1102,7 @@ const SetValuedViz = () => {
                 clearTimeout(manifoldDebounceRef.current);
             }
         };
-    }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.intersectionThreshold, debouncedEquations, paramValidation, manifoldState.startPoint.x, manifoldState.startPoint.y, viewRange]);
+    }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.showUnstableManifold, manifoldState.intersectionThreshold, debouncedEquations, paramValidation, manifoldState.startPoint.x, manifoldState.startPoint.y, viewRange]);
 
     useEffect(() => {
         if (!animationState.isAnimating) {
@@ -1118,12 +1148,11 @@ const SetValuedViz = () => {
                 const ctx = offscreen.getContext('2d');
                 ctx.drawImage(canvas, 0, 0, width, height);
 
-                const overlayText = `a = ${params.a.toFixed(4)}  b = ${params.b.toFixed(4)}  ε = ${params.epsilon.toFixed(4)}`;
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-                ctx.fillRect(10, height - 40, 400, 30);
+                ctx.fillRect(10, height - 40, 500, 30);
                 ctx.font = 'bold 16px monospace';
                 ctx.fillStyle = '#4CAF50';
-                ctx.fillText(overlayText, 20, height - 18);
+                ctx.fillText(`${systemLabel} | ${paramOverlayText}`, 20, height - 18);
 
                 const bitmap = await createImageBitmap(offscreen);
                 recordedFramesRef.current.push(bitmap);
@@ -1141,7 +1170,7 @@ const SetValuedViz = () => {
             targetValue: targetVal,
             currentStep: 0
         }));
-    }, [params, animationState.parameter, animationState.direction, animationState.rangeValue, recordingState.recordingEnabled]);
+    }, [params, animationState.parameter, animationState.direction, animationState.rangeValue, recordingState.recordingEnabled, systemLabel, paramOverlayText]);
 
     const stopAnimation = useCallback(() => {
         setAnimationState(prev => ({
@@ -1163,16 +1192,15 @@ const SetValuedViz = () => {
 
         ctx.drawImage(canvas, 0, 0, width, height);
 
-        const overlayText = `a = ${params.a.toFixed(4)}  b = ${params.b.toFixed(4)}  ε = ${params.epsilon.toFixed(4)}`;
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(10, height - 40, 400, 30);
+        ctx.fillRect(10, height - 40, 500, 30);
         ctx.font = 'bold 16px monospace';
         ctx.fillStyle = '#4CAF50';
-        ctx.fillText(overlayText, 20, height - 18);
+        ctx.fillText(`${systemLabel} | ${paramOverlayText}`, 20, height - 18);
 
         const bitmap = await createImageBitmap(offscreen);
         return bitmap;
-    }, [params.a, params.b, params.epsilon, recordingState.recordingEnabled]);
+    }, [recordingState.recordingEnabled, systemLabel, paramOverlayText]);
 
     const initEncoderWorker = useCallback(() => {
         if (encoderWorkerRef.current) {
@@ -1225,15 +1253,12 @@ const SetValuedViz = () => {
     }, []);
 
     const generateFilename = useCallback(() => {
-        const aStr = params.a.toFixed(3).replace('.', 'p');
-        const bStr = params.b.toFixed(3).replace('.', 'p');
-        const epsStr = params.epsilon.toFixed(4).replace('.', 'p');
         const paramName = animationState.parameter;
         const startStr = (animationState.baseValue || 0).toFixed(3).replace('.', 'p').replace('-', 'm');
         const endStr = (animationState.targetValue || 0).toFixed(3).replace('.', 'p').replace('-', 'm');
 
-        return `henon_${paramName}_a${aStr}_b${bStr}_eps${epsStr}_${startStr}_to_${endStr}.mp4`;
-    }, [params.a, params.b, params.epsilon, animationState.parameter, animationState.baseValue, animationState.targetValue]);
+        return `${systemFilePrefix}_${paramName}_${paramFileString}_${startStr}_to_${endStr}.mp4`;
+    }, [systemFilePrefix, paramFileString, animationState.parameter, animationState.baseValue, animationState.targetValue]);
 
     const savePNG = useCallback(async () => {
         if (!canvasRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current) return;
@@ -1256,7 +1281,7 @@ const SetValuedViz = () => {
         ctx.font = 'bold 18px monospace';
         ctx.fillStyle = '#4CAF50';
 
-        ctx.fillText(`Set-Valued Dynamics | Iteration: ${manifoldState.iteration}`, 20, height - 55);
+        ctx.fillText(`${systemLabel} | Iteration: ${manifoldState.iteration}`, 20, height - 55);
         ctx.font = '14px monospace';
         ctx.fillStyle = '#aaa';
         const unstablePts = manifoldState.manifolds.reduce((sum, m) => sum + (m.points_positive?.length || 0) + (m.points_negative?.length || 0), 0);
@@ -1265,24 +1290,21 @@ const SetValuedViz = () => {
 
         ctx.font = 'bold 14px monospace';
         ctx.fillStyle = '#4CAF50';
-        ctx.fillText(`a = ${params.a.toFixed(4)}   b = ${params.b.toFixed(4)}   ε = ${params.epsilon.toFixed(4)}`, 20, height - 12);
+        ctx.fillText(paramOverlayText, 20, height - 12);
 
         const blob = await offscreen.convertToBlob({ type: 'image/png', quality: 1.0 });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
 
-        const aStr = params.a.toFixed(3).replace('.', 'p');
-        const bStr = params.b.toFixed(3).replace('.', 'p');
-        const epsStr = params.epsilon.toFixed(4).replace('.', 'p');
         const iterStr = manifoldState.hasStarted ? `_iter${manifoldState.iteration}` : '';
 
         a.href = url;
-        a.download = `henon_a${aStr}_b${bStr}_eps${epsStr}${iterStr}.png`;
+        a.download = `${systemFilePrefix}_${paramFileString}${iterStr}.png`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-    }, [params, periodicState.orbits.length, manifoldState.iteration, manifoldState.hasStarted, manifoldState.manifolds, manifoldState.fixedPoints]);
+    }, [params, periodicState.orbits.length, manifoldState.iteration, manifoldState.hasStarted, manifoldState.manifolds, manifoldState.fixedPoints, systemLabel, paramOverlayText, systemFilePrefix, paramFileString]);
 
     const startEncoding = useCallback(async () => {
         if (recordedFramesRef.current.length === 0) {
@@ -2166,9 +2188,9 @@ const SetValuedViz = () => {
                 toggleRecording={toggleRecording}
                 ulamState={ulamState}
                 setUlamState={setUlamState}
-                bifurcationState={bifurcationState}
-                setBifurcationState={setBifurcationState}
                 wasmModule={wasmModule}
+                sweepState={sweepState}
+                setSweepState={setSweepState}
                 bdeState={bdeState}
                 stepForwardManifold={stepForwardManifold}
                 runToConvergenceManifold={runToConvergenceManifold}

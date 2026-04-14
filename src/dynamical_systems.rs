@@ -15,9 +15,6 @@ pub trait DynamicalSystem: Send + Sync {
         Err("Inverse map not implemented".to_string())
     }
 
-
-
-
     fn jacobian(&self, pos: Vector2<f64>) -> Matrix2<f64>;
 
     fn transform_normal(
@@ -26,15 +23,8 @@ pub trait DynamicalSystem: Send + Sync {
         normal: Vector2<f64>,
     ) -> Result<Vector2<f64>, String> {
         let j = self.jacobian(pos);
-        // J^-T = (J^-1)^T
-        // For 2x2 matrix [[a, b], [c, d]]
-        // det = ad - bc
-        // J^-1 = 1/det * [[d, -b], [-c, a]]
-        // (J^-1)^T = 1/det * [[d, -c], [-b, a]]
-
         let det = j[(0, 0)] * j[(1, 1)] - j[(0, 1)] * j[(1, 0)];
         if det.abs() < 1e-12 {
-            // Singular matrix, fallback to normal
             return Ok(normal);
         }
 
@@ -132,6 +122,76 @@ pub trait DynamicalSystem: Send + Sync {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct HenonSystem {
+    pub a: f64,
+    pub b: f64,
+    pub epsilon: f64,
+}
+
+impl HenonSystem {
+    pub fn new(a: f64, b: f64, epsilon: f64) -> Self {
+        Self { a, b, epsilon }
+    }
+}
+
+impl DynamicalSystem for HenonSystem {
+    fn map(&self, pos: Vector2<f64>) -> Result<Vector2<f64>, String> {
+        let x_new = 1.0 - self.a * pos.x * pos.x + pos.y;
+        let y_new = self.b * pos.x;
+        Ok(Vector2::new(x_new, y_new))
+    }
+
+    fn map_inverse(&self, pos: Vector2<f64>) -> Result<Vector2<f64>, String> {
+        if self.b.abs() < 1e-12 {
+            return Err("Cannot invert Hénon map with b=0".to_string());
+        }
+        let x_prev = pos.y / self.b;
+        let y_prev = pos.x - 1.0 + self.a * x_prev * x_prev;
+        Ok(Vector2::new(x_prev, y_prev))
+    }
+
+    fn jacobian(&self, pos: Vector2<f64>) -> Matrix2<f64> {
+        Matrix2::new(-2.0 * self.a * pos.x, 1.0, self.b, 0.0)
+    }
+
+    fn transform_normal(
+        &self,
+        pos: Vector2<f64>,
+        normal: Vector2<f64>,
+    ) -> Result<Vector2<f64>, String> {
+        if self.b.abs() < 1e-12 {
+            return Ok(normal);
+        }
+        // (J^-1)^T = [[0, 1], [1/b, 2ax/b]]
+        let nx_new = normal.y;
+        let ny_new = normal.x / self.b + 2.0 * self.a * pos.x * normal.y / self.b;
+        let norm = (nx_new * nx_new + ny_new * ny_new).sqrt();
+        if norm < 1e-12 {
+            return Ok(normal);
+        }
+        Ok(Vector2::new(nx_new / norm, ny_new / norm))
+    }
+
+    fn transform_normal_inverse(
+        &self,
+        pos: Vector2<f64>,
+        normal: Vector2<f64>,
+    ) -> Result<Vector2<f64>, String> {
+        let nx_new = -2.0 * self.a * pos.x * normal.x + self.b * normal.y;
+        let ny_new = normal.x;
+        let norm = (nx_new * nx_new + ny_new * ny_new).sqrt();
+        if norm < 1e-12 {
+            return Ok(normal);
+        }
+        Ok(Vector2::new(nx_new / norm, ny_new / norm))
+    }
+
+    fn get_epsilon(&self) -> f64 {
+        self.epsilon
+    }
+}
+
 #[derive(Clone)]
 pub struct UserDefinedDynamicalSystem {
     epsilon: f64,
@@ -159,13 +219,9 @@ impl DynamicalSystem for UserDefinedDynamicalSystem {
     fn jacobian(&self, pos: Vector2<f64>) -> Matrix2<f64> {
         let h = 1e-5;
 
-        let fx = |x: f64, y: f64| -> f64 {
-            self.equations.eval(x, y).map(|v| v.0).unwrap_or(0.0)
-        };
+        let fx = |x: f64, y: f64| -> f64 { self.equations.eval(x, y).map(|v| v.0).unwrap_or(0.0) };
 
-        let fy = |x: f64, y: f64| -> f64 {
-            self.equations.eval(x, y).map(|v| v.1).unwrap_or(0.0)
-        };
+        let fy = |x: f64, y: f64| -> f64 { self.equations.eval(x, y).map(|v| v.1).unwrap_or(0.0) };
 
         let dfx_dx = (fx(pos.x + h, pos.y) - fx(pos.x - h, pos.y)) / (2.0 * h);
         let dfx_dy = (fx(pos.x, pos.y + h) - fx(pos.x, pos.y - h)) / (2.0 * h);
@@ -200,8 +256,7 @@ mod tests {
             },
         ])
         .unwrap();
-        let system = UserDefinedDynamicalSystem::new("y", "-0.1 * x + y^2", 0.001, params)
-            .unwrap();
+        let system = UserDefinedDynamicalSystem::new("y", "-0.1 * x + y^2", 0.001, params).unwrap();
 
         let pos = Vector2::new(1.0, 0.5);
         let result = system.map(pos).unwrap();
@@ -237,13 +292,9 @@ mod tests {
         ])
         .unwrap();
 
-        let system = UserDefinedDynamicalSystem::new(
-            "a * x + b * y + c",
-            "d * x + e * y",
-            0.0,
-            params,
-        )
-        .unwrap();
+        let system =
+            UserDefinedDynamicalSystem::new("a * x + b * y + c", "d * x + e * y", 0.0, params)
+                .unwrap();
 
         let pos = Vector2::new(2.0, -1.0);
         let result = system.map(pos).unwrap();
@@ -283,8 +334,6 @@ mod tests {
 
     #[test]
     fn test_user_defined_jacobian() {
-        // x = x^2 + y
-        // y = sin(x)
         let params = ParameterSet::new(vec![
             ParameterEntry {
                 name: "a".to_string(),
@@ -300,12 +349,6 @@ mod tests {
         let pos = Vector2::new(1.0, 0.5);
 
         let jac = system.jacobian(pos);
-
-        // Analytical:
-        // dx_new/dx = 2x = 2.0
-        // dx_new/dy = 1.0
-        // dy_new/dx = cos(x) = cos(1.0) approx 0.5403
-        // dy_new/dy = 0.0
 
         assert!(
             (jac[(0, 0)] - 2.0).abs() < 1e-4,
@@ -362,5 +405,4 @@ mod tests {
         assert!((result2.x - 0.45).abs() < 1e-10, "got {}", result2.x);
         assert!((result2.y - (-0.25)).abs() < 1e-10, "got {}", result2.y);
     }
-
 }

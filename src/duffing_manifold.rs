@@ -248,14 +248,11 @@ impl DuffingManifoldComputer {
     }
 }
 
-/// Find fixed points of the Duffing map
 fn find_duffing_fixed_points(params: &DuffingParams) -> Vec<(f64, f64)> {
     let mut fixed_points = Vec::new();
 
-    // Origin is always a fixed point
     fixed_points.push((0.0, 0.0));
 
-    // Check for non-trivial fixed points
     let discriminant = params.a - params.b - 1.0;
 
     if discriminant > 0.0 {
@@ -272,7 +269,6 @@ fn find_duffing_fixed_points(params: &DuffingParams) -> Vec<(f64, f64)> {
     fixed_points
 }
 
-/// Classify stability of a fixed point based on Jacobian eigenvalues
 fn classify_duffing_stability(l1: f64, l2: f64) -> &'static str {
     let abs_l1 = l1.abs();
     let abs_l2 = l2.abs();
@@ -388,10 +384,6 @@ pub fn compute_duffing_manifold_simple(
         let l1 = fp_info.eigenvalues.0;
         let l2 = fp_info.eigenvalues.1;
 
-        // Compute unstable eigenvector
-        // Jacobian: J = [[0, 1], [-b, a - 3y²]]
-        // For eigenvalue λ: (J - λI)v = 0
-        // Row 1: -λ*v1 + v2 = 0 => v2 = λ*v1
         let unstable_lambda = if l1.abs() > l2.abs() { l1 } else { l2 };
         let v1 = 1.0;
         let v2 = unstable_lambda;
@@ -402,7 +394,6 @@ pub fn compute_duffing_manifold_simple(
             Vector2::new(1.0, 0.0)
         };
 
-        // Use from_2d_eigenvector to properly set both tangent and normal
         let saddle_pt = SaddlePoint::from_2d_eigenvector(
             pos,
             eigenvector,

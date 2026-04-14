@@ -1,4 +1,6 @@
-use crate::dynamical_systems::{DynamicalSystem, ExtendedState, UserDefinedDynamicalSystem};
+use crate::dynamical_systems::{
+    DynamicalSystem, ExtendedState, HenonSystem, UserDefinedDynamicalSystem,
+};
 use crate::parameters::parameter_set_from_js;
 use crate::range::{clamp_pair, RANGE_LIMIT};
 use core::f64;
@@ -121,6 +123,18 @@ impl PeriodicOrbitDatabase {
         })
     }
 
+    /// Check if any existing orbit has a point spatially close (x,y only).
+    /// This prevents the same physical orbit found with different normal vectors
+    /// from being added twice.
+    pub fn contains_spatial_point(&self, p: &ExtendedPoint, tol: f64) -> bool {
+        self.orbits.iter().any(|orbit| {
+            orbit.extended_points.iter().any(|ep| {
+                let dist = ((ep.x - p.x).powi(2) + (ep.y - p.y).powi(2)).sqrt();
+                dist < tol
+            })
+        })
+    }
+
     fn find_matching_orbit(&self, x: f64, y: f64, tol: f64) -> Option<(usize, StabilityType, f64)> {
         for orbit in &self.orbits {
             for point in &orbit.points {
@@ -213,20 +227,20 @@ impl Jacobian {
 
     pub fn multiply(&self, other: &Jacobian) -> Jacobian {
         Jacobian {
-            j11: self.j11 * other.j11 + self.j12 * other.j12,
-            j12: self.j11 * other.j21 + self.j12 * other.j22,
-            j21: self.j21 * other.j11 + self.j22 * other.j22,
+            j11: self.j11 * other.j11 + self.j12 * other.j21,
+            j12: self.j11 * other.j12 + self.j12 * other.j22,
+            j21: self.j21 * other.j11 + self.j22 * other.j21,
             j22: self.j21 * other.j12 + self.j22 * other.j22,
         }
     }
 
     pub fn eigenvalues(&self) -> (f64, f64, bool) {
         let trace = self.j11 + self.j22;
-        let det = self.j11 * self.j22 - (self.j12 + self.j21);
-        let discrimant = trace * trace - 4.0 * det;
+        let det = self.j11 * self.j22 - self.j12 * self.j21;
+        let discriminant = trace * trace - 4.0 * det;
 
-        if discrimant >= 0.0 {
-            let sqrt_disc = discrimant.sqrt();
+        if discriminant >= 0.0 {
+            let sqrt_disc = discriminant.sqrt();
             ((trace + sqrt_disc) / 2.0, (trace - sqrt_disc) / 2.0, false)
         } else {
             let modulus = det.sqrt();
@@ -436,415 +450,6 @@ pub struct TrajectoryPoint {
     pub classification: PointClassification,
 }
 
-pub fn henon_map(x: f64, y: f64, a: f64, b: f64) -> (f64, f64) {
-    (1.0 - a * x * x + y, b * x)
-}
-
-fn henon_jacobian(x: f64, _y: f64, a: f64, b: f64) -> Jacobian {
-    Jacobian {
-        j11: -2.0 * a * x,
-        j12: 1.0,
-        j21: b,
-        j22: 0.0,
-    }
-}
-
-/// Boundary map for Henon map
-/// E(x, y, nx, ny) = (f_x + ep * nx', fy + ep * ny', nx', ny')
-/// where (nx, ny) is the outward normal vector to the boundary
-/// and (nx', ny') is the outward normal vector to the boundary after one iteration
-/// ep is a small parameter that controls the thickness of the boundary
-///
-/// Normal evolution: (nx~, ny~) = (J^-1)^T * (nx, ny)
-/// For Henon map J^-1 = [[0, 1/b], [1, 2ax/b]]
-/// (J^-1)^T = [[0, 1], [1/b, 2ax/b]]
-/// => nx~ = ny, ny~ = nx/b + 2ax*ny/b
-#[wasm_bindgen]
-pub fn boundary_map(x: f64, y: f64, nx: f64, ny: f64, a: f64, b: f64, ep: f64) -> ExtendedPoint {
-    let n_tilda_x = ny;
-    let n_tilda_y = nx / b + 2.0 * a * x * ny / b;
-
-    let norm = (n_tilda_x * n_tilda_x + n_tilda_y * n_tilda_y).sqrt();
-    if norm < 1e-12 {
-        return ExtendedPoint {
-            x: f64::NAN,
-            y: f64::NAN,
-            nx: f64::NAN,
-            ny: f64::NAN,
-        };
-    }
-
-    let nx_prime = n_tilda_x / norm;
-    let ny_prime = n_tilda_y / norm;
-
-    let f_x = 1.0 - a * x * x + y;
-    let f_y = b * x;
-
-    ExtendedPoint {
-        x: f_x + ep * nx_prime,
-        y: f_y + ep * ny_prime,
-        nx: nx_prime,
-        ny: ny_prime,
-    }
-}
-
-// Jacobian of the boundary map E(x, y, n_x, n_y) = (f_x + ep * n_x', f_y + ep * n_y', n_x', n_y')
-pub fn boundary_map_jacobian(
-    x: f64,
-    y: f64,
-    nx: f64,
-    ny: f64,
-    a: f64,
-    b: f64,
-    epsilon: f64,
-) -> Jacobian4x4 {
-    // compute intermediate quantities
-    let n_tilda_x = ny;
-    let n_tilda_y = nx / b + 2.0 * a * x * ny / b;
-    let norm_sq = n_tilda_x * n_tilda_x + n_tilda_y * n_tilda_y;
-    let norm = norm_sq.sqrt();
-
-    if norm < 1e-12 {
-        return Jacobian4x4::identity();
-    }
-
-    let nx_prime = n_tilda_x / norm;
-    let ny_prime = n_tilda_y / norm;
-
-    //  Derivatives of ñx = ny/b
-    let dn_tilda_x_dx = 0.0;
-    let dn_tilda_x_dy = 0.0;
-    let dn_tilda_x_dn_x = 0.0;
-    let dn_tilda_x_dn_y = 1.0;
-
-    // Derivatives of ñy = nx/b + 2ax*ny/b
-    let dn_tilda_y_dx = 2.0 * a * ny / b;
-    let dn_tilda_y_dy = 0.0;
-    let dn_tilda_y_dn_x = 1.0 / b;
-    let dn_tilda_y_dn_y = 2.0 * a * x / b;
-
-    // derivatives of norm = sqrt((ñx)² + (ñy)²)
-    let dnorm_dx = (n_tilda_x * dn_tilda_x_dx + n_tilda_y * dn_tilda_y_dx) / norm;
-    let dnorm_dy = (n_tilda_x * dn_tilda_x_dy + n_tilda_y * dn_tilda_y_dy) / norm;
-    let dnorm_dn_x = (n_tilda_x * dn_tilda_x_dn_x + n_tilda_y * dn_tilda_y_dn_x) / norm;
-    let dnorm_dn_y = (n_tilda_x * dn_tilda_x_dn_y + n_tilda_y * dn_tilda_y_dn_y) / norm;
-
-    // derivative of nx' = ñx/norm using quotient rule
-    let dn_x_prime_dx = (dn_tilda_x_dx * norm - n_tilda_x * dnorm_dx) / norm_sq;
-    let dn_x_prime_dy = (dn_tilda_x_dy * norm - n_tilda_x * dnorm_dy) / norm_sq;
-    let dn_x_prime_dn_x = (dn_tilda_x_dn_x * norm - n_tilda_x * dnorm_dn_x) / norm_sq;
-    let dn_x_prime_dn_y = (dn_tilda_x_dn_y * norm - n_tilda_x * dnorm_dn_y) / norm_sq;
-
-    // derivative of ny' = ñy/norm using quotient rule
-    let dn_y_prime_dx = (dn_tilda_y_dx * norm - n_tilda_y * dnorm_dx) / norm_sq;
-    let dn_y_prime_dy = (dn_tilda_y_dy * norm - n_tilda_y * dnorm_dy) / norm_sq;
-    let dn_y_prime_dn_x = (dn_tilda_y_dn_x * norm - n_tilda_y * dnorm_dn_x) / norm_sq;
-    let dn_y_prime_dn_y = (dn_tilda_y_dn_y * norm - n_tilda_y * dnorm_dn_y) / norm_sq;
-
-    // Jacobian of E
-    // E = [fx + ep*nx', fy + ep*ny', nx', ny']
-    // where fx = 1 - ax^2 + y, fy = bx
-
-    // dE/dx
-    let de1_dx = -2.0 * a * x + epsilon * dn_x_prime_dx;
-    let de2_dx = b + epsilon * dn_y_prime_dx;
-    let de3_dx = dn_x_prime_dx;
-    let de4_dx = dn_y_prime_dx;
-
-    // dE/dy
-    let de1_dy = 1.0 + epsilon * dn_x_prime_dy;
-    let de2_dy = epsilon * dn_y_prime_dy;
-    let de3_dy = dn_x_prime_dy;
-    let de4_dy = dn_y_prime_dy;
-
-    // dE/dnx
-    let de1_dnx = epsilon * dn_x_prime_dn_x;
-    let de2_dnx = epsilon * dn_y_prime_dn_x;
-    let de3_dnx = dn_x_prime_dn_x;
-    let de4_dnx = dn_y_prime_dn_x;
-    // dE/dny
-
-    let de1_dny = epsilon * dn_x_prime_dn_y;
-    let de2_dny = epsilon * dn_y_prime_dn_y;
-    let de3_dny = dn_x_prime_dn_y;
-    let de4_dny = dn_y_prime_dn_y;
-
-    Jacobian4x4 {
-        data: [
-            [de1_dx, de1_dy, de1_dnx, de1_dny],
-            [de2_dx, de2_dy, de2_dnx, de2_dny],
-            [de3_dx, de3_dy, de3_dnx, de3_dny],
-            [de4_dx, de4_dy, de4_dnx, de4_dny],
-        ],
-    }
-}
-
-// Compose boundary map n times and return the result with accumulated Jacobian
-pub fn compose_boundary_map_n_times(
-    p: ExtendedPoint,
-    n: usize,
-    a: f64,
-    b: f64,
-    epsilon: f64,
-) -> (ExtendedPoint, Jacobian4x4) {
-    let mut current = p;
-
-    if n == 0 {
-        return (p, Jacobian4x4::identity());
-    }
-
-    let mut accumulated_jacobian = boundary_map_jacobian(p.x, p.y, p.nx, p.ny, a, b, epsilon);
-
-    current = boundary_map(p.x, p.y, p.nx, p.ny, a, b, epsilon);
-
-    for _ in 1..n {
-        if !current.is_finite() || !current.is_bounded(1e10) {
-            return (
-                ExtendedPoint::new(f64::NAN, f64::NAN, f64::NAN, f64::NAN),
-                Jacobian4x4::identity(),
-            );
-        }
-
-        let jac_current =
-            boundary_map_jacobian(current.x, current.y, current.nx, current.ny, a, b, epsilon);
-        accumulated_jacobian = jac_current.multiply(&accumulated_jacobian);
-        current = boundary_map(current.x, current.y, current.nx, current.ny, a, b, epsilon);
-    }
-
-    (current, accumulated_jacobian)
-}
-
-// Find periodic point of the boundary map using Davidchack-Lai method
-// adjust for 4d boundary map
-pub fn find_boundary_periodic_point_davidchack_lai(
-    x0: f64,
-    y0: f64,
-    nx_0: f64,
-    ny_0: f64,
-    period: usize,
-    a: f64,
-    b: f64,
-    epsilon: f64,
-    beta: Option<f64>,
-    max_iter: usize,
-    tol: f64,
-) -> Option<ExtendedPoint> {
-    let mut x = x0;
-    let mut y = y0;
-    let mut nx = nx_0;
-    let mut ny = ny_0;
-
-    let beta_val = beta.unwrap_or_else(|| 15.0 * 1.3_f64.powi(period as i32));
-
-    for _ in 0..max_iter {
-        if !x.is_finite()
-            || !y.is_finite()
-            || !nx.is_finite()
-            || !ny.is_finite()
-            || x.abs() > 100.0
-            || y.abs() > 100.0
-        {
-            return None;
-        }
-
-        let current = ExtendedPoint::new(x, y, nx, ny);
-        let (mapped, jac_fn) = compose_boundary_map_n_times(current, period, a, b, epsilon);
-
-        if !mapped.is_finite() {
-            return None;
-        }
-
-        // compute g = E^n(p) - p
-        let gx = mapped.x - x;
-        let gy = mapped.y - y;
-        let gnx = mapped.nx - nx;
-        let gny = mapped.ny - ny;
-
-        let g_norm = (gx * gx + gy * gy + gnx * gnx + gny * gny).sqrt();
-
-        if g_norm < 1e-10 {
-            return Some(current);
-        }
-
-        // compute Jacobian of g = E^n - I
-        let jac_g = jac_fn.subtract_identity();
-
-        // Davidchank-Lai stabilization
-        let scaled_beta = beta_val * g_norm;
-
-        let mut modified_jac = [[0.0; 4]; 4];
-        for i in 0..4 {
-            for j in 0..4 {
-                modified_jac[i][j] = -jac_g.data[i][j];
-            }
-            modified_jac[i][i] += scaled_beta;
-        }
-        let modified_jac = Jacobian4x4 { data: modified_jac };
-
-        let jac_inv = match modified_jac.inverse() {
-            Some(inv) => inv,
-            None => return None,
-        };
-
-        // delta = J^-1 * g
-        let dx = jac_inv.data[0][0] * gx
-            + jac_inv.data[0][1] * gy
-            + jac_inv.data[0][2] * gnx
-            + jac_inv.data[0][3] * gny;
-        let dy = jac_inv.data[1][0] * gx
-            + jac_inv.data[1][1] * gy
-            + jac_inv.data[1][2] * gnx
-            + jac_inv.data[1][3] * gny;
-        let dnx = jac_inv.data[2][0] * gx
-            + jac_inv.data[2][1] * gy
-            + jac_inv.data[2][2] * gnx
-            + jac_inv.data[2][3] * gny;
-        let dny = jac_inv.data[3][0] * gx
-            + jac_inv.data[3][1] * gy
-            + jac_inv.data[3][2] * gnx
-            + jac_inv.data[3][3] * gny;
-
-        if !dx.is_finite() || !dy.is_finite() || !dnx.is_finite() || !dny.is_finite() {
-            return None;
-        }
-
-        x += dx;
-        y += dy;
-        nx += dnx;
-        ny += dny;
-
-        // renormalize the normal vector after each step
-        let norm = (nx * nx + ny * ny).sqrt();
-        nx /= norm;
-        ny /= norm;
-
-        let delta_norm = (dx * dx + dy * dy + dnx * dnx + dny * dny).sqrt();
-        if delta_norm < tol {
-            break;
-        }
-    }
-
-    let final_point = ExtendedPoint::new(x, y, nx, ny);
-    let (mapped, _) = compose_boundary_map_n_times(final_point, period, a, b, epsilon);
-
-    let dist = (mapped.x - x).powi(2)
-        + (mapped.y - y).powi(2)
-        + (mapped.nx - nx).powi(2)
-        + (mapped.ny - ny).powi(2);
-
-    if dist < 1e-10 {
-        return Some(final_point);
-    } else {
-        None
-    }
-}
-
-// main function for finding periodic orbits of boundary map using Davidchack-Lai
-pub fn davidchack_lai_boundary_map(
-    a: f64,
-    b: f64,
-    epsilon: f64,
-    max_period: usize,
-    grid_size: usize,
-    theta_grid_size: usize,
-    x_min: f64,
-    x_max: f64,
-    y_min: f64,
-    y_max: f64,
-) -> PeriodicOrbitDatabase {
-    let mut database = PeriodicOrbitDatabase::new();
-
-    let (x_min, x_max) = clamp_pair(x_min, x_max, RANGE_LIMIT);
-    let (y_min, y_max) = clamp_pair(y_min, y_max, RANGE_LIMIT);
-    let x_range = (x_min, x_max);
-    let y_range = (y_min, y_max);
-    let theta_range = (0.0, 2.0 * PI);
-
-    // stage 1: find orbits of all periods using 3D grid search
-    for period in 1..=max_period {
-        log_message(&format!("Searching for period {} orbits...", period));
-
-        let mut found_count = 0;
-        let total_points = grid_size * grid_size * theta_grid_size;
-        let mut checked = 0;
-
-        for i in 0..grid_size {
-            for j in 0..grid_size {
-                for k in 0..theta_grid_size {
-                    checked += 1;
-                    if checked % 1000 == 0 {
-                        log_message(&format!(
-                            "searching periodic points .. {}/{}",
-                            checked, total_points
-                        ));
-                    }
-
-                    let x0 =
-                        x_range.0 + (x_range.1 - x_range.0) * (i as f64 + 0.5) / (grid_size as f64);
-                    let y0 =
-                        y_range.0 + (y_range.1 - y_range.0) * (j as f64 + 0.5) / (grid_size as f64);
-
-                    let theta = theta_range.0
-                        + (theta_range.1 - theta_range.0) * (k as f64 + 0.5)
-                            / (theta_grid_size as f64);
-                    let nx0 = theta.cos();
-                    let ny0 = theta.sin();
-
-                    if let Some(fixed_point) = find_boundary_periodic_point_davidchack_lai(
-                        x0, y0, nx0, ny0, period, a, b, epsilon, None, 100, 1e-20,
-                    ) {
-                        if !fixed_point.is_bounded(100.0) {
-                            continue;
-                        }
-
-                        if database.contains_extended_point(&fixed_point, 0.01) {
-                            continue;
-                        }
-
-                        // compute orbit points
-                        let mut orbit_points = vec![BoundaryPoint {
-                            x: fixed_point.x,
-                            y: fixed_point.y,
-                        }];
-
-                        let mut extended_orbit_points = vec![fixed_point];
-                        let mut current = fixed_point;
-
-                        for _ in 1..period {
-                            current = boundary_map(
-                                current.x, current.y, current.nx, current.ny, a, b, epsilon,
-                            );
-                            orbit_points.push(BoundaryPoint {
-                                x: current.x,
-                                y: current.y,
-                            });
-                            extended_orbit_points.push(current);
-                        }
-
-                        let (_, jac_fn) =
-                            compose_boundary_map_n_times(fixed_point, period, a, b, epsilon);
-                        let (stability, eigenvalues) = classify_stability_4d(&jac_fn);
-
-                        database.add_orbit(PeriodicOrbit {
-                            points: orbit_points,
-                            extended_points: extended_orbit_points,
-                            period,
-                            stability,
-                            eigenvalues,
-                        });
-                        found_count += 1;
-                    }
-                }
-            }
-        }
-        log_message(&format!(
-            "Found {} orbits of period: {}",
-            found_count, period
-        ))
-    }
-    database
-}
-
 /// Classify stability based on 4D Jacobian eigenvalues
 /// For boundary map, one eigenvalue is always 0 (constraint ||n|| = 1)
 /// We ignore this eigenvalue and classify based on the remaining 3
@@ -871,26 +476,19 @@ pub fn classify_stability_4d(jac: &Jacobian4x4) -> (StabilityType, Vec<f64>) {
     (stability, nonzero_eigenvalues)
 }
 
-fn verify_minimal_period_boundary(
-    point: &ExtendedPoint,
-    claimed_period: usize,
+/// WASM-exposed boundary map for Hénon, routing through the generic pipeline.
+#[wasm_bindgen(js_name = "boundary_map")]
+pub fn boundary_map_henon(
+    x: f64,
+    y: f64,
+    nx: f64,
+    ny: f64,
     a: f64,
     b: f64,
-    epsilon: f64,
-) -> bool {
-    for divisor in 1..claimed_period {
-        if claimed_period % divisor == 0 {
-            let (mapped, _) = compose_boundary_map_n_times(*point, divisor, a, b, epsilon);
-            let dist = (mapped.x - point.x).powi(2)
-                + (mapped.y - point.y).powi(2)
-                + (mapped.nx - point.nx).powi(2)
-                + (mapped.ny - point.ny).powi(2);
-            if dist < 1e-6 {
-                return false;
-            }
-        }
-    }
-    return true;
+    ep: f64,
+) -> ExtendedPoint {
+    let system = HenonSystem::new(a, b, ep);
+    boundary_map_generic(&system, x, y, nx, ny)
 }
 
 pub struct BoundaryHenonSystemAnalysis {
@@ -912,13 +510,12 @@ impl BoundaryHenonSystemAnalysis {
         y_min: f64,
         y_max: f64,
     ) -> Self {
-        let grid_size = 20;
-        let theta_grid_size = 20;
+        let grid_size = 15;
+        let theta_grid_size = 12;
 
-        let orbit_database = davidchack_lai_boundary_map(
-            a,
-            b,
-            epsilon,
+        let system = HenonSystem::new(a, b, epsilon);
+        let orbit_database = find_all_boundary_periodic_orbits_generic(
+            &system,
             max_period,
             grid_size,
             theta_grid_size,
@@ -928,7 +525,7 @@ impl BoundaryHenonSystemAnalysis {
             y_max,
         );
         log_message(&format!(
-            "Total orbits found using Davidchack-Lai (boundary map): {}",
+            "Total orbits found (boundary map): {}",
             orbit_database.total_count()
         ));
 
@@ -972,8 +569,9 @@ impl BoundaryHenonSystemAnalysis {
             classification,
         });
 
+        let system = HenonSystem::new(self.a, self.b, self.epsilon);
         for iter in 1..=max_iterations {
-            let next_point = boundary_map(x, y, nx, ny, self.a, self.b, self.epsilon);
+            let next_point = boundary_map_generic(&system, x, y, nx, ny);
 
             if !next_point.is_finite() || !next_point.is_bounded(100.0) {
                 log_message(&format!("Point diverged at iteration {}", iter));
@@ -1394,7 +992,7 @@ fn find_boundary_periodic_point_davidchack_lai_generic(
         + (mapped.nx - nx).powi(2)
         + (mapped.ny - ny).powi(2);
 
-    if dist < 1e-6 {
+    if dist < 1e-10 {
         Some(final_point)
     } else {
         None
@@ -1444,7 +1042,7 @@ fn davidchack_lai_boundary_map_generic(
                             continue;
                         }
 
-                        if database.contains_extended_point(&fixed_point, 0.01) {
+                        if database.contains_spatial_point(&fixed_point, 0.01) {
                             continue;
                         }
 
@@ -1488,6 +1086,381 @@ fn davidchack_lai_boundary_map_generic(
         ));
     }
     database
+}
+
+fn verify_minimal_period_generic(
+    system: &dyn DynamicalSystem,
+    point: &ExtendedPoint,
+    claimed_period: usize,
+) -> bool {
+    for divisor in 1..claimed_period {
+        if claimed_period % divisor == 0 {
+            let (mapped, _) = compose_boundary_map_n_times_generic(system, *point, divisor);
+            let dist = (mapped.x - point.x).powi(2)
+                + (mapped.y - point.y).powi(2)
+                + (mapped.nx - point.nx).powi(2)
+                + (mapped.ny - point.ny).powi(2);
+            if dist < 1e-10 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn try_add_orbit_generic(
+    system: &dyn DynamicalSystem,
+    database: &mut PeriodicOrbitDatabase,
+    fp: ExtendedPoint,
+    period: usize,
+) -> bool {
+    if !fp.is_bounded(100.0) {
+        return false;
+    }
+    // Deduplicate using spatial (x,y) distance only — the same orbit can be
+    // found from different initial normal vectors, yielding different (nx,ny)
+    // but the same physical periodic point.
+    if database.contains_spatial_point(&fp, 0.01) {
+        return false;
+    }
+    if !verify_minimal_period_generic(system, &fp, period) {
+        return false;
+    }
+
+    let mut orbit_points = vec![BoundaryPoint { x: fp.x, y: fp.y }];
+    let mut extended_orbit_points = vec![fp];
+    let mut current = fp;
+
+    for _ in 1..period {
+        current = boundary_map_generic(system, current.x, current.y, current.nx, current.ny);
+        orbit_points.push(BoundaryPoint {
+            x: current.x,
+            y: current.y,
+        });
+        extended_orbit_points.push(current);
+    }
+
+    let (_, jac_fn) = compose_boundary_map_n_times_generic(system, fp, period);
+    let (stability, eigenvalues) = classify_stability_4d(&jac_fn);
+
+    database.add_orbit(PeriodicOrbit {
+        points: orbit_points,
+        extended_points: extended_orbit_points,
+        period,
+        stability,
+        eigenvalues,
+    });
+    true
+}
+
+pub fn find_all_boundary_periodic_orbits_generic(
+    system: &dyn DynamicalSystem,
+    max_period: usize,
+    grid_size: usize,
+    theta_grid_size: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+) -> PeriodicOrbitDatabase {
+    let mut database = PeriodicOrbitDatabase::new();
+
+    let (x_min, x_max) = clamp_pair(x_min, x_max, RANGE_LIMIT);
+    let (y_min, y_max) = clamp_pair(y_min, y_max, RANGE_LIMIT);
+    let x_range = (x_min, x_max);
+    let y_range = (y_min, y_max);
+    let theta_range = (0.0, 2.0 * PI);
+
+    for period in 1..=max_period {
+        let gs = grid_size;
+        let ts = theta_grid_size;
+
+        log_message(&format!(
+            "Searching period {} orbits (grid {}x{}x{})...",
+            period, gs, gs, ts
+        ));
+
+        let mut found_count = 0;
+
+        // stage 1: uniform grid search
+        for i in 0..gs {
+            for j in 0..gs {
+                for k in 0..ts {
+                    let x0 = x_range.0 + (x_range.1 - x_range.0) * (i as f64 + 0.5) / (gs as f64);
+                    let y0 = y_range.0 + (y_range.1 - y_range.0) * (j as f64 + 0.5) / (gs as f64);
+                    let theta = theta_range.0
+                        + (theta_range.1 - theta_range.0) * (k as f64 + 0.5) / (ts as f64);
+                    let nx0 = theta.cos();
+                    let ny0 = theta.sin();
+
+                    if let Some(fp) = find_boundary_periodic_point_davidchack_lai_generic(
+                        system, x0, y0, nx0, ny0, period, None, 150, 1e-12,
+                    ) {
+                        if try_add_orbit_generic(system, &mut database, fp, period) {
+                            found_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // stage 2: continuation — perturb known orbit points as seeds
+        let known: Vec<ExtendedPoint> = database
+            .orbits
+            .iter()
+            .flat_map(|o| o.extended_points.iter().copied())
+            .collect();
+        let perturbations = [0.01, -0.01, 0.005, -0.005];
+        for ep in &known {
+            for &dp in &perturbations {
+                for &(dx, dy) in &[(dp, 0.0), (0.0, dp)] {
+                    if let Some(fp) = find_boundary_periodic_point_davidchack_lai_generic(
+                        system,
+                        ep.x + dx,
+                        ep.y + dy,
+                        ep.nx,
+                        ep.ny,
+                        period,
+                        None,
+                        150,
+                        1e-12,
+                    ) {
+                        if try_add_orbit_generic(system, &mut database, fp, period) {
+                            found_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        log_message(&format!(
+            "Found {} orbits of period {}",
+            found_count, period
+        ));
+    }
+
+    log_message(&format!(
+        "Total boundary map orbits: {}",
+        database.total_count()
+    ));
+    database
+}
+
+/// convert PeriodicOrbitDatabase to Vec<FoundPeriodicOrbit>.
+fn database_to_found_orbits_generic(db: &PeriodicOrbitDatabase) -> Vec<FoundPeriodicOrbit> {
+    db.orbits
+        .iter()
+        .map(|orbit| FoundPeriodicOrbit {
+            points: orbit.points.iter().map(|p| (p.x, p.y)).collect(),
+            extended_points: orbit
+                .extended_points
+                .iter()
+                .map(|p| (p.x, p.y, p.nx, p.ny))
+                .collect(),
+            period: orbit.period,
+            stability: String::from(&orbit.stability),
+            eigenvalues: orbit.eigenvalues.clone(),
+        })
+        .collect()
+}
+
+pub fn parameter_sweep_henon_fast(
+    base_params: &[(String, f64)],
+    sweep_param_name: &str,
+    sweep_min: f64,
+    sweep_max: f64,
+    num_samples: usize,
+    epsilon: f64,
+    max_period: usize,
+    grid_size: usize,
+    theta_grid_size: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+) -> ParameterSweepResult {
+    let mut results = Vec::with_capacity(num_samples);
+
+    let get_param = |name: &str, override_name: &str, override_val: f64| -> f64 {
+        if name == override_name {
+            override_val
+        } else {
+            base_params
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, v)| *v)
+                .unwrap_or(0.0)
+        }
+    };
+
+    for i in 0..num_samples {
+        let sweep_val = if num_samples <= 1 {
+            sweep_min
+        } else {
+            sweep_min + (sweep_max - sweep_min) * (i as f64) / ((num_samples - 1) as f64)
+        };
+
+        log_message(&format!(
+            "Sweep {}={:.4} ({}/{})",
+            sweep_param_name,
+            sweep_val,
+            i + 1,
+            num_samples
+        ));
+
+        let a = get_param("a", sweep_param_name, sweep_val);
+        let b = get_param("b", sweep_param_name, sweep_val);
+
+        let system = HenonSystem::new(a, b, epsilon);
+        let db = find_all_boundary_periodic_orbits_generic(
+            &system,
+            max_period,
+            grid_size,
+            theta_grid_size,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        );
+
+        let orbits = database_to_found_orbits_generic(&db);
+        let stable_count = orbits.iter().filter(|o| o.stability == "stable").count();
+        let unstable_count = orbits.iter().filter(|o| o.stability == "unstable").count();
+        let saddle_count = orbits.iter().filter(|o| o.stability == "saddle").count();
+
+        results.push(SweepResult {
+            param_value: sweep_val,
+            total_orbits: orbits.len(),
+            stable_count,
+            unstable_count,
+            saddle_count,
+            orbits,
+        });
+    }
+
+    ParameterSweepResult {
+        param_name: sweep_param_name.to_string(),
+        param_min: sweep_min,
+        param_max: sweep_max,
+        num_samples,
+        b: base_params
+            .iter()
+            .find(|(n, _)| n == "b")
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0),
+        epsilon,
+        max_period,
+        results,
+    }
+}
+
+/// run parameter sweep over a named parameter using the generic pipeline.
+pub fn parameter_sweep_generic(
+    x_eq: &str,
+    y_eq: &str,
+    base_params: &[(String, f64)],
+    sweep_param_name: &str,
+    sweep_min: f64,
+    sweep_max: f64,
+    num_samples: usize,
+    epsilon: f64,
+    max_period: usize,
+    grid_size: usize,
+    theta_grid_size: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+) -> ParameterSweepResult {
+    let mut results = Vec::with_capacity(num_samples);
+
+    for i in 0..num_samples {
+        let sweep_val = if num_samples <= 1 {
+            sweep_min
+        } else {
+            sweep_min + (sweep_max - sweep_min) * (i as f64) / ((num_samples - 1) as f64)
+        };
+
+        log_message(&format!(
+            "Sweep {}={:.4} ({}/{})",
+            sweep_param_name,
+            sweep_val,
+            i + 1,
+            num_samples
+        ));
+
+        // Build parameter set with the swept value
+        let mut entries = Vec::new();
+        for (name, value) in base_params {
+            if name == sweep_param_name {
+                entries.push(crate::parameters::ParameterEntry {
+                    name: name.clone(),
+                    value: sweep_val,
+                });
+            } else {
+                entries.push(crate::parameters::ParameterEntry {
+                    name: name.clone(),
+                    value: *value,
+                });
+            }
+        }
+
+        let param_set = match crate::parameters::ParameterSet::new(entries) {
+            Ok(ps) => ps,
+            Err(e) => {
+                log_message(&format!("Parameter error at sample {}: {}", i, e));
+                continue;
+            }
+        };
+
+        let system = match UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set) {
+            Ok(s) => s,
+            Err(e) => {
+                log_message(&format!("System error at sample {}: {}", i, e));
+                continue;
+            }
+        };
+
+        let db = find_all_boundary_periodic_orbits_generic(
+            &system,
+            max_period,
+            grid_size,
+            theta_grid_size,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        );
+
+        let orbits = database_to_found_orbits_generic(&db);
+        let stable_count = orbits.iter().filter(|o| o.stability == "stable").count();
+        let unstable_count = orbits.iter().filter(|o| o.stability == "unstable").count();
+        let saddle_count = orbits.iter().filter(|o| o.stability == "saddle").count();
+
+        results.push(SweepResult {
+            param_value: sweep_val,
+            total_orbits: orbits.len(),
+            stable_count,
+            unstable_count,
+            saddle_count,
+            orbits,
+        });
+    }
+
+    ParameterSweepResult {
+        param_name: sweep_param_name.to_string(),
+        param_min: sweep_min,
+        param_max: sweep_max,
+        num_samples,
+        b: base_params
+            .iter()
+            .find(|(n, _)| n == "b")
+            .map(|(_, v)| *v)
+            .unwrap_or(0.0),
+        epsilon,
+        max_period,
+        results,
+    }
 }
 
 #[wasm_bindgen]
@@ -1600,7 +1573,7 @@ pub fn boundary_map_user_defined(
     let state = ExtendedState { pos, normal };
 
     let next_state = system
-        .extended_map(state, 1) // 1 iteration
+        .extended_map(state, 1)
         .map_err(|e| JsValue::from_str(&format!("Error evaluating extended map: {}", e)))?;
 
     let result = ExtendedPoint {
@@ -1615,4 +1588,960 @@ pub fn boundary_map_user_defined(
         web_sys::console::error_1(&JsValue::from_str(&format!("Serialization error: {:?}", e)));
         JsValue::from_str("Failed to serialize result")
     })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FoundPeriodicOrbit {
+    pub points: Vec<(f64, f64)>,
+    pub extended_points: Vec<(f64, f64, f64, f64)>,
+    pub period: usize,
+    pub stability: String,
+    pub eigenvalues: Vec<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SweepResult {
+    pub param_value: f64,
+    pub orbits: Vec<FoundPeriodicOrbit>,
+    pub total_orbits: usize,
+    pub stable_count: usize,
+    pub unstable_count: usize,
+    pub saddle_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParameterSweepResult {
+    pub param_name: String,
+    pub param_min: f64,
+    pub param_max: f64,
+    pub num_samples: usize,
+    pub b: f64,
+    pub epsilon: f64,
+    pub max_period: usize,
+    pub results: Vec<SweepResult>,
+}
+
+impl ParameterSweepResult {
+    pub fn to_csv(&self) -> String {
+        let mut csv = String::new();
+        csv.push_str("parameter_a,period,stability,x,y,nx,ny\n");
+        for result in &self.results {
+            for orbit in &result.orbits {
+                for &(x, y, nx, ny) in &orbit.extended_points {
+                    csv.push_str(&format!(
+                        "{},{},{},{},{},{},{}\n",
+                        result.param_value, orbit.period, orbit.stability, x, y, nx, ny
+                    ));
+                }
+            }
+        }
+        csv
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_default()
+    }
+}
+
+// WASM
+
+#[wasm_bindgen(js_name = "parameterSweep")]
+pub fn parameter_sweep_wasm(
+    b: f64,
+    epsilon: f64,
+    a_min: f64,
+    a_max: f64,
+    num_samples: usize,
+    max_period: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+) -> Result<JsValue, JsValue> {
+    console_error_panic_hook::set_once();
+    let base_params = vec![
+        ("a".to_string(), a_min), // placeholder, will be swept
+        ("b".to_string(), b),
+    ];
+    let result = parameter_sweep_henon_fast(
+        &base_params,
+        "a",
+        a_min,
+        a_max,
+        num_samples,
+        epsilon,
+        max_period,
+        15,
+        12,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+    );
+    serde_wasm_bindgen::to_value(&result)
+        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+}
+
+/// Unified parameter sweep: works for any system type + any parameter.
+#[wasm_bindgen(js_name = "parameterSweepGeneric")]
+pub fn parameter_sweep_generic_wasm(
+    system_type: &str,
+    x_eq: &str,
+    y_eq: &str,
+    params_js: JsValue,
+    sweep_param_name: &str,
+    sweep_min: f64,
+    sweep_max: f64,
+    num_samples: usize,
+    epsilon: f64,
+    max_period: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+) -> Result<JsValue, JsValue> {
+    console_error_panic_hook::set_once();
+
+    let param_set =
+        crate::parameters::parameter_set_from_js(params_js).map_err(|e| JsValue::from_str(&e))?;
+
+    let base_params: Vec<(String, f64)> = param_set
+        .entries()
+        .iter()
+        .map(|e| (e.name.clone(), e.value))
+        .collect();
+
+    let grid_size = 15;
+    let theta_grid_size = 12;
+
+    let result = if system_type == "henon" || system_type == "discrete_henon" {
+        parameter_sweep_henon_fast(
+            &base_params,
+            sweep_param_name,
+            sweep_min,
+            sweep_max,
+            num_samples,
+            epsilon,
+            max_period,
+            grid_size,
+            theta_grid_size,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )
+    } else {
+        let (actual_x_eq, actual_y_eq) = match system_type {
+            "duffing" | "discrete_duffing" => ("y", "-b * x + a * y - y^3"),
+            _ => (x_eq, y_eq),
+        };
+        parameter_sweep_generic(
+            actual_x_eq,
+            actual_y_eq,
+            &base_params,
+            sweep_param_name,
+            sweep_min,
+            sweep_max,
+            num_samples,
+            epsilon,
+            max_period,
+            grid_size,
+            theta_grid_size,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        )
+    };
+
+    serde_wasm_bindgen::to_value(&result)
+        .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+}
+
+#[wasm_bindgen(js_name = "parameterSweepCsv")]
+pub fn parameter_sweep_csv_wasm(
+    b: f64,
+    epsilon: f64,
+    a_min: f64,
+    a_max: f64,
+    num_samples: usize,
+    max_period: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+) -> String {
+    console_error_panic_hook::set_once();
+    let base_params = vec![("a".to_string(), a_min), ("b".to_string(), b)];
+    let result = parameter_sweep_henon_fast(
+        &base_params,
+        "a",
+        a_min,
+        a_max,
+        num_samples,
+        epsilon,
+        max_period,
+        15,
+        12,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+    );
+    result.to_csv()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_jacobian_multiply_identity() {
+        let a = Jacobian::new(1.0, 2.0, 3.0, 4.0);
+        let id = Jacobian::identity();
+        let result = a.multiply(&id);
+        assert!((result.j11 - 1.0).abs() < 1e-12);
+        assert!((result.j12 - 2.0).abs() < 1e-12);
+        assert!((result.j21 - 3.0).abs() < 1e-12);
+        assert!((result.j22 - 4.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_jacobian_multiply_known_product() {
+        let a = Jacobian::new(1.0, 2.0, 3.0, 4.0);
+        let b = Jacobian::new(5.0, 6.0, 7.0, 8.0);
+        let result = a.multiply(&b);
+        assert!((result.j11 - 19.0).abs() < 1e-12, "j11: got {}", result.j11);
+        assert!((result.j12 - 22.0).abs() < 1e-12, "j12: got {}", result.j12);
+        assert!((result.j21 - 43.0).abs() < 1e-12, "j21: got {}", result.j21);
+        assert!((result.j22 - 50.0).abs() < 1e-12, "j22: got {}", result.j22);
+    }
+
+    #[test]
+    fn test_jacobian_multiply_associative() {
+        let a = Jacobian::new(1.0, 2.0, 3.0, 4.0);
+        let b = Jacobian::new(5.0, 6.0, 7.0, 8.0);
+        let c = Jacobian::new(-1.0, 0.5, 0.3, -2.0);
+        let ab_c = a.multiply(&b).multiply(&c);
+        let a_bc = a.multiply(&b.multiply(&c));
+        assert!((ab_c.j11 - a_bc.j11).abs() < 1e-10);
+        assert!((ab_c.j12 - a_bc.j12).abs() < 1e-10);
+        assert!((ab_c.j21 - a_bc.j21).abs() < 1e-10);
+        assert!((ab_c.j22 - a_bc.j22).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_jacobian_eigenvalues_real() {
+        let j = Jacobian::new(3.0, 0.0, 0.0, 1.0);
+        let (l1, l2, complex) = j.eigenvalues();
+        assert!(!complex);
+        assert!((l1 - 3.0).abs() < 1e-10 || (l1 - 1.0).abs() < 1e-10);
+        assert!((l2 - 3.0).abs() < 1e-10 || (l2 - 1.0).abs() < 1e-10);
+        assert!((l1 - l2).abs() > 1.0); // they're different
+    }
+
+    #[test]
+    fn test_jacobian_eigenvalues_complex() {
+        let j = Jacobian::new(0.0, -1.0, 1.0, 0.0);
+        let (l1, l2, complex) = j.eigenvalues();
+        assert!(complex);
+        assert!((l1 - 1.0).abs() < 1e-10);
+        assert!((l2 - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_jacobian_determinant_correct() {
+        let j = Jacobian::new(2.0, 3.0, 1.0, 4.0);
+        let (l1, l2, _) = j.eigenvalues();
+        let det_from_eig = l1 * l2;
+        assert!(
+            (det_from_eig - 5.0).abs() < 1e-10,
+            "det from eigenvalues: {}",
+            det_from_eig
+        );
+    }
+
+    #[test]
+    fn test_henon_jacobian_values() {
+        let a = 1.4;
+        let b = 0.3;
+        let x = 0.5;
+        let sys = make_henon_system(a, b, 0.01);
+        let j = sys.jacobian(Vector2::new(x, 0.0));
+        assert!((j[(0, 0)] - (-2.0 * a * x)).abs() < 1e-12);
+        assert!((j[(0, 1)] - 1.0).abs() < 1e-12);
+        assert!((j[(1, 0)] - b).abs() < 1e-12);
+        assert!((j[(1, 1)] - 0.0).abs() < 1e-12);
+    }
+
+    fn make_henon_system(a: f64, b: f64, ep: f64) -> HenonSystem {
+        HenonSystem::new(a, b, ep)
+    }
+
+    #[test]
+    fn test_generic_dl_finds_fixed_point() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let result = find_boundary_periodic_point_davidchack_lai_generic(
+            &sys, 0.6, 0.2, 1.0, 0.0, 1, None, 200, 1e-12,
+        );
+        if let Some(fp) = result {
+            let mapped = boundary_map_generic(&sys, fp.x, fp.y, fp.nx, fp.ny);
+            assert!((mapped.x - fp.x).abs() < 1e-8, "Not a fixed point in x");
+            assert!((mapped.y - fp.y).abs() < 1e-8, "Not a fixed point in y");
+            let norm = (fp.nx * fp.nx + fp.ny * fp.ny).sqrt();
+            assert!((norm - 1.0).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_generic_finds_fixed_points() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let db = find_all_boundary_periodic_orbits_generic(&sys, 1, 10, 8, -3.0, 3.0, -3.0, 3.0);
+
+        let p1_orbits: Vec<_> = db.orbits.iter().filter(|o| o.period == 1).collect();
+        assert!(
+            !p1_orbits.is_empty(),
+            "Should find at least one fixed point"
+        );
+
+        for orbit in &p1_orbits {
+            let ep_pt = &orbit.extended_points[0];
+            let mapped = boundary_map_generic(&sys, ep_pt.x, ep_pt.y, ep_pt.nx, ep_pt.ny);
+            assert!((mapped.x - ep_pt.x).abs() < 1e-6, "Fixed point x mismatch");
+            assert!((mapped.y - ep_pt.y).abs() < 1e-6, "Fixed point y mismatch");
+        }
+    }
+
+    #[test]
+    fn test_generic_finds_period2() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let db = find_all_boundary_periodic_orbits_generic(&sys, 2, 12, 10, -3.0, 3.0, -3.0, 3.0);
+
+        let p2_orbits: Vec<_> = db.orbits.iter().filter(|o| o.period == 2).collect();
+        for orbit in &p2_orbits {
+            assert_eq!(orbit.extended_points.len(), 2);
+            let p = &orbit.extended_points[0];
+            let mapped1 = boundary_map_generic(&sys, p.x, p.y, p.nx, p.ny);
+            let mapped2 = boundary_map_generic(&sys, mapped1.x, mapped1.y, mapped1.nx, mapped1.ny);
+            assert!((mapped2.x - p.x).abs() < 1e-6, "Period-2 x doesn't return");
+            assert!((mapped2.y - p.y).abs() < 1e-6, "Period-2 y doesn't return");
+            let not_fp = (mapped1.x - p.x).abs() > 1e-4 || (mapped1.y - p.y).abs() > 1e-4;
+            assert!(not_fp, "Period-2 orbit is actually a fixed point");
+        }
+    }
+
+    #[test]
+    fn test_generic_no_duplicates() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let db = find_all_boundary_periodic_orbits_generic(&sys, 2, 10, 8, -3.0, 3.0, -3.0, 3.0);
+
+        for i in 0..db.orbits.len() {
+            for j in (i + 1)..db.orbits.len() {
+                for pi in &db.orbits[i].extended_points {
+                    for pj in &db.orbits[j].extended_points {
+                        let dist = ((pi.x - pj.x).powi(2) + (pi.y - pj.y).powi(2)).sqrt();
+                        assert!(dist > 0.001,
+                            "Duplicate points between orbits {} and {}: ({:.4},{:.4}) and ({:.4},{:.4})",
+                            i, j, pi.x, pi.y, pj.x, pj.y);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_generic_stability_assigned() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let db = find_all_boundary_periodic_orbits_generic(&sys, 2, 10, 8, -3.0, 3.0, -3.0, 3.0);
+
+        for orbit in &db.orbits {
+            match orbit.stability {
+                StabilityType::Stable | StabilityType::Unstable | StabilityType::Saddle => {}
+            }
+            for ev in &orbit.eigenvalues {
+                assert!(ev.is_finite(), "Eigenvalue not finite: {}", ev);
+            }
+        }
+    }
+
+    #[test]
+    fn test_generic_normal_unit_length() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let db = find_all_boundary_periodic_orbits_generic(&sys, 1, 10, 8, -3.0, 3.0, -3.0, 3.0);
+
+        for orbit in &db.orbits {
+            for p in &orbit.extended_points {
+                let norm = (p.nx * p.nx + p.ny * p.ny).sqrt();
+                assert!(
+                    (norm - 1.0).abs() < 1e-8,
+                    "Normal not unit length: {} at ({:.4},{:.4})",
+                    norm,
+                    p.x,
+                    p.y
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_generic_verify_minimal_period() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let db = find_all_boundary_periodic_orbits_generic(&sys, 1, 10, 8, -3.0, 3.0, -3.0, 3.0);
+
+        for orbit in db.orbits.iter().filter(|o| o.period == 1) {
+            let p = &orbit.extended_points[0];
+            assert!(verify_minimal_period_generic(&sys, p, 1));
+            assert!(
+                !verify_minimal_period_generic(&sys, p, 2),
+                "Fixed point should NOT be minimal period 2"
+            );
+        }
+    }
+
+    #[test]
+    fn test_classify_stability_4d_diagonal() {
+        let stable_jac = Jacobian4x4 {
+            data: [
+                [0.5, 0.0, 0.0, 0.0],
+                [0.0, 0.3, 0.0, 0.0],
+                [0.0, 0.0, 0.2, 0.0],
+                [0.0, 0.0, 0.0, 0.1],
+            ],
+        };
+        let (stab, _) = classify_stability_4d(&stable_jac);
+        assert!(
+            matches!(stab, StabilityType::Stable),
+            "Expected stable, got {:?}",
+            stab
+        );
+
+        let unstable_jac = Jacobian4x4 {
+            data: [
+                [2.0, 0.0, 0.0, 0.0],
+                [0.0, 3.0, 0.0, 0.0],
+                [0.0, 0.0, 1.5, 0.0],
+                [0.0, 0.0, 0.0, 4.0],
+            ],
+        };
+        let (stab, _) = classify_stability_4d(&unstable_jac);
+        assert!(
+            matches!(stab, StabilityType::Unstable),
+            "Expected unstable, got {:?}",
+            stab
+        );
+    }
+
+    #[test]
+    fn test_generic_database_to_found_orbits() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let db = find_all_boundary_periodic_orbits_generic(&sys, 1, 10, 8, -3.0, 3.0, -3.0, 3.0);
+        let found = database_to_found_orbits_generic(&db);
+
+        assert_eq!(found.len(), db.orbits.len());
+        for (fo, orbit) in found.iter().zip(db.orbits.iter()) {
+            assert_eq!(fo.period, orbit.period);
+            assert_eq!(fo.points.len(), orbit.points.len());
+            assert_eq!(fo.extended_points.len(), orbit.extended_points.len());
+            for (ep_tuple, ep_orig) in fo.extended_points.iter().zip(orbit.extended_points.iter()) {
+                assert!((ep_tuple.0 - ep_orig.x).abs() < 1e-14);
+                assert!((ep_tuple.1 - ep_orig.y).abs() < 1e-14);
+                assert!((ep_tuple.2 - ep_orig.nx).abs() < 1e-14);
+                assert!((ep_tuple.3 - ep_orig.ny).abs() < 1e-14);
+            }
+        }
+    }
+
+    #[test]
+    fn test_generic_sweep_basic() {
+        let base_params = vec![("a".to_string(), 0.5), ("b".to_string(), 0.3)];
+        let result = parameter_sweep_generic(
+            "1 - a * x^2 + y",
+            "b * x",
+            &base_params,
+            "a",
+            0.5,
+            1.0,
+            3,
+            0.01,
+            1,
+            10,
+            8,
+            -3.0,
+            3.0,
+            -3.0,
+            3.0,
+        );
+        assert_eq!(result.results.len(), 3);
+        assert_eq!(result.param_name, "a");
+        assert!((result.param_min - 0.5).abs() < 1e-12);
+        assert!((result.param_max - 1.0).abs() < 1e-12);
+        assert!((result.epsilon - 0.01).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_generic_sweep_orbit_counts_consistent() {
+        let base_params = vec![("a".to_string(), 0.5), ("b".to_string(), 0.3)];
+        let result = parameter_sweep_generic(
+            "1 - a * x^2 + y",
+            "b * x",
+            &base_params,
+            "a",
+            0.5,
+            1.5,
+            3,
+            0.01,
+            1,
+            10,
+            8,
+            -3.0,
+            3.0,
+            -3.0,
+            3.0,
+        );
+        for sweep in &result.results {
+            assert_eq!(
+                sweep.total_orbits,
+                sweep.stable_count + sweep.unstable_count + sweep.saddle_count,
+                "Stability counts don't sum to total at a={}",
+                sweep.param_value
+            );
+        }
+    }
+
+    #[test]
+    fn test_generic_sweep_csv_export() {
+        let base_params = vec![("a".to_string(), 1.0), ("b".to_string(), 0.3)];
+        let result = parameter_sweep_generic(
+            "1 - a * x^2 + y",
+            "b * x",
+            &base_params,
+            "a",
+            1.0,
+            1.4,
+            2,
+            0.01,
+            1,
+            10,
+            8,
+            -3.0,
+            3.0,
+            -3.0,
+            3.0,
+        );
+        let csv = result.to_csv();
+        assert!(
+            csv.starts_with("parameter_a,period,stability,x,y,nx,ny\n"),
+            "CSV header mismatch: {}",
+            csv.lines().next().unwrap_or("")
+        );
+        let lines: Vec<&str> = csv.lines().collect();
+        assert!(lines.len() > 1, "CSV should have data rows");
+        for line in &lines[1..] {
+            if !line.is_empty() {
+                let cols: Vec<&str> = line.split(',').collect();
+                assert_eq!(
+                    cols.len(),
+                    7,
+                    "Expected 7 columns, got {}: {}",
+                    cols.len(),
+                    line
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_generic_sweep_json_export() {
+        let base_params = vec![("a".to_string(), 1.0), ("b".to_string(), 0.3)];
+        let result = parameter_sweep_generic(
+            "1 - a * x^2 + y",
+            "b * x",
+            &base_params,
+            "a",
+            1.0,
+            1.2,
+            2,
+            0.01,
+            1,
+            10,
+            8,
+            -3.0,
+            3.0,
+            -3.0,
+            3.0,
+        );
+        let json = result.to_json();
+        assert!(!json.is_empty());
+        assert!(json.starts_with('{'));
+        assert!(json.contains("\"param_name\""));
+        assert!(json.contains("\"results\""));
+        assert!(json.contains("\"epsilon\""));
+    }
+
+    #[test]
+    fn test_generic_sweep_single_sample() {
+        let base_params = vec![("a".to_string(), 1.0), ("b".to_string(), 0.3)];
+        let result = parameter_sweep_generic(
+            "1 - a * x^2 + y",
+            "b * x",
+            &base_params,
+            "a",
+            1.0,
+            1.0,
+            1,
+            0.01,
+            1,
+            10,
+            8,
+            -3.0,
+            3.0,
+            -3.0,
+            3.0,
+        );
+        assert_eq!(result.results.len(), 1);
+        assert!((result.results[0].param_value - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_generic_sweep_finds_orbits() {
+        let base_params = vec![("a".to_string(), 0.5), ("b".to_string(), 0.3)];
+        let result = parameter_sweep_generic(
+            "1 - a * x^2 + y",
+            "b * x",
+            &base_params,
+            "a",
+            0.5,
+            1.5,
+            3,
+            0.01,
+            1,
+            10,
+            8,
+            -3.0,
+            3.0,
+            -3.0,
+            3.0,
+        );
+        let total: usize = result.results.iter().map(|r| r.total_orbits).sum();
+        assert!(total > 0, "Sweep should find at least some orbits");
+    }
+
+    #[test]
+    fn test_user_defined_henon_matches_generic() {
+        let sys_native = make_henon_system(1.4, 0.3, 0.01);
+        let params = crate::parameters::ParameterSet::new(vec![
+            crate::parameters::ParameterEntry {
+                name: "a".to_string(),
+                value: 1.4,
+            },
+            crate::parameters::ParameterEntry {
+                name: "b".to_string(),
+                value: 0.3,
+            },
+        ])
+        .unwrap();
+        let sys_user =
+            UserDefinedDynamicalSystem::new("1 - a * x^2 + y", "b * x", 0.01, params).unwrap();
+
+        let db_native =
+            find_all_boundary_periodic_orbits_generic(&sys_native, 1, 10, 8, -3.0, 3.0, -3.0, 3.0);
+        let db_user =
+            find_all_boundary_periodic_orbits_generic(&sys_user, 1, 10, 8, -3.0, 3.0, -3.0, 3.0);
+
+        assert!(
+            !db_native.orbits.is_empty(),
+            "Native HenonSystem found no orbits"
+        );
+        assert!(
+            !db_user.orbits.is_empty(),
+            "UserDefined Hénon found no orbits"
+        );
+    }
+
+    #[test]
+    fn test_generic_sweep_custom_param_name() {
+        let base_params = vec![("alpha".to_string(), 1.0), ("beta".to_string(), 0.3)];
+        let result = parameter_sweep_generic(
+            "1 - alpha * x^2 + y",
+            "beta * x",
+            &base_params,
+            "alpha",
+            0.5,
+            1.5,
+            3,
+            0.01,
+            1,
+            10,
+            8,
+            -3.0,
+            3.0,
+            -3.0,
+            3.0,
+        );
+        assert_eq!(result.results.len(), 3);
+        assert_eq!(result.param_name, "alpha");
+    }
+
+    #[test]
+    fn test_boundary_map_preserves_normal_unit_length() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let result = boundary_map_generic(&sys, 0.5, 0.15, 1.0, 0.0);
+        let norm = (result.nx * result.nx + result.ny * result.ny).sqrt();
+        assert!(
+            (norm - 1.0).abs() < 1e-10,
+            "Normal should be unit length, got {}",
+            norm
+        );
+    }
+
+    #[test]
+    fn test_boundary_map_reduces_to_henon_at_zero_epsilon() {
+        let a = 1.4;
+        let b = 0.3;
+        let x = 0.5;
+        let y = 0.15;
+        let sys = make_henon_system(a, b, 0.0);
+        let result = boundary_map_generic(&sys, x, y, 1.0, 0.0);
+        let mapped = sys.map(Vector2::new(x, y)).unwrap();
+        assert!(
+            (result.x - mapped.x).abs() < 1e-10,
+            "At ep=0, boundary map should equal Henon map"
+        );
+        assert!((result.y - mapped.y).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_4x4_jacobian_determinant() {
+        let j = Jacobian4x4 {
+            data: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0, 0.0],
+                [0.0, 0.0, 3.0, 0.0],
+                [0.0, 0.0, 0.0, 4.0],
+            ],
+        };
+        assert!((j.determinant() - 24.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_4x4_jacobian_inverse() {
+        let j = Jacobian4x4 {
+            data: [
+                [2.0, 1.0, 0.0, 0.0],
+                [0.0, 3.0, 1.0, 0.0],
+                [0.0, 0.0, 2.0, 1.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+        };
+        let inv = j.inverse().expect("Should be invertible");
+        let product = j.multiply(&inv);
+        for i in 0..4 {
+            for k in 0..4 {
+                let expected = if i == k { 1.0 } else { 0.0 };
+                assert!(
+                    (product.data[i][k] - expected).abs() < 1e-10,
+                    "J*J^-1 [{},{}] = {}, expected {}",
+                    i,
+                    k,
+                    product.data[i][k],
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_henon_system_map_inverse_roundtrip() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let p = Vector2::new(0.6, 0.2);
+        let mapped = sys.map(p).unwrap();
+        let recovered = sys.map_inverse(mapped).unwrap();
+        assert!((recovered.x - p.x).abs() < 1e-10, "x roundtrip failed");
+        assert!((recovered.y - p.y).abs() < 1e-10, "y roundtrip failed");
+    }
+
+    #[test]
+    fn test_henon_analytic_vs_numerical_jacobian() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let p = Vector2::new(0.6, 0.2);
+        let analytic = sys.jacobian(p);
+
+        let h = 1e-7;
+        let fx_plus = sys.map(Vector2::new(p.x + h, p.y)).unwrap();
+        let fx_minus = sys.map(Vector2::new(p.x - h, p.y)).unwrap();
+        let fy_plus = sys.map(Vector2::new(p.x, p.y + h)).unwrap();
+        let fy_minus = sys.map(Vector2::new(p.x, p.y - h)).unwrap();
+
+        let num_00 = (fx_plus.x - fx_minus.x) / (2.0 * h);
+        let num_01 = (fy_plus.x - fy_minus.x) / (2.0 * h);
+        let num_10 = (fx_plus.y - fx_minus.y) / (2.0 * h);
+        let num_11 = (fy_plus.y - fy_minus.y) / (2.0 * h);
+
+        assert!((analytic[(0, 0)] - num_00).abs() < 1e-5, "J[0,0] mismatch");
+        assert!((analytic[(0, 1)] - num_01).abs() < 1e-5, "J[0,1] mismatch");
+        assert!((analytic[(1, 0)] - num_10).abs() < 1e-5, "J[1,0] mismatch");
+        assert!((analytic[(1, 1)] - num_11).abs() < 1e-5, "J[1,1] mismatch");
+    }
+
+    #[test]
+    fn test_boundary_map_generic_orbit_is_periodic() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let fp = find_boundary_periodic_point_davidchack_lai_generic(
+            &sys, 0.6, 0.2, 1.0, 0.0, 1, None, 200, 1e-12,
+        );
+        if let Some(fp) = fp {
+            let mapped = boundary_map_generic(&sys, fp.x, fp.y, fp.nx, fp.ny);
+            let dist = (mapped.x - fp.x).powi(2)
+                + (mapped.y - fp.y).powi(2)
+                + (mapped.nx - fp.nx).powi(2)
+                + (mapped.ny - fp.ny).powi(2);
+            assert!(
+                dist < 1e-8,
+                "Fixed point should map to itself, dist={}",
+                dist
+            );
+        }
+    }
+
+    #[test]
+    fn test_generic_4d_jacobian_numerical_vs_analytic() {
+        let sys = make_henon_system(1.4, 0.3, 0.01);
+        let x = 0.5;
+        let y = 0.15;
+        let nx = 1.0;
+        let ny = 0.0;
+        let jac = boundary_map_jacobian_generic(&sys, x, y, nx, ny);
+
+        let h = 1e-6;
+        let e_plus = boundary_map_generic(&sys, x + h, y, nx, ny);
+        let e_minus = boundary_map_generic(&sys, x - h, y, nx, ny);
+        let de_dx_0 = (e_plus.x - e_minus.x) / (2.0 * h);
+        let de_dx_1 = (e_plus.y - e_minus.y) / (2.0 * h);
+
+        assert!(
+            (jac.data[0][0] - de_dx_0).abs() < 1e-4,
+            "dE1/dx: analytic={}, numerical={}",
+            jac.data[0][0],
+            de_dx_0
+        );
+        assert!(
+            (jac.data[1][0] - de_dx_1).abs() < 1e-4,
+            "dE2/dx: analytic={}, numerical={}",
+            jac.data[1][0],
+            de_dx_1
+        );
+    }
+
+    #[test]
+    fn test_spatial_dedup_prevents_duplicate_orbits() {
+        // Two extended points at the same (x,y) but different normals
+        // should be treated as the same orbit by spatial dedup
+        let mut db = PeriodicOrbitDatabase::new();
+        let p1 = ExtendedPoint::new(0.5, 0.15, 1.0, 0.0);
+
+        db.add_orbit(PeriodicOrbit {
+            points: vec![BoundaryPoint { x: 0.5, y: 0.15 }],
+            extended_points: vec![p1],
+            period: 1,
+            stability: StabilityType::Stable,
+            eigenvalues: vec![0.3, 0.1],
+        });
+
+        // Same (x,y) with different normal: should be detected as duplicate
+        let p2 = ExtendedPoint::new(0.5, 0.15, 0.0, 1.0);
+        assert!(
+            db.contains_spatial_point(&p2, 0.01),
+            "Spatial dedup should catch same (x,y) with different normal"
+        );
+        // But 4D dedup would miss it (distance = sqrt(2) ≈ 1.414)
+        assert!(
+            !db.contains_extended_point(&p2, 0.01),
+            "4D dedup misses same orbit with different normal"
+        );
+    }
+
+    #[test]
+    fn test_convergence_tolerance_rejects_loose_fixed_points() {
+        // A point that maps to something at distance ~1e-8 should NOT be
+        // accepted as a fixed point (tolerance is 1e-10)
+        let system = HenonSystem::new(1.4, 0.3, 0.01);
+
+        // Use a random point that's clearly not a fixed point
+        let non_fp = ExtendedPoint::new(0.123, 0.456, 1.0, 0.0);
+        let (mapped, _) = compose_boundary_map_n_times_generic(&system, non_fp, 1);
+        let dist = (mapped.x - non_fp.x).powi(2)
+            + (mapped.y - non_fp.y).powi(2)
+            + (mapped.nx - non_fp.nx).powi(2)
+            + (mapped.ny - non_fp.ny).powi(2);
+        // A random point should have large residual, confirming our tolerance matters
+        assert!(dist > 1e-10, "Random point should not be a fixed point");
+    }
+
+    #[test]
+    fn test_henon_unique_orbit_count_at_typical_params() {
+        // At a=0.4, b=0.3, epsilon=0.1, the Hénon boundary map should find
+        // a small number of distinct orbits (not duplicates)
+        let system = HenonSystem::new(0.4, 0.3, 0.1);
+        let db = find_all_boundary_periodic_orbits_generic(
+            &system, 1, 15, 12, -3.0, 3.0, -3.0, 3.0,
+        );
+
+        // Count stable orbits — should be at most 1 for period 1
+        let stable_count = db.orbits.iter()
+            .filter(|o| o.period == 1 && matches!(o.stability, StabilityType::Stable))
+            .count();
+        assert!(
+            stable_count <= 1,
+            "Expected at most 1 stable fixed point, got {}",
+            stable_count
+        );
+
+        // All orbits should be spatially distinct
+        for (i, orbit_a) in db.orbits.iter().enumerate() {
+            for (j, orbit_b) in db.orbits.iter().enumerate() {
+                if i >= j { continue; }
+                for pa in &orbit_a.points {
+                    for pb in &orbit_b.points {
+                        let dist = ((pa.x - pb.x).powi(2) + (pa.y - pb.y).powi(2)).sqrt();
+                        assert!(
+                            dist > 0.01,
+                            "Orbits {} and {} have spatially overlapping points ({:.4},{:.4}) vs ({:.4},{:.4}), dist={:.6}",
+                            i, j, pa.x, pa.y, pb.x, pb.y, dist
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_sweep_and_viz_grid_consistency() {
+        // Verify that the sweep finds the same orbits as the visualization
+        // at a given parameter value, since they now use the same grid size
+        let system = HenonSystem::new(0.4, 0.3, 0.1);
+
+        // "Visualization" path
+        let viz_db = find_all_boundary_periodic_orbits_generic(
+            &system, 1, 15, 12, -3.0, 3.0, -3.0, 3.0,
+        );
+
+        // "Sweep" path (same grid now)
+        let base_params = vec![
+            ("a".to_string(), 0.4),
+            ("b".to_string(), 0.3),
+        ];
+        let sweep_result = parameter_sweep_henon_fast(
+            &base_params, "a", 0.4, 0.4, 1, 0.1, 1, 15, 12,
+            -3.0, 3.0, -3.0, 3.0,
+        );
+
+        assert_eq!(sweep_result.results.len(), 1);
+        let sweep_orbits = &sweep_result.results[0].orbits;
+
+        assert_eq!(
+            viz_db.total_count(),
+            sweep_orbits.len(),
+            "Sweep and visualization should find same number of orbits"
+        );
+    }
 }

@@ -50,7 +50,6 @@ impl VideoConfig {
     }
 }
 
-/// Video recorder state machine for coordinating frame capture
 #[wasm_bindgen]
 pub struct VideoRecorder {
     status: RecordingStatus,
@@ -58,7 +57,6 @@ pub struct VideoRecorder {
     frame_count: u32,
     start_time_ms: f64,
 
-    // Parameters for filename
     dynamic_name: String,
     param_a: f64,
     param_b: f64,
@@ -87,7 +85,6 @@ impl VideoRecorder {
         }
     }
 
-    /// Start recording with current parameters
     #[wasm_bindgen]
     pub fn start_recording(
         &mut self,
@@ -115,7 +112,6 @@ impl VideoRecorder {
         true
     }
 
-    /// Record a frame timestamp
     #[wasm_bindgen]
     pub fn add_frame(&mut self, _parameter_value: f64) -> u32 {
         if self.status != RecordingStatus::Recording {
@@ -126,19 +122,16 @@ impl VideoRecorder {
         self.frame_count
     }
 
-    /// Get current frame count
     #[wasm_bindgen]
     pub fn get_frame_count(&self) -> u32 {
         self.frame_count
     }
 
-    /// Get recording status
     #[wasm_bindgen]
     pub fn get_status(&self) -> RecordingStatus {
         self.status
     }
 
-    /// Set status to encoding
     #[wasm_bindgen]
     pub fn start_encoding(&mut self) {
         if self.status == RecordingStatus::Recording {
@@ -146,19 +139,16 @@ impl VideoRecorder {
         }
     }
 
-    /// Set status to complete
     #[wasm_bindgen]
     pub fn finish_encoding(&mut self) {
         self.status = RecordingStatus::Complete;
     }
 
-    /// Set status to error
     #[wasm_bindgen]
     pub fn set_error(&mut self) {
         self.status = RecordingStatus::Error;
     }
 
-    /// Reset recorder to idle
     #[wasm_bindgen]
     pub fn reset(&mut self) {
         self.status = RecordingStatus::Idle;
@@ -185,37 +175,31 @@ impl VideoRecorder {
         )
     }
 
-    /// Get video config
     #[wasm_bindgen]
     pub fn get_config(&self) -> VideoConfig {
         self.config.clone()
     }
 
-    /// Set video config
     #[wasm_bindgen]
     pub fn set_config(&mut self, config: VideoConfig) {
         self.config = config;
     }
 
-    /// Get expected duration in seconds based on frame count and fps
     #[wasm_bindgen]
     pub fn get_expected_duration_secs(&self) -> f64 {
         self.frame_count as f64 / self.config.fps as f64
     }
 
-    /// Check if currently recording
     #[wasm_bindgen]
     pub fn is_recording(&self) -> bool {
         self.status == RecordingStatus::Recording
     }
 
-    /// Check if encoding
     #[wasm_bindgen]
     pub fn is_encoding(&self) -> bool {
         self.status == RecordingStatus::Encoding
     }
 
-    /// Get parameter overlay text for current frame
     #[wasm_bindgen]
     pub fn get_overlay_text(&self, current_param_value: f64) -> String {
         format!(

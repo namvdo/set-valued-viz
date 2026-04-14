@@ -16,7 +16,6 @@ fn get_cache() -> &'static Mutex<HashMap<CacheKey, CachedManifoldResult>> {
 }
 
 fn cache_key(a: f64, b: f64, x_min: f64, x_max: f64, y_min: f64, y_max: f64) -> CacheKey {
-    // Round to nearest 0.01 for cache key
     (
         (a * 100.0).round() as i32,
         (b * 100.0).round() as i32,
@@ -319,15 +318,6 @@ impl HenonParams {
         if !normal.x.is_finite() || !normal.y.is_finite() {
             return Err("Invalid normal in transform_normal_inverse".to_string());
         }
-
-        // For the inverse extended map, we need J_{f^-1}^{-T}(pos) * normal
-        // where f^{-1}(x, y) = (y/b, x + a*(y/b)^2 - 1)
-        //
-        // J_{f^-1}(x, y) = [[0, 1/b], [1, 2ay/b^2]]
-        // J_{f^-1}^{-1}(x, y) = [[-2ay/b, 1], [b, 0]]  (this equals J_f at the inverse image)
-        // J_{f^-1}^{-T}(x, y) = [[-2ay/b, b], [1, 0]]
-        //
-        // At position (x, y), this becomes:
         let coeff = -2.0 * self.a * pos.y / self.b;
         let jac_inv_inv_t = Matrix2::new(coeff, self.b, 1.0, 0.0);
 
@@ -3396,8 +3386,6 @@ mod tests {
 
     #[test]
     fn test_stable_unstable_manifold_invariance() {
-        // f(W^s(p)) = W^s(p): mapping a point on the stable manifold should produce
-        // another point that's still "on" the stable manifold (converges to saddle)
         let a = 1.4;
         let b = 0.3;
         let eps = 0.01;
@@ -3712,7 +3700,6 @@ mod tests {
 
     #[test]
     fn test_unstable_manifold_backward_convergence() {
-        // Points on W^u(p) should converge to p under BACKWARD iteration
         let a = 1.4;
         let b = 0.3;
         let eps = 0.01;
