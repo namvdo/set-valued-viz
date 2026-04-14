@@ -48,34 +48,13 @@ cd set-valued-viz
 ### **2. Build WebAssembly Module**
 
 ```bash
-# Build the Rust code to WebAssembly
-wasm-pack build --target web --out-dir pkg
+cd frontend && npm install && npm run build-wasm
 ```
 
-This creates the WebAssembly module in the `pkg/` directory.
+This creates the WebAssembly module in the `pkg/` directory and compiled the Rust code to WebAssembly so it can be used in JavaScript side.
 
-### **3. Install Frontend Dependencies**
-
-```bash
-cd frontend
-npm install
-```
-
-### **4. Copy WASM Files to Frontend**
+### **3. Start the frontend server**
 
 ```bash
-# Copy WebAssembly files to the frontend source
-npm run build-wasm
-```
-
-**Alternative:** Manual copy if the npm script doesn't work:
-
-```bash
-cp -r ../pkg/* src/pkg/
-```
-
-### **5. Start Development Server**
-
-```bash
-npm run dev
+cd frontend && npm install run dev
 ```
