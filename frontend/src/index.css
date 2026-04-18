@@ -65,7 +65,7 @@ body {
   font-weight: 600;
   letter-spacing: .08em;
   text-transform: uppercase;
-  color: var(--text-3);
+  color: var(--text);
   border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
@@ -88,7 +88,7 @@ body {
 }
 .type-toggle-label {
   font-size: 10px;
-  color: var(--text-3);
+  color: var(--text);
   letter-spacing: .06em;
   text-transform: uppercase;
   margin-bottom: 7px;
@@ -139,7 +139,7 @@ body {
 }
 .sys-pick-label {
   font-size: 10px;
-  color: var(--text-3);
+  color: var(--text);
   letter-spacing: .06em;
   text-transform: uppercase;
   margin-bottom: 6px;
@@ -183,7 +183,7 @@ body {
 }
 .eq-display-label {
   font-size: 10px;
-  color: var(--text-3);
+  color: var(--text);
   letter-spacing: .06em;
   text-transform: uppercase;
   margin-bottom: 6px;
@@ -229,9 +229,9 @@ body {
   padding: 9px 14px 8px;
   cursor: pointer;
   user-select: none;
-  color: var(--text-2);
+  color: var(--text);
 }
-.sec-head:hover { color: var(--text); }
+.sec-head:hover { color: #fff; }
 .sec-title {
   font-size: 10px;
   font-weight: 600;
@@ -255,10 +255,10 @@ body {
 .p-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 5px; }
 .p-name {
   font-size: 12px;
-  color: var(--text-2);
+  color: var(--text);
 }
 .p-name em { font-style: italic; color: var(--text); }
-.p-name small { font-size: 10px; color: var(--text-3); margin-left: 4px; }
+.p-name small { font-size: 10px; color: var(--text-2); margin-left: 4px; }
 .p-val {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -544,7 +544,7 @@ body {
   padding: 5px 8px;
   background: var(--panel);
 }
-.info-cell-k { color: var(--text-3); display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 1px; }
+.info-cell-k { color: var(--text); display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 1px; }
 .info-cell-v { color: var(--text-2); }
 .info-cell-v.hi { color: var(--green); }
 
@@ -867,7 +867,7 @@ kbd {
 .divider { height: 1px; background: var(--line); margin: 8px 0; }
 .small-label {
   font-size: 10px;
-  color: var(--text-3);
+  color: var(--text);
   text-transform: uppercase;
   letter-spacing: .06em;
   margin-bottom: 5px;
@@ -896,7 +896,7 @@ kbd {
 /* starting point inputs */
 .start-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .start-field { }
-.start-field label { font-size: 10px; color: var(--text-3); display: block; margin-bottom: 3px; font-family: var(--font-mono); }
+.start-field label { font-size: 10px; color: var(--text); display: block; margin-bottom: 3px; font-family: var(--font-mono); }
 .start-field input {
   width: 100%;
   background: var(--surface);

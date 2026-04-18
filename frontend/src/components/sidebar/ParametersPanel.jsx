@@ -74,6 +74,7 @@ export const ParametersPanel = ({
       {!isContinuous && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '2px' }}>
           <div>
+            <div style={{ fontSize: '10px', color: 'var(--text)', marginBottom: '3px' }}>Max period</div>
             <input
               className={`p-val ${disabled ? 'disabled' : ''}`}
               style={{ width: '100%' }}
@@ -94,7 +95,7 @@ export const ParametersPanel = ({
             />
           </div>
           <div>
-            <div style={{ fontSize: '10px', color: 'var(--text-3)', marginBottom: '3px' }}>Max iter</div>
+            <div style={{ fontSize: '10px', color: 'var(--text)', marginBottom: '3px' }}>Max iter</div>
             <input
               className={`p-val ${disabled ? 'disabled' : ''}`}
               style={{ width: '100%' }}
