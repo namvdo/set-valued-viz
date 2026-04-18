@@ -12,7 +12,9 @@ export const ParametersPanel = ({
   applyPreset,
   customParams,
   setCustomParams,
-  paramErrors
+  paramErrors,
+  hasPendingInputChanges,
+  applyInputsAndRecompute
 }) => {
 
   const sys = Object.values(systems).flat().find(s => s.id === systemId);
@@ -117,6 +119,21 @@ export const ParametersPanel = ({
           </div>
         </div>
       )}
+
+      <div className="param-apply-wrap">
+        {hasPendingInputChanges && (
+          <div className="param-pending-note">
+            Pending changes are local. Apply to recompute.
+          </div>
+        )}
+        <button
+          className="param-apply-btn"
+          onClick={applyInputsAndRecompute}
+          disabled={disabled || typeof applyInputsAndRecompute !== 'function'}
+        >
+          {hasPendingInputChanges ? 'Apply & Recompute' : 'Recompute'}
+        </button>
+      </div>
     </Collapsible>
   );
 }

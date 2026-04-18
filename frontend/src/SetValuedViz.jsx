@@ -14,6 +14,36 @@ const GRID_STYLE = {
 
 const EMPTY_ARRAY = [];
 const DEFAULT_VALIDATION = { normalized: EMPTY_ARRAY, errors: EMPTY_ARRAY, valid: true };
+const INITIAL_CUSTOM_EQUATIONS = {
+    custom: {
+        xEq: '1 - a * x^2 + y',
+        yEq: 'b * x'
+    },
+    custom_ode: {
+        xEq: 'y',
+        yEq: 'x - x^3 - delta * y'
+    }
+};
+const INITIAL_CUSTOM_PARAMS = {
+    custom: [
+        { name: 'a', value: 1.4 },
+        { name: 'b', value: 0.3 }
+    ],
+    custom_ode: [
+        { name: 'delta', value: 0.15 }
+    ]
+};
+const INITIAL_PARAMS = {
+    a: 0.4,
+    b: 0.3,
+    delta: 0.15,
+    h: 0.05,
+    epsilon: 0.1,
+    startX: 0.1,
+    startY: 0.1,
+    maxIterations: 1000,
+    maxPeriod: 5
+};
 
 const henonMap = (x, y, a, b) => ({
     x: 1.0 - a * x * x + y,
@@ -150,44 +180,16 @@ const SetValuedViz = () => {
     const manifoldDebounceRef = useRef(null);
 
     const [dynamicSystem, setDynamicSystem] = useState('duffing_ode'); // 'henon', 'duffing', or 'custom'
-    const [customEquations, setCustomEquations] = useState({
-        custom: {
-            xEq: '1 - a * x^2 + y',
-            yEq: 'b * x'
-        },
-        custom_ode: {
-            xEq: 'y',
-            yEq: 'x - x^3 - delta * y'
-        }
-    });
-    const [debouncedEquations, setDebouncedEquations] = useState({
-        xEq: '1 - a * x^2 + y',
-        yEq: 'b * x'
-    });
-    const [customParams, setCustomParams] = useState({
-        custom: [
-            { name: 'a', value: 1.4 },
-            { name: 'b', value: 0.3 }
-        ],
-        custom_ode: [
-            { name: 'delta', value: 0.15 }
-        ]
-    });
+    const [customEquations, setCustomEquations] = useState(INITIAL_CUSTOM_EQUATIONS);
+    const [draftCustomEquations, setDraftCustomEquations] = useState(INITIAL_CUSTOM_EQUATIONS);
+    const [customParams, setCustomParams] = useState(INITIAL_CUSTOM_PARAMS);
+    const [draftCustomParams, setDraftCustomParams] = useState(INITIAL_CUSTOM_PARAMS);
     const [equationError, setEquationError] = useState(null);
-    const equationDebounceRef = useRef(null);
     const [wasmModule, setWasmModule] = useState(null);
+    const [computeRequestId, setComputeRequestId] = useState(0);
 
-    const [params, setParams] = useState({
-        a: 0.4,
-        b: 0.3,
-        delta: 0.15,
-        h: 0.05,
-        epsilon: 0.1,
-        startX: 0.1,
-        startY: 0.1,
-        maxIterations: 1000,
-        maxPeriod: 5
-    });
+    const [params, setParams] = useState(INITIAL_PARAMS);
+    const [draftParams, setDraftParams] = useState(INITIAL_PARAMS);
 
     const [periodicState, setPeriodicState] = useState({
         orbits: [],
@@ -226,14 +228,39 @@ const SetValuedViz = () => {
     const isCustomContinuous = dynamicSystem === 'custom_ode';
     const isCustomSystem = isCustomDiscrete || isCustomContinuous;
     const activeCustomKey = isCustomSystem ? dynamicSystem : 'custom';
-    const activeCustomEquations = isCustomSystem ? customEquations[activeCustomKey] : customEquations.custom;
-    const activeCustomParams = isCustomSystem ? customParams[activeCustomKey] : EMPTY_ARRAY;
-    const paramValidation = useMemo(() => {
+    const activeAppliedCustomEquations = isCustomSystem ? customEquations[activeCustomKey] : customEquations.custom;
+    const activeDraftCustomEquations = isCustomSystem ? draftCustomEquations[activeCustomKey] : draftCustomEquations.custom;
+    const activeAppliedCustomParams = isCustomSystem ? customParams[activeCustomKey] : EMPTY_ARRAY;
+    const activeDraftCustomParams = isCustomSystem ? draftCustomParams[activeCustomKey] : EMPTY_ARRAY;
+    const appliedParamValidation = useMemo(() => {
         if (!isCustomSystem) {
             return DEFAULT_VALIDATION;
         }
-        return normalizeParams(activeCustomParams);
-    }, [isCustomSystem, activeCustomParams]);
+        return normalizeParams(activeAppliedCustomParams);
+    }, [isCustomSystem, activeAppliedCustomParams]);
+    const draftParamValidation = useMemo(() => {
+        if (!isCustomSystem) {
+            return DEFAULT_VALIDATION;
+        }
+        return normalizeParams(activeDraftCustomParams);
+    }, [isCustomSystem, activeDraftCustomParams]);
+    const hasPendingInputChanges = useMemo(() => {
+        const paramsDirty = JSON.stringify(draftParams) !== JSON.stringify(params);
+        if (!isCustomSystem) {
+            return paramsDirty;
+        }
+        const equationsDirty = JSON.stringify(activeDraftCustomEquations) !== JSON.stringify(activeAppliedCustomEquations);
+        const customParamsDirty = JSON.stringify(activeDraftCustomParams) !== JSON.stringify(activeAppliedCustomParams);
+        return paramsDirty || equationsDirty || customParamsDirty;
+    }, [
+        draftParams,
+        params,
+        isCustomSystem,
+        activeDraftCustomEquations,
+        activeAppliedCustomEquations,
+        activeDraftCustomParams,
+        activeAppliedCustomParams
+    ]);
 
     // Parameter sweep state
     const [sweepState, setSweepState] = useState({
@@ -425,56 +452,75 @@ const SetValuedViz = () => {
         loadWasm();
     }, []);
 
-    useEffect(() => {
-        if (equationDebounceRef.current) {
-            clearTimeout(equationDebounceRef.current);
+    const validateCustomDraft = useCallback((candidateEquations, candidateParams, candidateEpsilon) => {
+        if (!isCustomSystem) {
+            return { valid: true };
         }
-        equationDebounceRef.current = setTimeout(() => {
-            if (!wasmModule || !isCustomSystem) {
-                setDebouncedEquations(activeCustomEquations);
-                setEquationError(null);
-                return;
-            }
-            if (!paramValidation.valid) {
-                const firstError = paramValidation.errors.find(Boolean);
-                setEquationError(firstError ? `Parameter error: ${firstError}` : 'Invalid parameters');
-                return;
-            }
-            try {
-                if (dynamicSystem === 'custom') {
-                    const result = wasmModule.evaluate_user_defined_map(
-                        0.5, 0.5,
-                        activeCustomEquations.xEq, activeCustomEquations.yEq,
-                        paramValidation.normalized,
-                        params.epsilon
-                    );
-                    if (result && isFinite(result.x) && isFinite(result.y)) {
-                        setDebouncedEquations(activeCustomEquations);
-                        setEquationError(null);
-                    } else {
-                        setEquationError('Equations produce non-finite values');
-                    }
-                } else {
-                    const result = wasmModule.evaluate_user_defined_ode(
-                        0.5, 0.5,
-                        activeCustomEquations.xEq, activeCustomEquations.yEq,
-                        paramValidation.normalized
-                    );
-                    if (result && isFinite(result.x) && isFinite(result.y)) {
-                        setDebouncedEquations(activeCustomEquations);
-                        setEquationError(null);
-                    } else {
-                        setEquationError('Equations produce non-finite values');
-                    }
+        if (!draftParamValidation.valid) {
+            const firstError = draftParamValidation.errors.find(Boolean);
+            return { valid: false, error: firstError ? `Parameter error: ${firstError}` : 'Invalid parameters' };
+        }
+        if (!wasmModule) {
+            return { valid: true };
+        }
+        try {
+            if (dynamicSystem === 'custom') {
+                const result = wasmModule.evaluate_user_defined_map(
+                    0.5, 0.5,
+                    candidateEquations.xEq, candidateEquations.yEq,
+                    candidateParams,
+                    candidateEpsilon
+                );
+                if (result && isFinite(result.x) && isFinite(result.y)) {
+                    return { valid: true };
                 }
-            } catch (err) {
-                setEquationError(String(err).replace('Error: ', ''));
+            } else {
+                const result = wasmModule.evaluate_user_defined_ode(
+                    0.5, 0.5,
+                    candidateEquations.xEq, candidateEquations.yEq,
+                    candidateParams
+                );
+                if (result && isFinite(result.x) && isFinite(result.y)) {
+                    return { valid: true };
+                }
             }
-        }, 1000);
-        return () => {
-            if (equationDebounceRef.current) clearTimeout(equationDebounceRef.current);
-        };
-    }, [activeCustomEquations, dynamicSystem, isCustomSystem, paramValidation, params.epsilon, wasmModule]);
+            return { valid: false, error: 'Equations produce non-finite values' };
+        } catch (err) {
+            return { valid: false, error: String(err).replace('Error: ', '') };
+        }
+    }, [draftParamValidation, dynamicSystem, isCustomSystem, wasmModule]);
+
+    const applyInputsAndRecompute = useCallback(() => {
+        const nextDraftParams = { ...draftParams };
+        if (isCustomSystem) {
+            const nextDraftEquations = draftCustomEquations[activeCustomKey];
+            const nextDraftCustomParams = draftParamValidation.normalized;
+            const validation = validateCustomDraft(nextDraftEquations, nextDraftCustomParams, nextDraftParams.epsilon);
+            if (!validation.valid) {
+                setEquationError(validation.error);
+                return;
+            }
+            setCustomEquations(prev => ({
+                ...prev,
+                [activeCustomKey]: {
+                    xEq: nextDraftEquations.xEq,
+                    yEq: nextDraftEquations.yEq
+                }
+            }));
+            setCustomParams(prev => ({
+                ...prev,
+                [activeCustomKey]: nextDraftCustomParams
+            }));
+        }
+        setEquationError(null);
+        setParams(nextDraftParams);
+        setComputeRequestId(prev => prev + 1);
+    }, [draftParams, isCustomSystem, draftCustomEquations, activeCustomKey, draftParamValidation, validateCustomDraft]);
+
+    useEffect(() => {
+        if (!equationError) return;
+        setEquationError(null);
+    }, [draftCustomEquations, draftCustomParams, draftParams.epsilon, dynamicSystem]);
 
     const systemLabel = useMemo(() => {
         const labels = { henon: 'Hénon', duffing: 'Duffing Map', duffing_ode: 'Duffing ODE', custom: 'Custom', custom_ode: 'Custom ODE' };
@@ -513,16 +559,21 @@ const SetValuedViz = () => {
     }, [dynamicSystem, params]);
 
     useEffect(() => {
+        let paramPatch = null;
         if (dynamicSystem === 'duffing') {
-            setParams(prev => ({ ...prev, a: 2.75, b: 0.2 }));
+            paramPatch = { a: 2.75, b: 0.2 };
         } else if (dynamicSystem === 'duffing_ode') {
-            setParams(prev => ({ ...prev, delta: 0.15, h: 0.05, epsilon: 0.1 }));
+            paramPatch = { delta: 0.15, h: 0.05, epsilon: 0.1 };
         } else if (dynamicSystem === 'custom_ode') {
-            setParams(prev => ({ ...prev, h: 0.05, epsilon: 0.1 }));
+            paramPatch = { h: 0.05, epsilon: 0.1 };
         } else if (dynamicSystem === 'custom') {
-            setParams(prev => ({ ...prev, maxPeriod: 3 }));
+            paramPatch = { maxPeriod: 3 };
         } else {
-            setParams(prev => ({ ...prev, a: 0.4, b: 0.3 }));
+            paramPatch = { a: 0.4, b: 0.3 };
+        }
+        if (paramPatch) {
+            setParams(prev => ({ ...prev, ...paramPatch }));
+            setDraftParams(prev => ({ ...prev, ...paramPatch }));
         }
 
         setManifoldState(prev => ({
@@ -582,12 +633,12 @@ const SetValuedViz = () => {
             return { j11, j12, j21, j22, trace, det };
         }
 
-        if (dynamicSystem === 'custom' && wasmModule && paramValidation.valid) {
+        if (dynamicSystem === 'custom' && wasmModule && appliedParamValidation.valid) {
             const h = 1e-5;
             const evalMap = (xv, yv) => wasmModule.evaluate_user_defined_map(
                 xv, yv,
-                debouncedEquations.xEq, debouncedEquations.yEq,
-                paramValidation.normalized,
+                activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
+                appliedParamValidation.normalized,
                 params.epsilon
             );
             const f1 = evalMap(x + h, y);
@@ -606,12 +657,12 @@ const SetValuedViz = () => {
             return { j11, j12, j21, j22, trace, det };
         }
 
-        if (dynamicSystem === 'custom_ode' && wasmModule && paramValidation.valid) {
+        if (dynamicSystem === 'custom_ode' && wasmModule && appliedParamValidation.valid) {
             const h = 1e-5;
             const evalVF = (xv, yv) => wasmModule.evaluate_user_defined_ode(
                 xv, yv,
-                debouncedEquations.xEq, debouncedEquations.yEq,
-                paramValidation.normalized
+                activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
+                appliedParamValidation.normalized
             );
             const f1 = evalVF(x + h, y);
             const f2 = evalVF(x - h, y);
@@ -643,7 +694,7 @@ const SetValuedViz = () => {
         const trace = j11 + j22;
         const det = j11 * j22 - j12 * j21;
         return { j11, j12, j21, j22, trace, det };
-    }, [params.a, params.b, params.delta, params.h, params.epsilon, dynamicSystem, debouncedEquations, paramValidation, wasmModule]);
+    }, [params.a, params.b, params.delta, params.h, params.epsilon, dynamicSystem, activeAppliedCustomEquations, appliedParamValidation, wasmModule]);
 
     const handleMouseMove = useCallback((event) => {
         if (!canvasRef.current || !sceneRef.current || !cameraRef.current) return;
@@ -860,7 +911,7 @@ const SetValuedViz = () => {
         };
         initSystem();
         return () => { cancelled = true; };
-    }, [wasmModule, dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, params.maxPeriod, params.startX, params.startY, debouncedEquations, viewRange]);
+    }, [wasmModule, dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, params.maxPeriod, params.startX, params.startY, viewRange, computeRequestId]);
 
     useEffect(() => {
         if (manifoldDebounceRef.current) {
@@ -896,7 +947,7 @@ const SetValuedViz = () => {
                 }));
                 return;
             }
-            if ((dynamicSystem === 'custom' || dynamicSystem === 'custom_ode') && !paramValidation.valid) {
+            if ((dynamicSystem === 'custom' || dynamicSystem === 'custom_ode') && !appliedParamValidation.valid) {
                 setManifoldState(prev => ({
                     ...prev,
                     isComputing: false,
@@ -914,8 +965,8 @@ const SetValuedViz = () => {
                     bdeSimRef.current.free();
                 }
                 bdeSimRef.current = new wasmModule.BdeSimulatorUserDefinedWasm(
-                    debouncedEquations.xEq, debouncedEquations.yEq,
-                    paramValidation.normalized,
+                    activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
+                    appliedParamValidation.normalized,
                     params.epsilon,
                     manifoldState.startPoint.x, manifoldState.startPoint.y, 0.05, 1000
                 );
@@ -980,8 +1031,8 @@ const SetValuedViz = () => {
                         if (manifoldState.showStableManifold || manifoldState.showUnstableManifold) {
                             console.log('Computing custom stable AND unstable manifolds:', periodicState.orbits.length, 'orbits');
                             const result = wasmModule.compute_stable_and_unstable_manifolds_user_defined(
-                                debouncedEquations.xEq, debouncedEquations.yEq,
-                                paramValidation.normalized, params.epsilon,
+                                activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
+                                appliedParamValidation.normalized, params.epsilon,
                                 viewRange.xMin,
                                 viewRange.xMax,
                                 viewRange.yMin,
@@ -1013,8 +1064,8 @@ const SetValuedViz = () => {
                     } else {
                         console.log('No periodic orbits, using simple user-defined manifold');
                         const result = wasmModule.compute_user_defined_manifold(
-                            debouncedEquations.xEq, debouncedEquations.yEq,
-                            paramValidation.normalized, params.epsilon,
+                            activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
+                            appliedParamValidation.normalized, params.epsilon,
                             viewRange.xMin,
                             viewRange.xMax,
                             viewRange.yMin,
@@ -1102,7 +1153,7 @@ const SetValuedViz = () => {
                 clearTimeout(manifoldDebounceRef.current);
             }
         };
-    }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.showUnstableManifold, manifoldState.intersectionThreshold, debouncedEquations, paramValidation, manifoldState.startPoint.x, manifoldState.startPoint.y, viewRange]);
+    }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.showUnstableManifold, manifoldState.intersectionThreshold, activeAppliedCustomEquations, appliedParamValidation, manifoldState.startPoint.x, manifoldState.startPoint.y, viewRange, computeRequestId]);
 
     useEffect(() => {
         if (!animationState.isAnimating) {
@@ -1616,20 +1667,20 @@ const SetValuedViz = () => {
 
         let nextPoint;
         if (dynamicSystem === 'custom') {
-            if (!paramValidation.valid) return;
+            if (!appliedParamValidation.valid) return;
             const result = wasmModule.boundary_map_user_defined(
                 x, y, nx, ny,
-                debouncedEquations.xEq, debouncedEquations.yEq,
-                paramValidation.normalized,
+                activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
+                appliedParamValidation.normalized,
                 params.epsilon
             );
             nextPoint = result;
         } else if (dynamicSystem === 'custom_ode') {
-            if (!paramValidation.valid) return;
+            if (!appliedParamValidation.valid) return;
             const result = wasmModule.boundary_map_user_defined_ode(
                 x, y, nx, ny,
-                debouncedEquations.xEq, debouncedEquations.yEq,
-                paramValidation.normalized,
+                activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
+                appliedParamValidation.normalized,
                 params.h,
                 params.epsilon
             );
@@ -1657,7 +1708,7 @@ const SetValuedViz = () => {
             iteration: prev.iteration + 1,
             hasStarted: true
         }));
-    }, [manifoldState.isReady, manifoldState.isRunning, manifoldState.currentPoint, wasmModule, params, dynamicSystem, debouncedEquations, paramValidation]);
+    }, [manifoldState.isReady, manifoldState.isRunning, manifoldState.currentPoint, wasmModule, params, dynamicSystem, activeAppliedCustomEquations, appliedParamValidation]);
 
     const runToConvergenceManifold = useCallback(() => {
         if (!wasmModule) return;
@@ -1672,19 +1723,19 @@ const SetValuedViz = () => {
 
         const stepFn = (cx, cy, cnx, cny) => {
             if (dynamicSystem === 'custom') {
-                if (!paramValidation.valid) return null;
+                if (!appliedParamValidation.valid) return null;
                 return wasmModule.boundary_map_user_defined(
                     cx, cy, cnx, cny,
-                    debouncedEquations.xEq, debouncedEquations.yEq,
-                    paramValidation.normalized,
+                    activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
+                    appliedParamValidation.normalized,
                     params.epsilon
                 );
             } else if (dynamicSystem === 'custom_ode') {
-                if (!paramValidation.valid) return null;
+                if (!appliedParamValidation.valid) return null;
                 return wasmModule.boundary_map_user_defined_ode(
                     cx, cy, cnx, cny,
-                    debouncedEquations.xEq, debouncedEquations.yEq,
-                    paramValidation.normalized,
+                    activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
+                    appliedParamValidation.normalized,
                     params.h,
                     params.epsilon
                 );
@@ -1758,7 +1809,7 @@ const SetValuedViz = () => {
             }
         };
         batchAnimationRef.current = requestAnimationFrame(animateStep);
-    }, [manifoldState, params, wasmModule, dynamicSystem, debouncedEquations, paramValidation]);
+    }, [manifoldState, params, wasmModule, dynamicSystem, activeAppliedCustomEquations, appliedParamValidation]);
 
     const toggleBdeFlow = useCallback(() => {
         if (bdeState.isRunning) {
@@ -1790,10 +1841,10 @@ const SetValuedViz = () => {
             bdeSimRef.current.free();
         }
         if (dynamicSystem === 'custom_ode') {
-            if (!paramValidation.valid) return;
+            if (!appliedParamValidation.valid) return;
             bdeSimRef.current = new wasmModule.BdeSimulatorUserDefinedWasm(
-                debouncedEquations.xEq, debouncedEquations.yEq,
-                paramValidation.normalized,
+                activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
+                appliedParamValidation.normalized,
                 params.epsilon,
                 manifoldState.startPoint.x,
                 manifoldState.startPoint.y,
@@ -1809,7 +1860,7 @@ const SetValuedViz = () => {
             );
         }
         setBdeState({ points: bdeSimRef.current.get_points(), isRunning: false });
-    }, [wasmModule, params.delta, params.epsilon, manifoldState.startPoint.x, manifoldState.startPoint.y, dynamicSystem, debouncedEquations, paramValidation]);
+    }, [wasmModule, params.delta, params.epsilon, manifoldState.startPoint.x, manifoldState.startPoint.y, dynamicSystem, activeAppliedCustomEquations, appliedParamValidation]);
 
     const resetManifold = useCallback(() => {
         if (batchAnimationRef.current) cancelAnimationFrame(batchAnimationRef.current);
@@ -1825,7 +1876,7 @@ const SetValuedViz = () => {
 
     useEffect(() => {
         resetManifold();
-    }, [params.a, params.b, params.delta, params.h, params.epsilon, debouncedEquations, paramValidation, dynamicSystem, resetManifold]);
+    }, [params.a, params.b, params.delta, params.h, params.epsilon, activeAppliedCustomEquations, appliedParamValidation, dynamicSystem, resetManifold]);
 
     useEffect(() => {
         if (dynamicSystem === 'duffing_ode' || dynamicSystem === 'custom_ode') {
@@ -1846,7 +1897,7 @@ const SetValuedViz = () => {
 
     const computeUlam = useCallback(async () => {
         if (!wasmModule) return;
-        if ((dynamicSystem === 'custom' || dynamicSystem === 'custom_ode') && !paramValidation.valid) {
+        if ((dynamicSystem === 'custom' || dynamicSystem === 'custom_ode') && !appliedParamValidation.valid) {
             setUlamState(prev => ({ ...prev, isComputing: false }));
             return;
         }
@@ -1859,8 +1910,8 @@ const SetValuedViz = () => {
                     throw new Error('UlamComputerUserDefined definition missing');
                 }
                 computer = new UlamComputerUserDefined(
-                    debouncedEquations.xEq, debouncedEquations.yEq,
-                    paramValidation.normalized,
+                    activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
+                    appliedParamValidation.normalized,
                     ulamState.subdivisions,
                     ulamState.pointsPerBox,
                     ulamState.epsilon,
@@ -1876,8 +1927,8 @@ const SetValuedViz = () => {
                 }
                 const capitalT = Math.max(params.h * 10, 0.5);
                 computer = new UlamComputerContinuousUserDefined(
-                    debouncedEquations.xEq, debouncedEquations.yEq,
-                    paramValidation.normalized,
+                    activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
+                    appliedParamValidation.normalized,
                     capitalT,
                     ulamState.subdivisions,
                     ulamState.pointsPerBox,
@@ -1951,7 +2002,7 @@ const SetValuedViz = () => {
             console.error("Ulam computation failed:", err);
             setUlamState(prev => ({ ...prev, isComputing: false }));
         }
-    }, [wasmModule, params.a, params.b, params.delta, params.h, ulamState.subdivisions, ulamState.pointsPerBox, ulamState.epsilon, manifoldState.hasStarted, manifoldState.currentPoint, dynamicSystem, debouncedEquations, paramValidation, viewRange]);
+    }, [wasmModule, params.a, params.b, params.delta, params.h, ulamState.subdivisions, ulamState.pointsPerBox, ulamState.epsilon, manifoldState.hasStarted, manifoldState.currentPoint, dynamicSystem, activeAppliedCustomEquations, appliedParamValidation, viewRange]);
 
     useEffect(() => {
         setUlamState(prev => ({ ...prev, epsilon: params.epsilon }));
@@ -1984,6 +2035,7 @@ const SetValuedViz = () => {
         ulamState.epsilon,
         ulamState.subdivisions,
         ulamState.pointsPerBox,
+        computeRequestId,
         computeUlam
     ]);
 
@@ -2144,7 +2196,7 @@ const SetValuedViz = () => {
     };
 
     const applyPreset = (presetVals) => {
-        setParams(prev => ({ ...prev, ...presetVals }));
+        setDraftParams(prev => ({ ...prev, ...presetVals }));
     };
 
     return (
@@ -2155,20 +2207,23 @@ const SetValuedViz = () => {
                 dynamicSystem={dynamicSystem}
                 setDynamicSystem={setDynamicSystem}
                 SYSTEMS={SYSTEMS}
-                customEquations={customEquations}
-                setCustomEquations={setCustomEquations}
+                customEquations={draftCustomEquations}
+                setCustomEquations={setDraftCustomEquations}
                 equationError={equationError}
-                params={params}
-                setParams={setParams}
+                params={draftParams}
+                setParams={setDraftParams}
                 applyPreset={applyPreset}
-                customParams={activeCustomParams}
+                customParams={activeDraftCustomParams}
                 setCustomParams={(next) => {
-                    setCustomParams(prev => ({
+                    setDraftCustomParams(prev => ({
                         ...prev,
                         [activeCustomKey]: typeof next === 'function' ? next(prev[activeCustomKey]) : next
                     }));
                 }}
-                paramErrors={paramValidation.errors}
+                paramErrors={draftParamValidation.errors}
+                hasPendingInputChanges={hasPendingInputChanges}
+                applyInputsAndRecompute={applyInputsAndRecompute}
+                appliedParams={params}
                 viewRange={viewRange}
                 setViewRange={updateViewRange}
                 rangeLimit={RANGE_LIMIT}

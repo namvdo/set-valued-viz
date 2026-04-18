@@ -375,6 +375,37 @@ body {
   font-size: 10.5px;
   color: var(--text-3);
 }
+.param-apply-wrap {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+.param-pending-note {
+  font-size: 10px;
+  color: var(--amber);
+  line-height: 1.35;
+}
+.param-apply-btn {
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 5px;
+  border: 1px solid #3d6a40;
+  background: rgba(90,150,104,.08);
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all .12s;
+}
+.param-apply-btn:hover:not(:disabled) {
+  background: rgba(90,150,104,.16);
+  border-color: var(--green);
+}
+.param-apply-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 /* ─── Toggle row ────────────────────────────────────── */
 .t-row {

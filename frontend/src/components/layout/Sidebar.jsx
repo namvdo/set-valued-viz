@@ -49,6 +49,8 @@ export const Sidebar = (props) => {
           customParams={props.customParams}
           setCustomParams={props.setCustomParams}
           paramErrors={props.paramErrors}
+          hasPendingInputChanges={props.hasPendingInputChanges}
+          applyInputsAndRecompute={props.applyInputsAndRecompute}
         />
 
         <VisualizationPanel
@@ -121,7 +123,7 @@ export const Sidebar = (props) => {
         type={props.type}
         manifoldState={props.manifoldState}
         ulamState={props.ulamState}
-        params={props.params}
+        params={props.appliedParams || props.params}
         periodicState={props.periodicState}
       />
 
