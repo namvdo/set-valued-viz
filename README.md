@@ -56,5 +56,5 @@ This creates the WebAssembly module in the `pkg/` directory and compiled the Rus
 ### **3. Start the frontend server**
 
 ```bash
-cd frontend && npm install run dev
+cd frontend && npm install && npm run dev
 ```
