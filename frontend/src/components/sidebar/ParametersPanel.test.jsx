@@ -27,6 +27,16 @@ const baseProps = {
 };
 
 describe('ParametersPanel apply action', () => {
+  it('uses [-10, 10] bounds for a and b controls', () => {
+    render(<ParametersPanel {...baseProps} />);
+    const spinboxes = screen.getAllByRole('spinbutton');
+
+    expect(spinboxes[0]).toHaveAttribute('min', '-10');
+    expect(spinboxes[0]).toHaveAttribute('max', '10');
+    expect(spinboxes[1]).toHaveAttribute('min', '-10');
+    expect(spinboxes[1]).toHaveAttribute('max', '10');
+  });
+
   it('shows Apply & Recompute label when there are pending changes', () => {
     render(<ParametersPanel {...baseProps} hasPendingInputChanges={true} />);
     expect(screen.getByRole('button', { name: 'Apply & Recompute' })).toBeInTheDocument();

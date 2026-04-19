@@ -14,6 +14,7 @@ const GRID_STYLE = {
 
 const EMPTY_ARRAY = [];
 const DEFAULT_VALIDATION = { normalized: EMPTY_ARRAY, errors: EMPTY_ARRAY, valid: true };
+const PARAM_ABS_LIMIT = 10;
 const INITIAL_CUSTOM_EQUATIONS = {
     custom: {
         xEq: '1 - a * x^2 + y',
@@ -43,6 +44,14 @@ const INITIAL_PARAMS = {
     startY: 0.1,
     maxIterations: 1000,
     maxPeriod: 5
+};
+const clampToRange = (value, minValue, maxValue, fallbackValue) => {
+    if (!Number.isFinite(value)) {
+        return fallbackValue;
+    }
+    if (value < minValue) return minValue;
+    if (value > maxValue) return maxValue;
+    return value;
 };
 
 const henonMap = (x, y, a, b) => ({
@@ -491,7 +500,18 @@ const SetValuedViz = () => {
     }, [draftParamValidation, dynamicSystem, isCustomSystem, wasmModule]);
 
     const applyInputsAndRecompute = useCallback(() => {
-        const nextDraftParams = { ...draftParams };
+        const nextDraftParams = {
+            ...draftParams,
+            a: clampToRange(draftParams.a, -PARAM_ABS_LIMIT, PARAM_ABS_LIMIT, params.a),
+            b: clampToRange(draftParams.b, -PARAM_ABS_LIMIT, PARAM_ABS_LIMIT, params.b)
+        };
+        if (nextDraftParams.a !== draftParams.a || nextDraftParams.b !== draftParams.b) {
+            setDraftParams(prev => ({
+                ...prev,
+                a: nextDraftParams.a,
+                b: nextDraftParams.b
+            }));
+        }
         if (isCustomSystem) {
             const nextDraftEquations = draftCustomEquations[activeCustomKey];
             const nextDraftCustomParams = draftParamValidation.normalized;
@@ -515,7 +535,7 @@ const SetValuedViz = () => {
         setEquationError(null);
         setParams(nextDraftParams);
         setComputeRequestId(prev => prev + 1);
-    }, [draftParams, isCustomSystem, draftCustomEquations, activeCustomKey, draftParamValidation, validateCustomDraft]);
+    }, [draftParams, params.a, params.b, isCustomSystem, draftCustomEquations, activeCustomKey, draftParamValidation, validateCustomDraft]);
 
     useEffect(() => {
         if (!equationError) return;

@@ -40,8 +40,8 @@ export const ParametersPanel = ({
 
       {!isCustom && !isContinuous && (
         <>
-          <Slider label="a" hint="nonlinearity" min={0.1} max={systemId === 'duffing' ? 3.0 : 2.0} step={0.01} value={params.a} onChange={v => setParams(prev => ({ ...prev, a: v }))} disabled={disabled} />
-          <Slider label="b" hint="contraction" min={0.1} max={systemId === 'duffing' ? 1.0 : 0.5} step={0.01} value={params.b} onChange={v => setParams(prev => ({ ...prev, b: v }))} disabled={disabled} />
+          <Slider label="a" hint="nonlinearity" min={-10.0} max={10.0} step={0.01} value={params.a} onChange={v => setParams(prev => ({ ...prev, a: v }))} disabled={disabled} />
+          <Slider label="b" hint="contraction" min={-10.0} max={10.0} step={0.01} value={params.b} onChange={v => setParams(prev => ({ ...prev, b: v }))} disabled={disabled} />
         </>
       )}
 

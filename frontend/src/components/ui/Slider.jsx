@@ -1,6 +1,14 @@
 import React from 'react';
 
 export const Slider = ({ label, hint, min, max, step, value, onChange, disabled }) => {
+  const clamp = (raw, fallback) => {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return fallback;
+    if (parsed < min) return min;
+    if (parsed > max) return max;
+    return parsed;
+  };
+
   return (
     <div className="p-row">
       <div className="p-head">
@@ -15,7 +23,7 @@ export const Slider = ({ label, hint, min, max, step, value, onChange, disabled 
           max={max}
           step={step}
           value={value}
-          onChange={(e) => onChange(parseFloat(e.target.value) || min)}
+          onChange={(e) => onChange(clamp(e.target.value, value))}
           disabled={disabled}
         />
       </div>
@@ -26,7 +34,7 @@ export const Slider = ({ label, hint, min, max, step, value, onChange, disabled 
         max={max} 
         step={step} 
         value={value} 
-        onChange={(e) => onChange(parseFloat(e.target.value))}
+        onChange={(e) => onChange(clamp(e.target.value, min))}
         disabled={disabled}
       />
     </div>
