@@ -2,7 +2,7 @@
 
 Iteractive web-based visualization tool for exploring set-valued dynamical systems with additive bounded noise, developed as part of the Advanced Computing Project (ACP2) research course at the University of Oulu.
 
-#### Live demo: [https://namvdo.github.io/set-valued-viz](https://namvdo.github.io/set-valued-viz)
+#### Live at: [https://namvdo.github.io/set-valued-viz](https://namvdo.github.io/set-valued-viz)
 
 ## Mathematical Background
 
