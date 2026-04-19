@@ -1463,6 +1463,61 @@ pub fn parameter_sweep_generic(
     }
 }
 
+pub fn filter_orbits_by_ulam_support(
+    database: PeriodicOrbitDatabase,
+    invariant_measure: &[f64],
+    subdivisions: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+    threshold: f64,
+) -> PeriodicOrbitDatabase {
+    if subdivisions == 0 || invariant_measure.is_empty() {
+        return database;
+    }
+
+    let dx = (x_max - x_min) / (subdivisions as f64);
+    let dy = (y_max - y_min) / (subdivisions as f64);
+    if !dx.is_finite() || !dy.is_finite() || dx <= 0.0 || dy <= 0.0 {
+        return database;
+    }
+
+    let on_support = |x: f64, y: f64| -> bool {
+        if x < x_min || x > x_max || y < y_min || y > y_max {
+            return false;
+        }
+        let mut ix = ((x - x_min) / dx).floor() as isize;
+        let mut iy = ((y - y_min) / dy).floor() as isize;
+
+        if ix == subdivisions as isize {
+            ix -= 1;
+        }
+        if iy == subdivisions as isize {
+            iy -= 1;
+        }
+
+        if ix < 0 || iy < 0 {
+            return false;
+        }
+
+        let idx = (iy as usize) * subdivisions + (ix as usize);
+        invariant_measure.get(idx).copied().unwrap_or(0.0) > threshold
+    };
+
+    let mut filtered = PeriodicOrbitDatabase::new();
+    for orbit in database.orbits {
+        if orbit
+            .points
+            .iter()
+            .all(|point| on_support(point.x, point.y))
+        {
+            filtered.add_orbit(orbit);
+        }
+    }
+    return filtered;
+}
+
 #[wasm_bindgen]
 pub struct BoundaryUserDefinedSystemWasm {
     orbit_database: PeriodicOrbitDatabase,
@@ -2482,12 +2537,13 @@ mod tests {
         // At a=0.4, b=0.3, epsilon=0.1, the Hénon boundary map should find
         // a small number of distinct orbits (not duplicates)
         let system = HenonSystem::new(0.4, 0.3, 0.1);
-        let db = find_all_boundary_periodic_orbits_generic(
-            &system, 1, 15, 12, -3.0, 3.0, -3.0, 3.0,
-        );
+        let db =
+            find_all_boundary_periodic_orbits_generic(&system, 1, 15, 12, -3.0, 3.0, -3.0, 3.0);
 
         // Count stable orbits — should be at most 1 for period 1
-        let stable_count = db.orbits.iter()
+        let stable_count = db
+            .orbits
+            .iter()
             .filter(|o| o.period == 1 && matches!(o.stability, StabilityType::Stable))
             .count();
         assert!(
@@ -2499,7 +2555,9 @@ mod tests {
         // All orbits should be spatially distinct
         for (i, orbit_a) in db.orbits.iter().enumerate() {
             for (j, orbit_b) in db.orbits.iter().enumerate() {
-                if i >= j { continue; }
+                if i >= j {
+                    continue;
+                }
                 for pa in &orbit_a.points {
                     for pb in &orbit_b.points {
                         let dist = ((pa.x - pb.x).powi(2) + (pa.y - pb.y).powi(2)).sqrt();
@@ -2521,18 +2579,25 @@ mod tests {
         let system = HenonSystem::new(0.4, 0.3, 0.1);
 
         // "Visualization" path
-        let viz_db = find_all_boundary_periodic_orbits_generic(
-            &system, 1, 15, 12, -3.0, 3.0, -3.0, 3.0,
-        );
+        let viz_db =
+            find_all_boundary_periodic_orbits_generic(&system, 1, 15, 12, -3.0, 3.0, -3.0, 3.0);
 
         // "Sweep" path (same grid now)
-        let base_params = vec![
-            ("a".to_string(), 0.4),
-            ("b".to_string(), 0.3),
-        ];
+        let base_params = vec![("a".to_string(), 0.4), ("b".to_string(), 0.3)];
         let sweep_result = parameter_sweep_henon_fast(
-            &base_params, "a", 0.4, 0.4, 1, 0.1, 1, 15, 12,
-            -3.0, 3.0, -3.0, 3.0,
+            &base_params,
+            "a",
+            0.4,
+            0.4,
+            1,
+            0.1,
+            1,
+            15,
+            12,
+            -3.0,
+            3.0,
+            -3.0,
+            3.0,
         );
 
         assert_eq!(sweep_result.results.len(), 1);
