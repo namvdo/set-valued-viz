@@ -46,9 +46,49 @@ const INITIAL_PARAMS = {
     maxPeriod: 5
 };
 
+const DEFAULT_PERIODIC_SEARCH_SETTINGS = {
+    gridSize: 10,
+    thetaGridSize: 10,
+    residualThreshold: 1e-10
+};
+
+const PERIODIC_SEARCH_LIMITS = {
+    gridSizeMin: 2,
+    gridSizeMax: 256,
+    thetaGridSizeMin: 2,
+    thetaGridSizeMax: 256,
+    residualThresholdMin: 1e-14,
+    residualThresholdMax: 1e-2
+};
+
 const MIS_SUPPORT_THRESHOLD = 1e-10;
 const MIS_FILTER_SUBDIVISIONS = 64;
 const MIS_FILTER_POINTS_PER_BOX = 64;
+
+export const normalizePeriodicSearchSettings = (next, fallback = DEFAULT_PERIODIC_SEARCH_SETTINGS) => {
+    const safeFallback = fallback || DEFAULT_PERIODIC_SEARCH_SETTINGS;
+    const parsedGrid = Number.parseInt(`${next?.gridSize ?? safeFallback.gridSize}`, 10);
+    const parsedTheta = Number.parseInt(`${next?.thetaGridSize ?? safeFallback.thetaGridSize}`, 10);
+    const parsedThreshold = Number(next?.residualThreshold ?? safeFallback.residualThreshold);
+
+    const gridSize = Number.isFinite(parsedGrid)
+        ? Math.min(PERIODIC_SEARCH_LIMITS.gridSizeMax, Math.max(PERIODIC_SEARCH_LIMITS.gridSizeMin, parsedGrid))
+        : safeFallback.gridSize;
+
+    const thetaGridSize = Number.isFinite(parsedTheta)
+        ? Math.min(PERIODIC_SEARCH_LIMITS.thetaGridSizeMax, Math.max(PERIODIC_SEARCH_LIMITS.thetaGridSizeMin, parsedTheta))
+        : safeFallback.thetaGridSize;
+
+    const residualThreshold = Number.isFinite(parsedThreshold) && parsedThreshold > 0
+        ? Math.min(PERIODIC_SEARCH_LIMITS.residualThresholdMax, Math.max(PERIODIC_SEARCH_LIMITS.residualThresholdMin, parsedThreshold))
+        : safeFallback.residualThreshold;
+
+    return {
+        gridSize,
+        thetaGridSize,
+        residualThreshold
+    };
+};
 
 const getSupportIndex = (x, y, support) => {
     if (!support) return -1;
@@ -111,15 +151,6 @@ const clampToRange = (value, minValue, maxValue, fallbackValue) => {
     return value;
 };
 
-const henonMap = (x, y, a, b) => ({
-    x: 1.0 - a * x * x + y,
-    y: b * x
-});
-
-const duffingMap = (x, y, a, b) => ({
-    x: y,
-    y: -b * x + a * y - y * y * y
-});
 
 const createCoordinateSystem = (scene, range) => {
     const { gridDivisions, axisColor, gridColor } = GRID_STYLE;
@@ -262,6 +293,8 @@ const SetValuedViz = () => {
         isReady: false,
         showOrbits: false
     });
+    const [periodicSearchSettings, setPeriodicSearchSettings] = useState(DEFAULT_PERIODIC_SEARCH_SETTINGS);
+    const [draftPeriodicSearchSettings, setDraftPeriodicSearchSettings] = useState(DEFAULT_PERIODIC_SEARCH_SETTINGS);
 
     const [manifoldState, setManifoldState] = useState({
         manifolds: [],
@@ -293,6 +326,7 @@ const SetValuedViz = () => {
     const isCustomDiscrete = dynamicSystem === 'custom';
     const isCustomContinuous = dynamicSystem === 'custom_ode';
     const isCustomSystem = isCustomDiscrete || isCustomContinuous;
+    const supportsPeriodicSearchSettings = dynamicSystem === 'henon' || dynamicSystem === 'custom';
     const activeCustomKey = isCustomSystem ? dynamicSystem : 'custom';
     const activeAppliedCustomEquations = isCustomSystem ? customEquations[activeCustomKey] : customEquations.custom;
     const activeDraftCustomEquations = isCustomSystem ? draftCustomEquations[activeCustomKey] : draftCustomEquations.custom;
@@ -312,16 +346,24 @@ const SetValuedViz = () => {
     }, [isCustomSystem, activeDraftCustomParams]);
     const hasPendingInputChanges = useMemo(() => {
         const paramsDirty = JSON.stringify(draftParams) !== JSON.stringify(params);
+        const periodicSearchDirty = supportsPeriodicSearchSettings && (
+            draftPeriodicSearchSettings.gridSize !== periodicSearchSettings.gridSize
+            || draftPeriodicSearchSettings.thetaGridSize !== periodicSearchSettings.thetaGridSize
+            || draftPeriodicSearchSettings.residualThreshold !== periodicSearchSettings.residualThreshold
+        );
         if (!isCustomSystem) {
-            return paramsDirty;
+            return paramsDirty || periodicSearchDirty;
         }
         const equationsDirty = JSON.stringify(activeDraftCustomEquations) !== JSON.stringify(activeAppliedCustomEquations);
         const customParamsDirty = JSON.stringify(activeDraftCustomParams) !== JSON.stringify(activeAppliedCustomParams);
-        return paramsDirty || equationsDirty || customParamsDirty;
+        return paramsDirty || equationsDirty || customParamsDirty || periodicSearchDirty;
     }, [
         draftParams,
         params,
         isCustomSystem,
+        supportsPeriodicSearchSettings,
+        draftPeriodicSearchSettings,
+        periodicSearchSettings,
         activeDraftCustomEquations,
         activeAppliedCustomEquations,
         activeDraftCustomParams,
@@ -409,6 +451,10 @@ const SetValuedViz = () => {
 
     const raycasterRef = useRef(new THREE.Raycaster());
     const mouseRef = useRef(new THREE.Vector2());
+
+    const updatePeriodicSearchSettings = useCallback((patch) => {
+        setDraftPeriodicSearchSettings(prev => normalizePeriodicSearchSettings({ ...prev, ...patch }, prev));
+    }, []);
 
 
     const updateViewRange = useCallback((patch) => {
@@ -593,8 +639,9 @@ const SetValuedViz = () => {
         }
         setEquationError(null);
         setParams(nextDraftParams);
+        setPeriodicSearchSettings(draftPeriodicSearchSettings);
         setComputeRequestId(prev => prev + 1);
-    }, [draftParams, params.a, params.b, isCustomSystem, draftCustomEquations, activeCustomKey, draftParamValidation, validateCustomDraft]);
+    }, [draftParams, params.a, params.b, isCustomSystem, draftCustomEquations, activeCustomKey, draftParamValidation, validateCustomDraft, draftPeriodicSearchSettings]);
 
     useEffect(() => {
         if (!equationError) return;
@@ -973,7 +1020,10 @@ const SetValuedViz = () => {
                         viewRange.xMin,
                         viewRange.xMax,
                         viewRange.yMin,
-                        viewRange.yMax
+                        viewRange.yMax,
+                        periodicSearchSettings.gridSize,
+                        periodicSearchSettings.thetaGridSize,
+                        periodicSearchSettings.residualThreshold
                     );
                 }
                 if (cancelled) return;
@@ -1043,7 +1093,7 @@ const SetValuedViz = () => {
         };
         initSystem();
         return () => { cancelled = true; };
-    }, [wasmModule, dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, params.maxPeriod, params.startX, params.startY, viewRange, computeRequestId]);
+    }, [wasmModule, dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, params.maxPeriod, params.startX, params.startY, viewRange, periodicSearchSettings.gridSize, periodicSearchSettings.thetaGridSize, periodicSearchSettings.residualThreshold, computeRequestId]);
 
     useEffect(() => {
         if (manifoldDebounceRef.current) {
@@ -2367,6 +2417,8 @@ const SetValuedViz = () => {
                 filters={filters}
                 setFilters={setFilters}
                 periodicState={periodicState}
+                periodicSearchSettings={draftPeriodicSearchSettings}
+                updatePeriodicSearchSettings={updatePeriodicSearchSettings}
                 updateStartPoint={updateStartPoint}
                 animationState={animationState}
                 setAnimationState={setAnimationState}

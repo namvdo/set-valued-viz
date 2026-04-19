@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { vi } from 'vitest';
 
 vi.mock('../sidebar/SystemPicker', () => ({ SystemPicker: () => <div data-testid="system-picker" /> }));
@@ -9,6 +9,7 @@ vi.mock('../sidebar/ManifoldsPanel', () => ({ ManifoldsPanel: () => <div data-te
 vi.mock('../sidebar/VisualizationPanel', () => ({ VisualizationPanel: () => <div data-testid="visualization-panel" /> }));
 vi.mock('../sidebar/StartingPoint', () => ({ StartingPoint: () => <div data-testid="starting-point" /> }));
 vi.mock('../sidebar/PeriodicOrbitsPanel', () => ({ PeriodicOrbitsPanel: () => <div data-testid="periodic-orbits" /> }));
+vi.mock('../sidebar/PeriodicSearchPanel', () => ({ PeriodicSearchPanel: () => <div data-testid="periodic-search-panel" /> }));
 vi.mock('../sidebar/UlamPanel', () => ({ UlamPanel: () => <div data-testid="ulam-panel" /> }));
 vi.mock('../sidebar/AnimationPanel', () => ({ AnimationPanel: () => <div data-testid="animation-panel" /> }));
 vi.mock('../sidebar/ParameterSweepPanel', () => ({ ParameterSweepPanel: () => <div data-testid="sweep-panel" /> }));
@@ -45,6 +46,8 @@ const baseProps = {
   filters: {},
   setFilters: vi.fn(),
   periodicState: {},
+  periodicSearchSettings: { gridSize: 10, thetaGridSize: 10, residualThreshold: 1e-10 },
+  updatePeriodicSearchSettings: vi.fn(),
   updateStartPoint: vi.fn(),
   animationState: {},
   setAnimationState: vi.fn(),
@@ -74,5 +77,18 @@ describe('Sidebar', () => {
   it('hides the starting point panel for discrete systems', () => {
     render(<Sidebar {...baseProps} type="discrete" dynamicSystem="henon" />);
     expect(screen.queryByTestId('starting-point')).toBeNull();
+  });
+
+  it('shows periodic search section for discrete boundary systems', () => {
+    render(<Sidebar {...baseProps} type="discrete" dynamicSystem="henon" />);
+    expect(screen.getByTestId('periodic-search-panel')).toBeInTheDocument();
+  });
+
+  it('renders a single shared recompute action and triggers callback', () => {
+    const onRecompute = vi.fn();
+    render(<Sidebar {...baseProps} applyInputsAndRecompute={onRecompute} hasPendingInputChanges={true} />);
+    const button = screen.getByRole('button', { name: 'Apply & Recompute' });
+    fireEvent.click(button);
+    expect(onRecompute).toHaveBeenCalledTimes(1);
   });
 });

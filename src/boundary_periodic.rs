@@ -26,6 +26,26 @@ fn log_message(s: &str) {
     println!("{}", s);
 }
 
+pub const DEFAULT_PERIODIC_GRID_SIZE: usize = 10;
+pub const DEFAULT_THETA_GRID_SIZE: usize = 10;
+pub const DEFAULT_PERIODIC_RESIDUAL_THRESHOLD: f64 = 1e-10;
+const MIN_PERIODIC_GRID_SIZE: usize = 2;
+const MAX_PERIODIC_GRID_SIZE: usize = 256;
+
+fn sanitize_grid_size(value: usize, fallback: usize) -> usize {
+    if value == 0 {
+        return fallback;
+    }
+    value.clamp(MIN_PERIODIC_GRID_SIZE, MAX_PERIODIC_GRID_SIZE)
+}
+
+fn sanitize_residual_threshold(value: f64) -> f64 {
+    if !value.is_finite() || value <= 0.0 {
+        return DEFAULT_PERIODIC_RESIDUAL_THRESHOLD;
+    }
+    value.clamp(1e-14, 1e-2)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BoundaryPoint {
     pub x: f64,
@@ -510,11 +530,40 @@ impl BoundaryHenonSystemAnalysis {
         y_min: f64,
         y_max: f64,
     ) -> Self {
-        let grid_size = 15;
-        let theta_grid_size = 12;
+        Self::new_with_search_settings(
+            a,
+            b,
+            epsilon,
+            max_period,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            DEFAULT_PERIODIC_GRID_SIZE,
+            DEFAULT_THETA_GRID_SIZE,
+            DEFAULT_PERIODIC_RESIDUAL_THRESHOLD,
+        )
+    }
+
+    pub fn new_with_search_settings(
+        a: f64,
+        b: f64,
+        epsilon: f64,
+        max_period: usize,
+        x_min: f64,
+        x_max: f64,
+        y_min: f64,
+        y_max: f64,
+        grid_size: usize,
+        theta_grid_size: usize,
+        residual_threshold: f64,
+    ) -> Self {
+        let grid_size = sanitize_grid_size(grid_size, DEFAULT_PERIODIC_GRID_SIZE);
+        let theta_grid_size = sanitize_grid_size(theta_grid_size, DEFAULT_THETA_GRID_SIZE);
+        let residual_threshold = sanitize_residual_threshold(residual_threshold);
 
         let system = HenonSystem::new(a, b, epsilon);
-        let orbit_database = find_all_boundary_periodic_orbits_generic(
+        let orbit_database = find_all_boundary_periodic_orbits_generic_with_threshold(
             &system,
             max_period,
             grid_size,
@@ -523,6 +572,7 @@ impl BoundaryHenonSystemAnalysis {
             x_max,
             y_min,
             y_max,
+            residual_threshold,
         );
         log_message(&format!(
             "Total orbits found (boundary map): {}",
@@ -678,11 +728,25 @@ impl BoundaryHenonSystemWasm {
         x_max: f64,
         y_min: f64,
         y_max: f64,
+        grid_size: Option<usize>,
+        theta_grid_size: Option<usize>,
+        residual_threshold: Option<f64>,
     ) -> Result<BoundaryHenonSystemWasm, JsValue> {
         console_error_panic_hook::set_once();
 
-        let system =
-            BoundaryHenonSystemAnalysis::new(a, b, epsilon, max_period, x_min, x_max, y_min, y_max);
+        let system = BoundaryHenonSystemAnalysis::new_with_search_settings(
+            a,
+            b,
+            epsilon,
+            max_period,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+            grid_size.unwrap_or(DEFAULT_PERIODIC_GRID_SIZE),
+            theta_grid_size.unwrap_or(DEFAULT_THETA_GRID_SIZE),
+            residual_threshold.unwrap_or(DEFAULT_PERIODIC_RESIDUAL_THRESHOLD),
+        );
         Ok(Self {
             system,
             current_iteration: 0,
@@ -895,6 +959,7 @@ fn find_boundary_periodic_point_davidchack_lai_generic(
     beta: Option<f64>,
     max_iter: usize,
     tol: f64,
+    residual_threshold: f64,
 ) -> Option<ExtendedPoint> {
     let mut x = x0;
     let mut y = y0;
@@ -928,7 +993,7 @@ fn find_boundary_periodic_point_davidchack_lai_generic(
 
         let g_norm = (gx * gx + gy * gy + gnx * gnx + gny * gny).sqrt();
 
-        if g_norm < 1e-10 {
+        if g_norm < residual_threshold {
             return Some(current);
         }
 
@@ -987,12 +1052,12 @@ fn find_boundary_periodic_point_davidchack_lai_generic(
     let final_point = ExtendedPoint::new(x, y, nx, ny);
     let (mapped, _) = compose_boundary_map_n_times_generic(system, final_point, period);
 
-    let dist = (mapped.x - x).powi(2)
+    let dist_sq = (mapped.x - x).powi(2)
         + (mapped.y - y).powi(2)
         + (mapped.nx - nx).powi(2)
         + (mapped.ny - ny).powi(2);
 
-    if dist < 1e-10 {
+    if dist_sq <= residual_threshold * residual_threshold {
         Some(final_point)
     } else {
         None
@@ -1008,6 +1073,7 @@ fn davidchack_lai_boundary_map_generic(
     x_max: f64,
     y_min: f64,
     y_max: f64,
+    residual_threshold: f64,
 ) -> PeriodicOrbitDatabase {
     let mut database = PeriodicOrbitDatabase::new();
 
@@ -1036,7 +1102,16 @@ fn davidchack_lai_boundary_map_generic(
                     let ny0 = theta.sin();
 
                     if let Some(fixed_point) = find_boundary_periodic_point_davidchack_lai_generic(
-                        system, x0, y0, nx0, ny0, period, None, 100, 1e-10,
+                        system,
+                        x0,
+                        y0,
+                        nx0,
+                        ny0,
+                        period,
+                        None,
+                        100,
+                        1e-10,
+                        residual_threshold,
                     ) {
                         if !fixed_point.is_bounded(100.0) {
                             continue;
@@ -1092,6 +1167,7 @@ fn verify_minimal_period_generic(
     system: &dyn DynamicalSystem,
     point: &ExtendedPoint,
     claimed_period: usize,
+    residual_threshold: f64,
 ) -> bool {
     for divisor in 1..claimed_period {
         if claimed_period % divisor == 0 {
@@ -1100,7 +1176,7 @@ fn verify_minimal_period_generic(
                 + (mapped.y - point.y).powi(2)
                 + (mapped.nx - point.nx).powi(2)
                 + (mapped.ny - point.ny).powi(2);
-            if dist < 1e-10 {
+            if dist <= residual_threshold * residual_threshold {
                 return false;
             }
         }
@@ -1113,6 +1189,7 @@ fn try_add_orbit_generic(
     database: &mut PeriodicOrbitDatabase,
     fp: ExtendedPoint,
     period: usize,
+    residual_threshold: f64,
 ) -> bool {
     if !fp.is_bounded(100.0) {
         return false;
@@ -1123,7 +1200,7 @@ fn try_add_orbit_generic(
     if database.contains_spatial_point(&fp, 0.01) {
         return false;
     }
-    if !verify_minimal_period_generic(system, &fp, period) {
+    if !verify_minimal_period_generic(system, &fp, period, residual_threshold) {
         return false;
     }
 
@@ -1163,7 +1240,32 @@ pub fn find_all_boundary_periodic_orbits_generic(
     y_min: f64,
     y_max: f64,
 ) -> PeriodicOrbitDatabase {
+    find_all_boundary_periodic_orbits_generic_with_threshold(
+        system,
+        max_period,
+        grid_size,
+        theta_grid_size,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        DEFAULT_PERIODIC_RESIDUAL_THRESHOLD,
+    )
+}
+
+pub fn find_all_boundary_periodic_orbits_generic_with_threshold(
+    system: &dyn DynamicalSystem,
+    max_period: usize,
+    grid_size: usize,
+    theta_grid_size: usize,
+    x_min: f64,
+    x_max: f64,
+    y_min: f64,
+    y_max: f64,
+    residual_threshold: f64,
+) -> PeriodicOrbitDatabase {
     let mut database = PeriodicOrbitDatabase::new();
+    let residual_threshold = sanitize_residual_threshold(residual_threshold);
 
     let (x_min, x_max) = clamp_pair(x_min, x_max, RANGE_LIMIT);
     let (y_min, y_max) = clamp_pair(y_min, y_max, RANGE_LIMIT);
@@ -1194,9 +1296,24 @@ pub fn find_all_boundary_periodic_orbits_generic(
                     let ny0 = theta.sin();
 
                     if let Some(fp) = find_boundary_periodic_point_davidchack_lai_generic(
-                        system, x0, y0, nx0, ny0, period, None, 150, 1e-12,
+                        system,
+                        x0,
+                        y0,
+                        nx0,
+                        ny0,
+                        period,
+                        None,
+                        150,
+                        1e-12,
+                        residual_threshold,
                     ) {
-                        if try_add_orbit_generic(system, &mut database, fp, period) {
+                        if try_add_orbit_generic(
+                            system,
+                            &mut database,
+                            fp,
+                            period,
+                            residual_threshold,
+                        ) {
                             found_count += 1;
                         }
                     }
@@ -1224,8 +1341,15 @@ pub fn find_all_boundary_periodic_orbits_generic(
                         None,
                         150,
                         1e-12,
+                        residual_threshold,
                     ) {
-                        if try_add_orbit_generic(system, &mut database, fp, period) {
+                        if try_add_orbit_generic(
+                            system,
+                            &mut database,
+                            fp,
+                            period,
+                            residual_threshold,
+                        ) {
                             found_count += 1;
                         }
                     }
@@ -1539,6 +1663,9 @@ impl BoundaryUserDefinedSystemWasm {
         x_max: f64,
         y_min: f64,
         y_max: f64,
+        grid_size: Option<usize>,
+        theta_grid_size: Option<usize>,
+        residual_threshold: Option<f64>,
     ) -> Result<BoundaryUserDefinedSystemWasm, JsValue> {
         console_error_panic_hook::set_once();
 
@@ -1546,8 +1673,16 @@ impl BoundaryUserDefinedSystemWasm {
         let system = UserDefinedDynamicalSystem::new(x_eq, y_eq, epsilon, param_set)
             .map_err(|e| JsValue::from_str(&format!("Error parsing equations: {}", e)))?;
 
-        let grid_size = 10;
-        let theta_grid_size = 10;
+        let grid_size = sanitize_grid_size(
+            grid_size.unwrap_or(DEFAULT_PERIODIC_GRID_SIZE),
+            DEFAULT_PERIODIC_GRID_SIZE,
+        );
+        let theta_grid_size = sanitize_grid_size(
+            theta_grid_size.unwrap_or(DEFAULT_THETA_GRID_SIZE),
+            DEFAULT_THETA_GRID_SIZE,
+        );
+        let residual_threshold =
+            sanitize_residual_threshold(residual_threshold.unwrap_or(DEFAULT_PERIODIC_RESIDUAL_THRESHOLD));
         let orbit_database = davidchack_lai_boundary_map_generic(
             &system,
             max_period,
@@ -1557,6 +1692,7 @@ impl BoundaryUserDefinedSystemWasm {
             x_max,
             y_min,
             y_max,
+            residual_threshold,
         );
 
         log_message(&format!(
@@ -1937,7 +2073,16 @@ mod tests {
     fn test_generic_dl_finds_fixed_point() {
         let sys = make_henon_system(1.4, 0.3, 0.01);
         let result = find_boundary_periodic_point_davidchack_lai_generic(
-            &sys, 0.6, 0.2, 1.0, 0.0, 1, None, 200, 1e-12,
+            &sys,
+            0.6,
+            0.2,
+            1.0,
+            0.0,
+            1,
+            None,
+            200,
+            1e-12,
+            DEFAULT_PERIODIC_RESIDUAL_THRESHOLD,
         );
         if let Some(fp) = result {
             let mapped = boundary_map_generic(&sys, fp.x, fp.y, fp.nx, fp.ny);
@@ -2045,9 +2190,14 @@ mod tests {
 
         for orbit in db.orbits.iter().filter(|o| o.period == 1) {
             let p = &orbit.extended_points[0];
-            assert!(verify_minimal_period_generic(&sys, p, 1));
+            assert!(verify_minimal_period_generic(
+                &sys,
+                p,
+                1,
+                DEFAULT_PERIODIC_RESIDUAL_THRESHOLD
+            ));
             assert!(
-                !verify_minimal_period_generic(&sys, p, 2),
+                !verify_minimal_period_generic(&sys, p, 2, DEFAULT_PERIODIC_RESIDUAL_THRESHOLD),
                 "Fixed point should NOT be minimal period 2"
             );
         }
@@ -2442,7 +2592,16 @@ mod tests {
     fn test_boundary_map_generic_orbit_is_periodic() {
         let sys = make_henon_system(1.4, 0.3, 0.01);
         let fp = find_boundary_periodic_point_davidchack_lai_generic(
-            &sys, 0.6, 0.2, 1.0, 0.0, 1, None, 200, 1e-12,
+            &sys,
+            0.6,
+            0.2,
+            1.0,
+            0.0,
+            1,
+            None,
+            200,
+            1e-12,
+            DEFAULT_PERIODIC_RESIDUAL_THRESHOLD,
         );
         if let Some(fp) = fp {
             let mapped = boundary_map_generic(&sys, fp.x, fp.y, fp.nx, fp.ny);
@@ -2607,6 +2766,46 @@ mod tests {
             viz_db.total_count(),
             sweep_orbits.len(),
             "Sweep and visualization should find same number of orbits"
+        );
+    }
+
+    #[test]
+    fn test_periodic_search_input_sanitization() {
+        assert_eq!(
+            sanitize_grid_size(0, DEFAULT_PERIODIC_GRID_SIZE),
+            DEFAULT_PERIODIC_GRID_SIZE
+        );
+        assert_eq!(sanitize_grid_size(1, DEFAULT_PERIODIC_GRID_SIZE), 2);
+        assert_eq!(sanitize_grid_size(9999, DEFAULT_PERIODIC_GRID_SIZE), 256);
+
+        assert_eq!(
+            sanitize_residual_threshold(f64::NAN),
+            DEFAULT_PERIODIC_RESIDUAL_THRESHOLD
+        );
+        assert_eq!(
+            sanitize_residual_threshold(-1.0),
+            DEFAULT_PERIODIC_RESIDUAL_THRESHOLD
+        );
+    }
+
+    #[test]
+    fn test_looser_residual_threshold_finds_at_least_as_many_orbits() {
+        let system = HenonSystem::new(0.4, 0.3, 0.1);
+
+        let strict = find_all_boundary_periodic_orbits_generic_with_threshold(
+            &system, 1, 10, 8, -3.0, 3.0, -3.0, 3.0, 1e-13,
+        );
+        let loose = find_all_boundary_periodic_orbits_generic_with_threshold(
+            &system, 1, 10, 8, -3.0, 3.0, -3.0, 3.0, 1e-8,
+        );
+
+        assert!(
+            loose.total_count() >= strict.total_count(),
+            "Looser residual threshold should not reduce accepted orbit count"
+        );
+        assert!(
+            loose.total_count() > 0,
+            "Expected at least one orbit with loose threshold"
         );
     }
 }

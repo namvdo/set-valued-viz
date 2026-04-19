@@ -407,6 +407,11 @@ body {
   cursor: not-allowed;
 }
 
+.sidebar-recompute-wrap {
+  padding: 2px 14px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
 /* ─── Toggle row ────────────────────────────────────── */
 .t-row {
   display: flex;
@@ -946,6 +951,22 @@ kbd {
   color: var(--text-3);
   margin-top: 6px;
   line-height: 1.5;
+}
+
+.periodic-search-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.periodic-search-threshold {
+  grid-column: 1 / span 2;
+}
+
+.periodic-search-hint {
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 6px;
 }
 
 /* ulam box info */

@@ -6,6 +6,7 @@ import { ManifoldsPanel } from '../sidebar/ManifoldsPanel';
 import { VisualizationPanel } from '../sidebar/VisualizationPanel';
 import { StartingPoint } from '../sidebar/StartingPoint';
 import { PeriodicOrbitsPanel } from '../sidebar/PeriodicOrbitsPanel';
+import { PeriodicSearchPanel } from '../sidebar/PeriodicSearchPanel';
 import { UlamPanel } from '../sidebar/UlamPanel';
 import { AnimationPanel } from '../sidebar/AnimationPanel';
 import { ParameterSweepPanel } from '../sidebar/ParameterSweepPanel';
@@ -49,9 +50,33 @@ export const Sidebar = (props) => {
           customParams={props.customParams}
           setCustomParams={props.setCustomParams}
           paramErrors={props.paramErrors}
-          hasPendingInputChanges={props.hasPendingInputChanges}
-          applyInputsAndRecompute={props.applyInputsAndRecompute}
         />
+
+        {props.type === 'discrete' && (
+          <PeriodicSearchPanel
+            dynamicSystem={props.dynamicSystem}
+            periodicSearchSettings={props.periodicSearchSettings}
+            updatePeriodicSearchSettings={props.updatePeriodicSearchSettings}
+            disabled={props.manifoldState.isRunning}
+          />
+        )}
+
+        <div className="sidebar-recompute-wrap">
+          <div className="param-apply-wrap">
+            {props.hasPendingInputChanges && (
+              <div className="param-pending-note">
+                Pending changes are local. Apply to recompute.
+              </div>
+            )}
+            <button
+              className="param-apply-btn"
+              onClick={props.applyInputsAndRecompute}
+              disabled={props.manifoldState.isRunning || typeof props.applyInputsAndRecompute !== 'function'}
+            >
+              {props.hasPendingInputChanges ? 'Apply & Recompute' : 'Recompute'}
+            </button>
+          </div>
+        </div>
 
         <VisualizationPanel
           manifoldState={props.manifoldState}

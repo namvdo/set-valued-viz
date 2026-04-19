@@ -2,7 +2,13 @@ import React from 'react';
 import { Collapsible } from '../ui/Collapsible';
 import { Toggle } from '../ui/Toggle';
 
-export const PeriodicOrbitsPanel = ({ manifoldState, setManifoldState, filters, setFilters, periodicState }) => {
+export const PeriodicOrbitsPanel = ({
+  manifoldState,
+  setManifoldState,
+  filters,
+  setFilters,
+  periodicState
+}) => {
 
   const toggleFilter = (period) => {
     setFilters(prev => ({ ...prev, [period]: !prev[period] }));
@@ -10,7 +16,6 @@ export const PeriodicOrbitsPanel = ({ manifoldState, setManifoldState, filters, 
 
   const periodCounts = [1, 2, 3, 4, 5, '6+'].map(period => {
     const key = period === '6+' ? 'period6plus' : `period${period}`;
-    const mappedPeriod = period === '6+' ? 6 : period;
 
     // Count how many orbits match this period
     let count = 0;
