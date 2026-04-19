@@ -45,6 +45,44 @@ const INITIAL_PARAMS = {
     maxIterations: 1000,
     maxPeriod: 5
 };
+
+const MIS_SUPPORT_THRESHOLD = 1e-10;
+const MIS_FILTER_SUBDIVISIONS = 64;
+const MIS_FILTER_POINTS_PER_BOX = 64;
+
+
+// we want to filter out periodic oribits that are inside the MIS only, so that we can visualize
+// the topological bifurcation, for example, with a = 0.6, b =0.3, esp=0.0625 there are 2 disjoint attractors
+// using ULAM stationary measure to check whether the current periodic point is indeed inside the attracting region.
+const getSupportedIdx = (x, y, support) => {
+    if (!support) return -1;
+    const {xMin, xMax, yMin, yMax, subdivisions} = support; 
+    if (x < xMin || x > xMax || y < yMin || y > yMax) return -1;
+
+    const dx = (xMax - xMin) / subdivisions;
+    const dy = (yMax - yMin) / subdivisions;
+    
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || dx <= 0 || dy <= 0) {
+        return -1;
+    }
+
+    let ix = Math.floor((x - xMin) / dx);
+    let iy = Math.floor((y - yMin) / dy);
+    if (ix >= subdivisions) ix -= 1;
+    if (iy >= subdivisions) iy -= 1;
+    if (ix < 0 || iy < 0) return -1;
+    return iy * subdivisions + ix;
+}
+
+
+const isSupportedPoint = (x, y, support) => {
+    if (!support) return true;
+    const idx = getSupportedIdx(x, y, support);
+    if (idx < 0) return false;
+    return (support.invariantMeasure?.[idx] ?? 0 ) > support.threshold;
+}
+
+
 const clampToRange = (value, minValue, maxValue, fallbackValue) => {
     if (!Number.isFinite(value)) {
         return fallbackValue;
