@@ -61,23 +61,6 @@ export const Sidebar = (props) => {
           />
         )}
 
-        <div className="sidebar-recompute-wrap">
-          <div className="param-apply-wrap">
-            {props.hasPendingInputChanges && (
-              <div className="param-pending-note">
-                Pending changes are local. Apply to recompute.
-              </div>
-            )}
-            <button
-              className="param-apply-btn"
-              onClick={props.applyInputsAndRecompute}
-              disabled={props.manifoldState.isRunning || typeof props.applyInputsAndRecompute !== 'function'}
-            >
-              {props.hasPendingInputChanges ? 'Apply & Recompute' : 'Recompute'}
-            </button>
-          </div>
-        </div>
-
         <VisualizationPanel
           manifoldState={props.manifoldState}
           setManifoldState={props.setManifoldState}
@@ -161,6 +144,8 @@ export const Sidebar = (props) => {
         resetManifold={props.resetManifold}
         toggleBdeFlow={props.toggleBdeFlow}
         resetBdeFlow={props.resetBdeFlow}
+        applyInputsAndRecompute={props.applyInputsAndRecompute}
+        hasPendingInputChanges={props.hasPendingInputChanges}
       />
     </div>
   );

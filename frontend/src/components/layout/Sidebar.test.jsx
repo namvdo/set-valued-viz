@@ -1,6 +1,8 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { vi } from 'vitest';
+
+const controlsBarMock = vi.fn();
 
 vi.mock('../sidebar/SystemPicker', () => ({ SystemPicker: () => <div data-testid="system-picker" /> }));
 vi.mock('../sidebar/EquationDisplay', () => ({ EquationDisplay: () => <div data-testid="equation-display" /> }));
@@ -14,7 +16,12 @@ vi.mock('../sidebar/UlamPanel', () => ({ UlamPanel: () => <div data-testid="ulam
 vi.mock('../sidebar/AnimationPanel', () => ({ AnimationPanel: () => <div data-testid="animation-panel" /> }));
 vi.mock('../sidebar/ParameterSweepPanel', () => ({ ParameterSweepPanel: () => <div data-testid="sweep-panel" /> }));
 vi.mock('./InfoStrip', () => ({ InfoStrip: () => <div data-testid="info-strip" /> }));
-vi.mock('./ControlsBar', () => ({ ControlsBar: () => <div data-testid="controls-bar" /> }));
+vi.mock('./ControlsBar', () => ({
+  ControlsBar: (props) => {
+    controlsBarMock(props);
+    return <div data-testid="controls-bar" />;
+  }
+}));
 
 import { Sidebar } from './Sidebar';
 
@@ -69,6 +76,10 @@ const baseProps = {
 };
 
 describe('Sidebar', () => {
+  beforeEach(() => {
+    controlsBarMock.mockClear();
+  });
+
   it('shows the starting point panel for continuous systems', () => {
     render(<Sidebar {...baseProps} type="continuous" dynamicSystem="duffing_ode" />);
     expect(screen.getByTestId('starting-point')).toBeInTheDocument();
@@ -84,11 +95,11 @@ describe('Sidebar', () => {
     expect(screen.getByTestId('periodic-search-panel')).toBeInTheDocument();
   });
 
-  it('renders a single shared recompute action and triggers callback', () => {
+  it('passes recompute controls into the bottom controls bar', () => {
     const onRecompute = vi.fn();
     render(<Sidebar {...baseProps} applyInputsAndRecompute={onRecompute} hasPendingInputChanges={true} />);
-    const button = screen.getByRole('button', { name: 'Apply & Recompute' });
-    fireEvent.click(button);
-    expect(onRecompute).toHaveBeenCalledTimes(1);
+    const lastCall = controlsBarMock.mock.calls[controlsBarMock.mock.calls.length - 1];
+    expect(lastCall[0].applyInputsAndRecompute).toBe(onRecompute);
+    expect(lastCall[0].hasPendingInputChanges).toBe(true);
   });
 });

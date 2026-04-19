@@ -16,7 +16,9 @@ const baseProps = {
   runToConvergenceManifold: vi.fn(),
   resetManifold: vi.fn(),
   toggleBdeFlow: vi.fn(),
-  resetBdeFlow: vi.fn()
+  resetBdeFlow: vi.fn(),
+  applyInputsAndRecompute: vi.fn(),
+  hasPendingInputChanges: false
 };
 
 describe('ControlsBar', () => {
@@ -46,5 +48,20 @@ describe('ControlsBar', () => {
 
     const play = screen.getByRole('button', { name: /stop|play/i });
     expect(play).not.toBeDisabled();
+  });
+
+  it('shows recompute in bottom controls and invokes compute callback', () => {
+    const onRecompute = vi.fn();
+    render(
+      <ControlsBar
+        {...baseProps}
+        applyInputsAndRecompute={onRecompute}
+        hasPendingInputChanges={true}
+      />
+    );
+
+    const recompute = screen.getByRole('button', { name: 'Compute' });
+    fireEvent.click(recompute);
+    expect(onRecompute).toHaveBeenCalledTimes(1);
   });
 });

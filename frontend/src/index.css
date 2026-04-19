@@ -407,11 +407,6 @@ body {
   cursor: not-allowed;
 }
 
-.sidebar-recompute-wrap {
-  padding: 2px 14px 12px;
-  border-bottom: 1px solid var(--line);
-}
-
 /* ─── Toggle row ────────────────────────────────────── */
 .t-row {
   display: flex;
@@ -628,6 +623,26 @@ body {
 .ctrl-btn:hover:not(:disabled) { border-color: var(--text-3); color: var(--text); }
 .ctrl-btn.primary { border-color: #3d6a40; color: var(--green); background: rgba(90,150,104,.07); }
 .ctrl-btn.primary:hover:not(:disabled) { background: rgba(90,150,104,.14); border-color: var(--green); }
+.ctrl-btn.compute {
+  border-color: #3c5878;
+  color: #8fb4de;
+  background: rgba(91,136,181,.11);
+}
+.ctrl-btn.compute:hover:not(:disabled) {
+  border-color: #6f9ccc;
+  color: #c4ddf7;
+  background: rgba(91,136,181,.2);
+}
+.ctrl-btn.compute.pending {
+  border-color: #b8904a;
+  color: #d6b074;
+  background: rgba(184,144,74,.12);
+}
+.ctrl-btn.compute.pending:hover:not(:disabled) {
+  border-color: #d1a35f;
+  color: #e5c28e;
+  background: rgba(184,144,74,.2);
+}
 .ctrl-btn.danger { border-color: #4a3030; color: #7a5050; }
 .ctrl-btn.danger:hover:not(:disabled) { color: var(--red); border-color: var(--red); }
 .ctrl-btn:disabled { opacity: 0.5; cursor: not-allowed; }
