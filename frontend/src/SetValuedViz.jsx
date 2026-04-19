@@ -50,18 +50,14 @@ const MIS_SUPPORT_THRESHOLD = 1e-10;
 const MIS_FILTER_SUBDIVISIONS = 64;
 const MIS_FILTER_POINTS_PER_BOX = 64;
 
-
-// we want to filter out periodic oribits that are inside the MIS only, so that we can visualize
-// the topological bifurcation, for example, with a = 0.6, b =0.3, esp=0.0625 there are 2 disjoint attractors
-// using ULAM stationary measure to check whether the current periodic point is indeed inside the attracting region.
-const getSupportedIdx = (x, y, support) => {
+const getSupportIndex = (x, y, support) => {
     if (!support) return -1;
-    const {xMin, xMax, yMin, yMax, subdivisions} = support; 
+    const { xMin, xMax, yMin, yMax, subdivisions } = support;
     if (x < xMin || x > xMax || y < yMin || y > yMax) return -1;
 
     const dx = (xMax - xMin) / subdivisions;
     const dy = (yMax - yMin) / subdivisions;
-    
+
     if (!Number.isFinite(dx) || !Number.isFinite(dy) || dx <= 0 || dy <= 0) {
         return -1;
     }
@@ -72,16 +68,39 @@ const getSupportedIdx = (x, y, support) => {
     if (iy >= subdivisions) iy -= 1;
     if (ix < 0 || iy < 0) return -1;
     return iy * subdivisions + ix;
-}
-
+};
 
 const isSupportedPoint = (x, y, support) => {
     if (!support) return true;
-    const idx = getSupportedIdx(x, y, support);
+    const idx = getSupportIndex(x, y, support);
     if (idx < 0) return false;
-    return (support.invariantMeasure?.[idx] ?? 0 ) > support.threshold;
-}
+    return (support.invariantMeasure?.[idx] ?? 0) > support.threshold;
+};
 
+const filterOrbitsBySupport = (orbits, support) => {
+    return (orbits || []).filter(orbit =>
+        (orbit.points || []).every(([x, y]) => isSupportedPoint(x, y, support))
+    );
+};
+
+const clipTrajectoryBySupport = (traj, support) => {
+    if (!traj?.points || !support) return traj;
+    return {
+        ...traj,
+        points: traj.points.filter(([x, y]) => isSupportedPoint(x, y, support))
+    };
+};
+
+const clipManifoldsBySupport = (manifolds, support) => {
+    if (!support) return manifolds || [];
+    return (manifolds || [])
+        .map(m => ({
+            ...m,
+            plus: clipTrajectoryBySupport(m.plus, support),
+            minus: clipTrajectoryBySupport(m.minus, support)
+        }))
+        .filter(m => ((m.plus?.points?.length || 0) + (m.minus?.points?.length || 0)) > 0);
+};
 
 const clampToRange = (value, minValue, maxValue, fallbackValue) => {
     if (!Number.isFinite(value)) {
@@ -376,6 +395,7 @@ const SetValuedViz = () => {
 
     const ulamComputerRef = useRef(null);
     const ulamDebounceRef = useRef(null);
+    const ulamSupportRef = useRef(null);
 
     const [tooltip, setTooltip] = useState({
         visible: false,
@@ -389,6 +409,7 @@ const SetValuedViz = () => {
 
     const raycasterRef = useRef(new THREE.Raycaster());
     const mouseRef = useRef(new THREE.Vector2());
+
 
     const updateViewRange = useCallback((patch) => {
         setViewRange(prev => {
@@ -927,16 +948,17 @@ const SetValuedViz = () => {
 
         let cancelled = false;
         if (dynamicSystem === 'custom' || dynamicSystem === 'custom_ode') {
+            ulamSupportRef.current = null;
             setPeriodicState(prev => ({ ...prev, isReady: true, orbits: [] }));
             return;
         }
         setPeriodicState(prev => ({ ...prev, isReady: false, orbits: [], showOrbits: false }));
 
         const initSystem = () => {
+            let system = null;
+            let supportComputer = null;
             try {
                 if (cancelled) return;
-
-                let system;
 
                 if (dynamicSystem === 'duffing') {
                     system = new wasmModule.DuffingSystemWasm(params.a, params.b, params.maxPeriod);
@@ -954,17 +976,69 @@ const SetValuedViz = () => {
                         viewRange.yMax
                     );
                 }
-                if (cancelled) { system.free(); return; }
+                if (cancelled) return;
 
-                const orbits = system.getPeriodicOrbits();
-                system.free();
+                let orbits = system.getPeriodicOrbits();
+
+                if (dynamicSystem === 'henon') {
+                    try {
+                        const UlamComputer = wasmModule.UlamComputer;
+                        if (!UlamComputer) {
+                            throw new Error('UlamComputer definition missing');
+                        }
+
+                        supportComputer = new UlamComputer(
+                            params.a,
+                            params.b,
+                            MIS_FILTER_SUBDIVISIONS,
+                            MIS_FILTER_POINTS_PER_BOX,
+                            params.epsilon,
+                            viewRange.xMin,
+                            viewRange.xMax,
+                            viewRange.yMin,
+                            viewRange.yMax
+                        );
+
+                        const support = {
+                            invariantMeasure: supportComputer.get_invariant_measure(),
+                            subdivisions: MIS_FILTER_SUBDIVISIONS,
+                            xMin: viewRange.xMin,
+                            xMax: viewRange.xMax,
+                            yMin: viewRange.yMin,
+                            yMax: viewRange.yMax,
+                            threshold: MIS_SUPPORT_THRESHOLD
+                        };
+
+                        const beforeCount = Array.isArray(orbits) ? orbits.length : 0;
+                        orbits = filterOrbitsBySupport(orbits, support);
+                        const afterCount = Array.isArray(orbits) ? orbits.length : 0;
+                        console.log(`MIS support filter (Henon): ${beforeCount} -> ${afterCount} orbits`);
+
+                        ulamSupportRef.current = support;
+                    } catch (supportErr) {
+                        console.warn('MIS support filtering skipped:', supportErr);
+                        ulamSupportRef.current = null;
+                    }
+                } else {
+                    ulamSupportRef.current = null;
+                }
+
+                if (cancelled) return;
 
                 setPeriodicState(prev => ({
                     ...prev, orbits, isReady: true
                 }));
             } catch (err) {
                 console.error('Failed to compute periodic orbits:', err);
+                ulamSupportRef.current = null;
                 setPeriodicState(prev => ({ ...prev, isReady: true, orbits: [] }));
+            } finally {
+                if (supportComputer && typeof supportComputer.free === 'function') {
+                    supportComputer.free();
+                }
+                if (system && typeof system.free === 'function') {
+                    system.free();
+                }
             }
         };
         initSystem();
@@ -980,6 +1054,7 @@ const SetValuedViz = () => {
 
         manifoldDebounceRef.current = setTimeout(() => {
             if (!wasmModule) return;
+            const support = dynamicSystem === 'henon' ? ulamSupportRef.current : null;
 
             const manifoldsEnabled = manifoldState.showUnstableManifold || manifoldState.showStableManifold;
 
@@ -1078,7 +1153,7 @@ const SetValuedViz = () => {
 
                     setManifoldState(prev => ({
                         ...prev,
-                        manifolds: result.manifolds || [],
+                        manifolds: clipManifoldsBySupport(result.manifolds || [], support),
                         fixedPoints: result.fixed_points || [],
                         isComputing: false,
                         isReady: true
@@ -1101,8 +1176,8 @@ const SetValuedViz = () => {
 
                             setManifoldState(prev => ({
                                 ...prev,
-                                manifolds: result.unstable_manifolds || [],
-                                stableManifolds: result.stable_manifolds || [],
+                                manifolds: clipManifoldsBySupport(result.unstable_manifolds || [], support),
+                                stableManifolds: clipManifoldsBySupport(result.stable_manifolds || [], support),
                                 fixedPoints: result.fixed_points || [],
                                 intersections: result.intersections || [],
                                 isComputing: false,
@@ -1132,7 +1207,7 @@ const SetValuedViz = () => {
 
                         setManifoldState(prev => ({
                             ...prev,
-                            manifolds: result.manifolds || [],
+                            manifolds: clipManifoldsBySupport(result.manifolds || [], support),
                             stableManifolds: [],
                             fixedPoints: result.fixed_points || [],
                             intersections: [],
@@ -1159,8 +1234,8 @@ const SetValuedViz = () => {
 
                             setManifoldState(prev => ({
                                 ...prev,
-                                manifolds: result.unstable_manifolds || [],
-                                stableManifolds: result.stable_manifolds || [],
+                                manifolds: clipManifoldsBySupport(result.unstable_manifolds || [], support),
+                                stableManifolds: clipManifoldsBySupport(result.stable_manifolds || [], support),
                                 fixedPoints: result.fixed_points || [],
                                 intersections: result.intersections || [],
                                 isComputing: false,
@@ -1191,7 +1266,7 @@ const SetValuedViz = () => {
 
                         setManifoldState(prev => ({
                             ...prev,
-                            manifolds: result.manifolds || [],
+                            manifolds: clipManifoldsBySupport(result.manifolds || [], support),
                             stableManifolds: [],
                             fixedPoints: result.fixed_points || [],
                             intersections: [],
