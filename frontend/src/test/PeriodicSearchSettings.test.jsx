@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizePeriodicSearchSettings } from '../SetValuedViz';
+import { normalizePeriodicSearchSettings } from '../utils/periodicSearchSettings';
 
 describe('normalizePeriodicSearchSettings', () => {
   it('clamps grid and theta sizes to supported bounds', () => {

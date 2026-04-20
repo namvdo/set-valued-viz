@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyStartPointUpdate } from '../SetValuedViz';
+import { applyStartPointUpdate } from '../utils/startPointState';
 
 describe('applyStartPointUpdate', () => {
   it('resets trajectory and uses new start point', () => {

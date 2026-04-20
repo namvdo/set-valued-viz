@@ -5,6 +5,11 @@ import { Sidebar } from './components/layout/Sidebar';
 import { Viewport } from './components/layout/Viewport';
 import { normalizeParams } from './utils/paramUtils';
 import { DEFAULT_VIEW_RANGE, RANGE_LIMIT, normalizeViewRange } from './utils/viewRange';
+import {
+    DEFAULT_PERIODIC_SEARCH_SETTINGS,
+    normalizePeriodicSearchSettings
+} from './utils/periodicSearchSettings';
+import { applyStartPointUpdate } from './utils/startPointState';
 
 const GRID_STYLE = {
     gridDivisions: 16,
@@ -46,45 +51,6 @@ const INITIAL_PARAMS = {
     maxPeriod: 5
 };
 
-const DEFAULT_PERIODIC_SEARCH_SETTINGS = {
-    gridSize: 10,
-    thetaGridSize: 10,
-    residualThreshold: 1e-10
-};
-
-const PERIODIC_SEARCH_LIMITS = {
-    gridSizeMin: 2,
-    gridSizeMax: 256,
-    thetaGridSizeMin: 2,
-    thetaGridSizeMax: 256,
-    residualThresholdMin: 1e-14,
-    residualThresholdMax: 1e-2
-};
-
-export const normalizePeriodicSearchSettings = (next, fallback = DEFAULT_PERIODIC_SEARCH_SETTINGS) => {
-    const safeFallback = fallback || DEFAULT_PERIODIC_SEARCH_SETTINGS;
-    const parsedGrid = Number.parseInt(`${next?.gridSize ?? safeFallback.gridSize}`, 10);
-    const parsedTheta = Number.parseInt(`${next?.thetaGridSize ?? safeFallback.thetaGridSize}`, 10);
-    const parsedThreshold = Number(next?.residualThreshold ?? safeFallback.residualThreshold);
-
-    const gridSize = Number.isFinite(parsedGrid)
-        ? Math.min(PERIODIC_SEARCH_LIMITS.gridSizeMax, Math.max(PERIODIC_SEARCH_LIMITS.gridSizeMin, parsedGrid))
-        : safeFallback.gridSize;
-
-    const thetaGridSize = Number.isFinite(parsedTheta)
-        ? Math.min(PERIODIC_SEARCH_LIMITS.thetaGridSizeMax, Math.max(PERIODIC_SEARCH_LIMITS.thetaGridSizeMin, parsedTheta))
-        : safeFallback.thetaGridSize;
-
-    const residualThreshold = Number.isFinite(parsedThreshold) && parsedThreshold > 0
-        ? Math.min(PERIODIC_SEARCH_LIMITS.residualThresholdMax, Math.max(PERIODIC_SEARCH_LIMITS.residualThresholdMin, parsedThreshold))
-        : safeFallback.residualThreshold;
-
-    return {
-        gridSize,
-        thetaGridSize,
-        residualThreshold
-    };
-};
 
 const getSupportIndex = (x, y, support) => {
     if (!support) return -1;
@@ -264,16 +230,6 @@ const ORBIT_COLORS = {
     saddlePoint: '#eedf32',
     periodicBlue: '#3498db'
 };
-
-export const applyStartPointUpdate = (prev, newStart) => ({
-    ...prev,
-    startPoint: newStart,
-    currentPoint: newStart,
-    trajectoryPoints: [],
-    iteration: 0,
-    hasStarted: false,
-    isRunning: false
-});
 
 const SetValuedViz = () => {
     const canvasRef = useRef(null);
