@@ -61,10 +61,6 @@ const PERIODIC_SEARCH_LIMITS = {
     residualThresholdMax: 1e-2
 };
 
-const MIS_SUPPORT_THRESHOLD = 1e-10;
-const MIS_FILTER_SUBDIVISIONS = 64;
-const MIS_FILTER_POINTS_PER_BOX = 64;
-
 export const normalizePeriodicSearchSettings = (next, fallback = DEFAULT_PERIODIC_SEARCH_SETTINGS) => {
     const safeFallback = fallback || DEFAULT_PERIODIC_SEARCH_SETTINGS;
     const parsedGrid = Number.parseInt(`${next?.gridSize ?? safeFallback.gridSize}`, 10);
@@ -110,17 +106,29 @@ const getSupportIndex = (x, y, support) => {
     return iy * subdivisions + ix;
 };
 
+const getGridBoxIndex = (x, y, range, subdivisions) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(subdivisions) || subdivisions <= 0) {
+        return -1;
+    }
+    if (x < range.xMin || x > range.xMax || y < range.yMin || y > range.yMax) return -1;
+
+    const dx = (range.xMax - range.xMin) / subdivisions;
+    const dy = (range.yMax - range.yMin) / subdivisions;
+    if (!Number.isFinite(dx) || !Number.isFinite(dy) || dx <= 0 || dy <= 0) return -1;
+
+    let ix = Math.floor((x - range.xMin) / dx);
+    let iy = Math.floor((y - range.yMin) / dy);
+    if (ix >= subdivisions) ix -= 1;
+    if (iy >= subdivisions) iy -= 1;
+    if (ix < 0 || iy < 0) return -1;
+    return iy * subdivisions + ix;
+};
+
 const isSupportedPoint = (x, y, support) => {
     if (!support) return true;
     const idx = getSupportIndex(x, y, support);
     if (idx < 0) return false;
     return (support.invariantMeasure?.[idx] ?? 0) > support.threshold;
-};
-
-const filterOrbitsBySupport = (orbits, support) => {
-    return (orbits || []).filter(orbit =>
-        (orbit.points || []).every(([x, y]) => isSupportedPoint(x, y, support))
-    );
 };
 
 const clipTrajectoryBySupport = (traj, support) => {
@@ -435,9 +443,12 @@ const SetValuedViz = () => {
     const recordedFramesRef = useRef([]);
     const encoderWorkerRef = useRef(null);
 
-    const ulamComputerRef = useRef(null);
+    const computeWorkerRef = useRef(null);
+    const computeWorkerRequestIdRef = useRef(0);
+    const computeWorkerPendingRef = useRef(new Map());
     const ulamDebounceRef = useRef(null);
     const ulamSupportRef = useRef(null);
+    const ulamTransitionsRequestRef = useRef(0);
 
     const [tooltip, setTooltip] = useState({
         visible: false,
@@ -451,6 +462,49 @@ const SetValuedViz = () => {
 
     const raycasterRef = useRef(new THREE.Raycaster());
     const mouseRef = useRef(new THREE.Vector2());
+
+    const initComputeWorker = useCallback(() => {
+        if (computeWorkerRef.current) {
+            return computeWorkerRef.current;
+        }
+
+        const worker = new Worker(
+            new URL('./compute.worker.js', import.meta.url),
+            { type: 'module' }
+        );
+
+        worker.onmessage = (event) => {
+            const { id, ok, result, error } = event.data || {};
+            if (typeof id !== 'number') return;
+            const pending = computeWorkerPendingRef.current.get(id);
+            if (!pending) return;
+            computeWorkerPendingRef.current.delete(id);
+
+            if (ok) {
+                pending.resolve(result);
+            } else {
+                pending.reject(new Error(error || 'Worker task failed'));
+            }
+        };
+
+        worker.onerror = (event) => {
+            const err = new Error(event?.message || 'Compute worker error');
+            computeWorkerPendingRef.current.forEach(({ reject }) => reject(err));
+            computeWorkerPendingRef.current.clear();
+        };
+
+        computeWorkerRef.current = worker;
+        return worker;
+    }, []);
+
+    const runComputeTask = useCallback((kind, payload) => {
+        return new Promise((resolve, reject) => {
+            const worker = initComputeWorker();
+            const requestId = ++computeWorkerRequestIdRef.current;
+            computeWorkerPendingRef.current.set(requestId, { resolve, reject });
+            worker.postMessage({ id: requestId, kind, payload });
+        });
+    }, [initComputeWorker]);
 
     const updatePeriodicSearchSettings = useCallback((patch) => {
         setDraftPeriodicSearchSettings(prev => normalizePeriodicSearchSettings({ ...prev, ...patch }, prev));
@@ -564,6 +618,19 @@ const SetValuedViz = () => {
             }
         };
         loadWasm();
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            computeWorkerPendingRef.current.forEach(({ reject }) => {
+                reject(new Error('Compute worker terminated'));
+            });
+            computeWorkerPendingRef.current.clear();
+            if (computeWorkerRef.current) {
+                computeWorkerRef.current.terminate();
+                computeWorkerRef.current = null;
+            }
+        };
     }, []);
 
     const validateCustomDraft = useCallback((candidateEquations, candidateParams, candidateEpsilon) => {
@@ -843,18 +910,11 @@ const SetValuedViz = () => {
 
                     let numTransitions = 0;
                     let topTransitions = [];
-                    if (ulamComputerRef.current) {
-                        try {
-                            const trans = ulamComputerRef.current.get_transitions(boxIndex);
-                            if (trans && trans.length > 0) {
-                                numTransitions = trans.length;
-                                topTransitions = trans
-                                    .sort((a, b) => (b.probability || 0) - (a.probability || 0))
-                                    .slice(0, 3);
-                            }
-                        } catch (e) {
-                            console.error("Error getting transitions:", e);
-                        }
+                    if (ulamState.selectedBoxIndex === boxIndex && Array.isArray(ulamState.transitions)) {
+                        numTransitions = ulamState.transitions.length;
+                        topTransitions = [...ulamState.transitions]
+                            .sort((a, b) => (b.probability || 0) - (a.probability || 0))
+                            .slice(0, 3);
                     }
 
                     setTooltip({
@@ -919,7 +979,7 @@ const SetValuedViz = () => {
                     : prev);
             }
         }
-    }, [computeJacobian, ulamState.showUlamOverlay, ulamState.gridBoxes, ulamState.invariantMeasure, ulamState.currentBoxIndex, manifoldState.showOrbitLines, manifoldState.highlightedOrbitId]);
+    }, [computeJacobian, ulamState.showUlamOverlay, ulamState.gridBoxes, ulamState.invariantMeasure, ulamState.currentBoxIndex, ulamState.selectedBoxIndex, ulamState.transitions, manifoldState.showOrbitLines, manifoldState.highlightedOrbitId]);
 
 
 
@@ -929,16 +989,29 @@ const SetValuedViz = () => {
     }, [handleMouseMove]);
 
 
-    const handleUlamClick = useCallback((index) => {
-        if (!ulamComputerRef.current) return;
+    const requestUlamTransitions = useCallback((index, mode = 'selected') => {
+        if (index < 0) return;
+        const requestId = ++ulamTransitionsRequestRef.current;
+        runComputeTask('getUlamTransitions', { index }).then((transitions) => {
+            if (requestId !== ulamTransitionsRequestRef.current) return;
+            setUlamState(prev => {
+                if (mode === 'selected' && prev.selectedBoxIndex !== index) return prev;
+                if (mode === 'current' && (prev.currentBoxIndex !== index || !prev.showCurrentBox)) return prev;
+                return { ...prev, transitions: transitions || [] };
+            });
+        }).catch((err) => {
+            console.warn('Failed to fetch Ulam transitions:', err);
+        });
+    }, [runComputeTask]);
 
-        const transitions = ulamComputerRef.current.get_transitions(index);
+    const handleUlamClick = useCallback((index) => {
         setUlamState(prev => ({
             ...prev,
             selectedBoxIndex: index,
-            transitions: transitions // array of {index, probability}
+            transitions: null
         }));
-    }, []);
+        requestUlamTransitions(index, 'selected');
+    }, [requestUlamTransitions]);
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -1001,104 +1074,56 @@ const SetValuedViz = () => {
         }
         setPeriodicState(prev => ({ ...prev, isReady: false, orbits: [], showOrbits: false }));
 
-        const initSystem = () => {
-            let system = null;
-            let supportComputer = null;
+        const initSystem = async () => {
             try {
                 if (cancelled) return;
-
-                if (dynamicSystem === 'duffing') {
-                    system = new wasmModule.DuffingSystemWasm(params.a, params.b, params.maxPeriod);
-                } else if (dynamicSystem === 'duffing_ode') {
-                    system = new wasmModule.EulerMapSystemWasm(params.delta, params.h, params.epsilon, params.maxPeriod);
-                } else {
-                    system = new wasmModule.BoundaryHenonSystemWasm(
-                        params.a,
-                        params.b,
-                        params.epsilon,
-                        params.maxPeriod,
-                        viewRange.xMin,
-                        viewRange.xMax,
-                        viewRange.yMin,
-                        viewRange.yMax,
-                        periodicSearchSettings.gridSize,
-                        periodicSearchSettings.thetaGridSize,
-                        periodicSearchSettings.residualThreshold
-                    );
-                }
-                if (cancelled) return;
-
-                let orbits = system.getPeriodicOrbits();
-
-                if (dynamicSystem === 'henon') {
-                    try {
-                        const UlamComputer = wasmModule.UlamComputer;
-                        if (!UlamComputer) {
-                            throw new Error('UlamComputer definition missing');
-                        }
-
-                        supportComputer = new UlamComputer(
-                            params.a,
-                            params.b,
-                            MIS_FILTER_SUBDIVISIONS,
-                            MIS_FILTER_POINTS_PER_BOX,
-                            params.epsilon,
-                            viewRange.xMin,
-                            viewRange.xMax,
-                            viewRange.yMin,
-                            viewRange.yMax
-                        );
-
-                        const support = {
-                            invariantMeasure: supportComputer.get_invariant_measure(),
-                            subdivisions: MIS_FILTER_SUBDIVISIONS,
-                            xMin: viewRange.xMin,
-                            xMax: viewRange.xMax,
-                            yMin: viewRange.yMin,
-                            yMax: viewRange.yMax,
-                            threshold: MIS_SUPPORT_THRESHOLD
-                        };
-
-                        const beforeCount = Array.isArray(orbits) ? orbits.length : 0;
-                        orbits = filterOrbitsBySupport(orbits, support);
-                        const afterCount = Array.isArray(orbits) ? orbits.length : 0;
-                        console.log(`MIS support filter (Henon): ${beforeCount} -> ${afterCount} orbits`);
-
-                        ulamSupportRef.current = support;
-                    } catch (supportErr) {
-                        console.warn('MIS support filtering skipped:', supportErr);
-                        ulamSupportRef.current = null;
+                const result = await runComputeTask('computePeriodic', {
+                    dynamicSystem,
+                    params: {
+                        a: params.a,
+                        b: params.b,
+                        delta: params.delta,
+                        h: params.h,
+                        epsilon: params.epsilon,
+                        maxPeriod: params.maxPeriod
+                    },
+                    viewRange: {
+                        xMin: viewRange.xMin,
+                        xMax: viewRange.xMax,
+                        yMin: viewRange.yMin,
+                        yMax: viewRange.yMax
+                    },
+                    periodicSearchSettings: {
+                        gridSize: periodicSearchSettings.gridSize,
+                        thetaGridSize: periodicSearchSettings.thetaGridSize,
+                        residualThreshold: periodicSearchSettings.residualThreshold
                     }
-                } else {
-                    ulamSupportRef.current = null;
-                }
-
+                });
                 if (cancelled) return;
 
+                ulamSupportRef.current = dynamicSystem === 'henon' ? (result?.support || null) : null;
                 setPeriodicState(prev => ({
-                    ...prev, orbits, isReady: true
+                    ...prev,
+                    orbits: result?.orbits || [],
+                    isReady: true
                 }));
             } catch (err) {
+                if (cancelled) return;
                 console.error('Failed to compute periodic orbits:', err);
                 ulamSupportRef.current = null;
                 setPeriodicState(prev => ({ ...prev, isReady: true, orbits: [] }));
-            } finally {
-                if (supportComputer && typeof supportComputer.free === 'function') {
-                    supportComputer.free();
-                }
-                if (system && typeof system.free === 'function') {
-                    system.free();
-                }
             }
         };
+
         initSystem();
         return () => { cancelled = true; };
-    }, [wasmModule, dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, params.maxPeriod, params.startX, params.startY, viewRange, periodicSearchSettings.gridSize, periodicSearchSettings.thetaGridSize, periodicSearchSettings.residualThreshold, computeRequestId]);
+    }, [wasmModule, dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, params.maxPeriod, params.startX, params.startY, viewRange, periodicSearchSettings.gridSize, periodicSearchSettings.thetaGridSize, periodicSearchSettings.residualThreshold, computeRequestId, runComputeTask]);
 
     useEffect(() => {
         if (manifoldDebounceRef.current) {
             clearTimeout(manifoldDebounceRef.current);
         }
+        let cancelled = false;
 
         setManifoldState(prev => ({ ...prev, isComputing: true }));
 
@@ -1166,8 +1191,8 @@ const SetValuedViz = () => {
                 }));
                 return;
             }
-            try {
-                if (dynamicSystem === 'duffing_ode') {
+            if (dynamicSystem === 'duffing_ode') {
+                try {
                     console.log('Initializing Duffing ODE BDE flow simulation');
                     if (bdeSimRef.current) {
                         bdeSimRef.current.free();
@@ -1175,7 +1200,7 @@ const SetValuedViz = () => {
                     bdeSimRef.current = new wasmModule.BdeSimulatorWasm(
                         params.delta,
                         params.epsilon,
-                        manifoldState.startPoint.x, manifoldState.startPoint.y, 0.05, 1000 // use specified start point
+                        manifoldState.startPoint.x, manifoldState.startPoint.y, 0.05, 1000
                     );
                     setBdeState(prev => ({ ...prev, points: bdeSimRef.current.get_points(), isRunning: false }));
                     if (bdeAnimRef.current) cancelAnimationFrame(bdeAnimRef.current);
@@ -1188,155 +1213,57 @@ const SetValuedViz = () => {
                         isComputing: false,
                         isReady: true
                     }));
-                } else if (dynamicSystem === 'duffing') {
-                    // Use Duffing manifold computation
-                    console.log('Computing Duffing manifold');
-                    const result = wasmModule.compute_duffing_manifold_simple(
-                        params.a,
-                        params.b,
-                        params.epsilon,
-                        viewRange.xMin,
-                        viewRange.xMax,
-                        viewRange.yMin,
-                        viewRange.yMax
-                    );
-
-                    setManifoldState(prev => ({
-                        ...prev,
-                        manifolds: clipManifoldsBySupport(result.manifolds || [], support),
-                        fixedPoints: result.fixed_points || [],
-                        isComputing: false,
-                        isReady: true
-                    }));
-                } else if (dynamicSystem === 'custom') {
-                    // Use user-defined system manifold computation
-                    if (periodicState.orbits && periodicState.orbits.length > 0) {
-                        if (manifoldState.showStableManifold || manifoldState.showUnstableManifold) {
-                            console.log('Computing custom stable AND unstable manifolds:', periodicState.orbits.length, 'orbits');
-                            const result = wasmModule.compute_stable_and_unstable_manifolds_user_defined(
-                                activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
-                                appliedParamValidation.normalized, params.epsilon,
-                                viewRange.xMin,
-                                viewRange.xMax,
-                                viewRange.yMin,
-                                viewRange.yMax,
-                                periodicState.orbits,
-                                manifoldState.intersectionThreshold
-                            );
-
-                            setManifoldState(prev => ({
-                                ...prev,
-                                manifolds: clipManifoldsBySupport(result.unstable_manifolds || [], support),
-                                stableManifolds: clipManifoldsBySupport(result.stable_manifolds || [], support),
-                                fixedPoints: result.fixed_points || [],
-                                intersections: result.intersections || [],
-                                isComputing: false,
-                                isReady: true
-                            }));
-                        } else {
-                            setManifoldState(prev => ({
-                                ...prev,
-                                manifolds: [],
-                                stableManifolds: [],
-                                fixedPoints: [],
-                                intersections: [],
-                                isComputing: false,
-                                isReady: true
-                            }));
-                        }
-                    } else {
-                        console.log('No periodic orbits, using simple user-defined manifold');
-                        const result = wasmModule.compute_user_defined_manifold(
-                            activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
-                            appliedParamValidation.normalized, params.epsilon,
-                            viewRange.xMin,
-                            viewRange.xMax,
-                            viewRange.yMin,
-                            viewRange.yMax
-                        );
-
-                        setManifoldState(prev => ({
-                            ...prev,
-                            manifolds: clipManifoldsBySupport(result.manifolds || [], support),
-                            stableManifolds: [],
-                            fixedPoints: result.fixed_points || [],
-                            intersections: [],
-                            isComputing: false,
-                            isReady: true
-                        }));
-                    }
-                } else {
-                    // Use Henon manifold computation
-                    if (periodicState.orbits && periodicState.orbits.length > 0) {
-                        if (manifoldState.showStableManifold || manifoldState.showUnstableManifold) {
-                            console.log('Computing stable AND unstable manifolds:', periodicState.orbits.length, 'orbits');
-                            const result = wasmModule.compute_stable_and_unstable_manifolds(
-                                params.a,
-                                params.b,
-                                params.epsilon,
-                                viewRange.xMin,
-                                viewRange.xMax,
-                                viewRange.yMin,
-                                viewRange.yMax,
-                                periodicState.orbits,
-                                manifoldState.intersectionThreshold
-                            );
-
-                            setManifoldState(prev => ({
-                                ...prev,
-                                manifolds: clipManifoldsBySupport(result.unstable_manifolds || [], support),
-                                stableManifolds: clipManifoldsBySupport(result.stable_manifolds || [], support),
-                                fixedPoints: result.fixed_points || [],
-                                intersections: result.intersections || [],
-                                isComputing: false,
-                                isReady: true
-                            }));
-                        } else {
-                            setManifoldState(prev => ({
-                                ...prev,
-                                manifolds: [],
-                                stableManifolds: [],
-                                fixedPoints: [],
-                                intersections: [],
-                                isComputing: false,
-                                isReady: true
-                            }));
-                        }
-                    } else {
-                        console.log('No periodic orbits available, using simple computation');
-                        const result = wasmModule.compute_manifold_simple(
-                            params.a,
-                            params.b,
-                            params.epsilon,
-                            viewRange.xMin,
-                            viewRange.xMax,
-                            viewRange.yMin,
-                            viewRange.yMax
-                        );
-
-                        setManifoldState(prev => ({
-                            ...prev,
-                            manifolds: clipManifoldsBySupport(result.manifolds || [], support),
-                            stableManifolds: [],
-                            fixedPoints: result.fixed_points || [],
-                            intersections: [],
-                            isComputing: false,
-                            isReady: true
-                        }));
-                    }
+                } catch (err) {
+                    console.error('Manifold computation error:', err);
+                    setManifoldState(prev => ({ ...prev, isComputing: false }));
                 }
-            } catch (err) {
+                return;
+            }
+
+            runComputeTask('computeManifolds', {
+                dynamicSystem,
+                params: {
+                    a: params.a,
+                    b: params.b,
+                    epsilon: params.epsilon
+                },
+                viewRange: {
+                    xMin: viewRange.xMin,
+                    xMax: viewRange.xMax,
+                    yMin: viewRange.yMin,
+                    yMax: viewRange.yMax
+                },
+                periodicOrbits: periodicState.orbits || [],
+                customEquations: activeAppliedCustomEquations,
+                customParams: appliedParamValidation.normalized,
+                showStableManifold: manifoldState.showStableManifold,
+                showUnstableManifold: manifoldState.showUnstableManifold,
+                intersectionThreshold: manifoldState.intersectionThreshold
+            }).then((result) => {
+                if (cancelled) return;
+                setManifoldState(prev => ({
+                    ...prev,
+                    manifolds: clipManifoldsBySupport(result?.manifolds || [], support),
+                    stableManifolds: clipManifoldsBySupport(result?.stableManifolds || [], support),
+                    fixedPoints: result?.fixedPoints || [],
+                    intersections: result?.intersections || [],
+                    isComputing: false,
+                    isReady: true
+                }));
+            }).catch((err) => {
+                if (cancelled) return;
                 console.error('Manifold computation error:', err);
                 setManifoldState(prev => ({ ...prev, isComputing: false }));
-            }
+            });
         }, 500);
 
         return () => {
+            cancelled = true;
             if (manifoldDebounceRef.current) {
                 clearTimeout(manifoldDebounceRef.current);
             }
         };
-    }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.showUnstableManifold, manifoldState.intersectionThreshold, activeAppliedCustomEquations, appliedParamValidation, manifoldState.startPoint.x, manifoldState.startPoint.y, viewRange, computeRequestId]);
+    }, [dynamicSystem, params.a, params.b, params.delta, params.h, params.epsilon, periodicState.orbits, wasmModule, manifoldState.showStableManifold, manifoldState.showUnstableManifold, manifoldState.intersectionThreshold, activeAppliedCustomEquations, appliedParamValidation, manifoldState.startPoint.x, manifoldState.startPoint.y, viewRange, computeRequestId, runComputeTask]);
 
     useEffect(() => {
         if (!animationState.isAnimating) {
@@ -2086,97 +2013,42 @@ const SetValuedViz = () => {
         }
         setUlamState(prev => ({ ...prev, isComputing: true, needsRecompute: false }));
         try {
-            let computer;
-            if (dynamicSystem === 'custom') {
-                const { UlamComputerUserDefined } = wasmModule;
-                if (!UlamComputerUserDefined) {
-                    throw new Error('UlamComputerUserDefined definition missing');
-                }
-                computer = new UlamComputerUserDefined(
-                    activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
-                    appliedParamValidation.normalized,
-                    ulamState.subdivisions,
-                    ulamState.pointsPerBox,
-                    ulamState.epsilon,
-                    viewRange.xMin,
-                    viewRange.xMax,
-                    viewRange.yMin,
-                    viewRange.yMax
-                );
-            } else if (dynamicSystem === 'custom_ode') {
-                const { UlamComputerContinuousUserDefined } = wasmModule;
-                if (!UlamComputerContinuousUserDefined) {
-                    throw new Error('UlamComputerContinuousUserDefined not found — rebuild WASM');
-                }
-                const capitalT = Math.max(params.h * 10, 0.5);
-                computer = new UlamComputerContinuousUserDefined(
-                    activeAppliedCustomEquations.xEq, activeAppliedCustomEquations.yEq,
-                    appliedParamValidation.normalized,
-                    capitalT,
-                    ulamState.subdivisions,
-                    ulamState.pointsPerBox,
-                    ulamState.epsilon,
-                    viewRange.xMin,
-                    viewRange.xMax,
-                    viewRange.yMin,
-                    viewRange.yMax
-                );
-            } else if (dynamicSystem === 'duffing_ode') {
-                const { UlamComputerContinuous } = wasmModule;
-                if (!UlamComputerContinuous) {
-                    throw new Error('UlamComputerContinuous not found — rebuild WASM');
-                }
-                const capitalT = Math.max(params.h * 10, 0.5);
-                computer = new UlamComputerContinuous(
-                    params.delta,
-                    capitalT,
-                    ulamState.subdivisions,
-                    ulamState.pointsPerBox,
-                    ulamState.epsilon,
-                    viewRange.xMin,
-                    viewRange.xMax,
-                    viewRange.yMin,
-                    viewRange.yMax
-                );
-            } else {
-                const { UlamComputer } = wasmModule;
-                if (!UlamComputer) {
-                    console.error('UlamComputer export is missing from WASM module!');
-                    throw new Error('UlamComputer definition missing');
-                }
-                computer = new UlamComputer(
-                    params.a,
-                    params.b,
-                    ulamState.subdivisions,
-                    ulamState.pointsPerBox,
-                    ulamState.epsilon,
-                    viewRange.xMin,
-                    viewRange.xMax,
-                    viewRange.yMin,
-                    viewRange.yMax
-                );
-            }
-
-            ulamComputerRef.current = computer;
-            const boxes = computer.get_grid_boxes();
-            const invariantMeasure = computer.get_invariant_measure();
-            const leftEigenvector = computer.get_left_eigenvector();
-
-            let currentBoxIndex = -1;
-            if (manifoldState.hasStarted && manifoldState.currentPoint) {
-                currentBoxIndex = computer.get_box_index(
-                    manifoldState.currentPoint.x,
-                    manifoldState.currentPoint.y
-                );
-            }
+            const result = await runComputeTask('computeUlam', {
+                dynamicSystem,
+                params: {
+                    a: params.a,
+                    b: params.b,
+                    delta: params.delta,
+                    h: params.h
+                },
+                viewRange: {
+                    xMin: viewRange.xMin,
+                    xMax: viewRange.xMax,
+                    yMin: viewRange.yMin,
+                    yMax: viewRange.yMax
+                },
+                ulam: {
+                    subdivisions: ulamState.subdivisions,
+                    pointsPerBox: ulamState.pointsPerBox,
+                    epsilon: ulamState.epsilon
+                },
+                customEquations: activeAppliedCustomEquations,
+                customParams: appliedParamValidation.normalized,
+                currentPoint: manifoldState.hasStarted && manifoldState.currentPoint
+                    ? {
+                        x: manifoldState.currentPoint.x,
+                        y: manifoldState.currentPoint.y
+                    }
+                    : null
+            });
 
             setUlamState(prev => ({
                 ...prev,
                 isComputing: false,
-                gridBoxes: boxes,
-                invariantMeasure: invariantMeasure,
-                leftEigenvector: leftEigenvector,
-                currentBoxIndex: currentBoxIndex,
+                gridBoxes: result?.boxes || [],
+                invariantMeasure: result?.invariantMeasure || null,
+                leftEigenvector: result?.leftEigenvector || null,
+                currentBoxIndex: result?.currentBoxIndex ?? -1,
                 selectedBoxIndex: null,
                 transitions: null
             }));
@@ -2185,7 +2057,7 @@ const SetValuedViz = () => {
             console.error("Ulam computation failed:", err);
             setUlamState(prev => ({ ...prev, isComputing: false }));
         }
-    }, [wasmModule, params.a, params.b, params.delta, params.h, ulamState.subdivisions, ulamState.pointsPerBox, ulamState.epsilon, manifoldState.hasStarted, manifoldState.currentPoint, dynamicSystem, activeAppliedCustomEquations, appliedParamValidation, viewRange]);
+    }, [wasmModule, params.a, params.b, params.delta, params.h, ulamState.subdivisions, ulamState.pointsPerBox, ulamState.epsilon, manifoldState.hasStarted, manifoldState.currentPoint, dynamicSystem, activeAppliedCustomEquations, appliedParamValidation, viewRange, runComputeTask]);
 
     useEffect(() => {
         setUlamState(prev => ({ ...prev, epsilon: params.epsilon }));
@@ -2223,25 +2095,29 @@ const SetValuedViz = () => {
     ]);
 
     useEffect(() => {
-        if (!ulamComputerRef.current || !ulamState.showUlamOverlay) return;
+        if (!ulamState.showUlamOverlay || !ulamState.gridBoxes.length) return;
 
         if (manifoldState.hasStarted && manifoldState.currentPoint) {
-            const boxIdx = ulamComputerRef.current.get_box_index(
+            const boxIdx = getGridBoxIndex(
                 manifoldState.currentPoint.x,
-                manifoldState.currentPoint.y
+                manifoldState.currentPoint.y,
+                viewRange,
+                ulamState.subdivisions
             );
 
             if (boxIdx !== ulamState.currentBoxIndex) {
-                const transitions = boxIdx >= 0 ? ulamComputerRef.current.get_transitions(boxIdx) : null;
                 setUlamState(prev => ({
                     ...prev,
                     currentBoxIndex: boxIdx,
-                    transitions: prev.showCurrentBox ? transitions : prev.transitions,
+                    transitions: prev.showCurrentBox ? null : prev.transitions,
                     selectedBoxIndex: prev.showCurrentBox ? boxIdx : prev.selectedBoxIndex
                 }));
+                if (ulamState.showCurrentBox && boxIdx >= 0) {
+                    requestUlamTransitions(boxIdx, 'current');
+                }
             }
         }
-    }, [manifoldState.currentPoint, manifoldState.hasStarted, ulamState.showUlamOverlay, ulamState.currentBoxIndex]);
+    }, [manifoldState.currentPoint, manifoldState.hasStarted, ulamState.showUlamOverlay, ulamState.gridBoxes.length, ulamState.subdivisions, ulamState.currentBoxIndex, ulamState.showCurrentBox, viewRange, requestUlamTransitions]);
 
 
     useEffect(() => {
