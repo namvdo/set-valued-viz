@@ -20,7 +20,7 @@ export const Sidebar = (props) => {
     <div className="sidebar">
       <div className="app-name">
         <div className="app-name-mark">∿</div>
-        SVDSOULU
+        VISTA
       </div>
 
       <div className="sidebar-scroll">
