@@ -353,6 +353,7 @@ const SetValuedViz = () => {
     });
     const bdeSimRef = useRef(null);
     const bdeAnimRef = useRef(null);
+    const postApplyActionRef = useRef(null);
 
     // Ulam method state
     const [ulamState, setUlamState] = useState({
@@ -664,7 +665,20 @@ const SetValuedViz = () => {
         setParams(nextDraftParams);
         setPeriodicSearchSettings(draftPeriodicSearchSettings);
         setComputeRequestId(prev => prev + 1);
+        return true;
     }, [draftParams, params.a, params.b, isCustomSystem, draftCustomEquations, activeCustomKey, draftParamValidation, validateCustomDraft, draftPeriodicSearchSettings]);
+
+    const applyIfNeededBeforeAction = useCallback((action) => {
+        if (!hasPendingInputChanges) {
+            return false;
+        }
+        postApplyActionRef.current = action;
+        const applied = applyInputsAndRecompute();
+        if (!applied) {
+            postApplyActionRef.current = null;
+        }
+        return applied;
+    }, [hasPendingInputChanges, applyInputsAndRecompute]);
 
     useEffect(() => {
         if (!equationError) return;
@@ -1877,6 +1891,35 @@ const SetValuedViz = () => {
         batchAnimationRef.current = requestAnimationFrame(animateStep);
     }, [manifoldState, params, wasmModule, dynamicSystem, activeAppliedCustomEquations, appliedParamValidation]);
 
+    const handleStepForwardManifold = useCallback(() => {
+        if (applyIfNeededBeforeAction('step')) return;
+        stepForwardManifold();
+    }, [applyIfNeededBeforeAction, stepForwardManifold]);
+
+    const handleRunToConvergenceManifold = useCallback(() => {
+        if (manifoldState.isRunning) {
+            runToConvergenceManifold();
+            return;
+        }
+        if (applyIfNeededBeforeAction('play')) return;
+        runToConvergenceManifold();
+    }, [manifoldState.isRunning, applyIfNeededBeforeAction, runToConvergenceManifold]);
+
+    useEffect(() => {
+        const pendingAction = postApplyActionRef.current;
+        if (!pendingAction) return;
+        if (hasPendingInputChanges) return;
+        if (manifoldState.isComputing) return;
+        if (!periodicState.isReady) return;
+
+        postApplyActionRef.current = null;
+        if (pendingAction === 'play') {
+            runToConvergenceManifold();
+        } else if (pendingAction === 'step') {
+            stepForwardManifold();
+        }
+    }, [hasPendingInputChanges, manifoldState.isComputing, periodicState.isReady, runToConvergenceManifold, stepForwardManifold]);
+
     const toggleBdeFlow = useCallback(() => {
         if (bdeState.isRunning) {
             cancelAnimationFrame(bdeAnimRef.current);
@@ -2264,8 +2307,8 @@ const SetValuedViz = () => {
                 sweepState={sweepState}
                 setSweepState={setSweepState}
                 bdeState={bdeState}
-                stepForwardManifold={stepForwardManifold}
-                runToConvergenceManifold={runToConvergenceManifold}
+                stepForwardManifold={handleStepForwardManifold}
+                runToConvergenceManifold={handleRunToConvergenceManifold}
                 resetManifold={resetManifold}
                 toggleBdeFlow={toggleBdeFlow}
                 resetBdeFlow={resetBdeFlow}
