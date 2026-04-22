@@ -1,5 +1,9 @@
 # VISTA: Visualization of Invariant Sets and Topological Analysis
 
+<div align="center">
+  <img src="./public/vista_logo.png" alt="VISTA Logo" width="250" />
+</div>
+
 Iteractive web-based visualization tool for exploring set-valued dynamical systems with additive bounded noise, developed as part of the Advanced Computing Project (ACP2) research course at the University of Oulu.
 
 #### Live at: [https://namvdo.github.io/set-valued-viz](https://namvdo.github.io/set-valued-viz)

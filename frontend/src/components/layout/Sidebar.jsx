@@ -19,7 +19,7 @@ export const Sidebar = (props) => {
   return (
     <div className="sidebar">
       <div className="app-name">
-        <div className="app-name-mark">∿</div>
+        <img src="./public/vista_logo.png" alt="VISTA Logo" style={{ height: '18px', width: 'auto' }} />
         VISTA
       </div>
 
