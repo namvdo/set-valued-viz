@@ -1,4 +1,4 @@
-# VISTA: Visualization of Invariant Sets and Topological Analysis
+# Bounded Invariant Set Toolbox (BIST) 
 
 <div align="center">
   <img src="./public/vista_logo.png" alt="VISTA Logo" width="250" />
