@@ -19,8 +19,8 @@ export const Sidebar = (props) => {
   return (
     <div className="sidebar">
       <div className="app-name">
-        <img src="./public/vista_logo.png" alt="VISTA Logo" style={{ height: '18px', width: 'auto' }} />
-        VISTA
+        <img src="./public/bist_logo.png" alt="BIST Logo" style={{ height: '18px', width: 'auto' }} />
+        BIST
       </div>
 
       <div className="sidebar-scroll">
