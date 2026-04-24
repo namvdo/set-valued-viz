@@ -68,9 +68,6 @@ export const PeriodicSearchPanel = ({
           />
         </div>
       </div>
-      <div className="periodic-search-hint">
-        Search settings are applied lazily when you click Recompute.
-      </div>
     </Collapsible>
   );
 };
