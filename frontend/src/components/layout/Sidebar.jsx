@@ -15,11 +15,12 @@ import { ControlsBar } from './ControlsBar';
 
 export const Sidebar = (props) => {
   const { ORBIT_COLORS } = props;
+  const logoSrc = `${import.meta.env.BASE_URL}bist_logo.png`;
 
   return (
     <div className="sidebar">
       <div className="app-name">
-        <img src="./public/bist_logo.png" alt="BIST Logo" style={{ height: '18px', width: 'auto' }} />
+        <img src={logoSrc} alt="BIST Logo" style={{ height: '18px', width: 'auto' }} />
         BIST
       </div>
 
